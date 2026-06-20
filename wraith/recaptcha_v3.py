@@ -235,16 +235,20 @@ class BorrowedGoogleCookies(ReputationSource):
         return profiles
 
     def prepare(self, context: Any) -> int:
-        """Extract Google reputation cookies and inject them third-party.
+        """Extract the borrowed Google identity and inject it third-party.
 
-        Walks the discovered Zen/Firefox profiles, takes the first that yields
-        any :data:`identity.GOOGLE_REPUTATION_COOKIES`, and injects them with the
-        proven third-party delivery fix (``secure=True`` + ``sameSite="None"``)
-        via :func:`identity.inject_cookies(..., third_party=True)`.
+        Walks the discovered Zen/Firefox profiles, takes the first that carries a
+        logged-in Google session (any :data:`identity.GOOGLE_REPUTATION_COOKIES`),
+        and injects that profile's **entire** ``google.com`` cookie jar. The
+        reputation cookies get the proven third-party delivery fix (``secure=True``
+        + ``sameSite="None"`` via :func:`identity.inject_cookies(...,
+        third_party=True)`); the remaining google cookies are injected with their
+        natural attributes. Live validation showed the full jar is required —
+        the named subset alone scores below threshold (511 vs 200).
 
-        :returns: the number of reputation cookies injected (``0`` if no profile
-            yielded any — typically means no logged-in Google session on disk, or
-            a Chrome-only profile whose cookies are encrypted).
+        :returns: the number of cookies injected (``0`` if no profile carried a
+            logged-in Google session — or a Chrome-only profile whose cookies are
+            encrypted).
         """
         from wraith import identity
 
@@ -263,13 +267,27 @@ class BorrowedGoogleCookies(ReputationSource):
         last_err: Exception | None = None
         for prof in profiles:
             try:
-                cookies = identity.extract_google_reputation(prof)
+                # Inject the FULL google.com jar, not just the named reputation
+                # subset. Live validation against El Al's /api/login oracle proved
+                # the subset (~40 cookies) scores 511 while the full jar (~87)
+                # scores 200: the non-reputation google cookies (AEC,
+                # __Secure-ENID, OTZ, consent ...) also feed the v3 score. We
+                # split the jar so only the reputation names get the third-party
+                # secure+SameSite=None forcing (the proven delivery fix); the rest
+                # keep their natural attributes — exactly the recipe that scored 200.
+                cookies = identity.extract_cookies(prof, domain_filter="google.com")
             except Exception as exc:  # unreadable / encrypted / locked profile
                 last_err = exc
                 continue
             if not cookies:
                 continue
-            injected = identity.inject_cookies(context, cookies, third_party=True)
+            rep = [c for c in cookies if c.name in identity.GOOGLE_REPUTATION_COOKIES]
+            if not rep:
+                # A google.com jar with no reputation cookies = not logged in.
+                continue
+            rest = [c for c in cookies if c.name not in identity.GOOGLE_REPUTATION_COOKIES]
+            injected = identity.inject_cookies(context, rep, third_party=True)
+            injected += identity.inject_cookies(context, rest, third_party=False)
             if injected:
                 self.used_profile = str(prof)
                 return injected

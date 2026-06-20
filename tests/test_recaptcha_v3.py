@@ -304,6 +304,90 @@ def test_extract_google_reputation_filters_to_set(monkeypatch):
     assert captured["domain_filter"] == "google.com"
 
 
+def test_borrowed_prepare_injects_full_jar(monkeypatch):
+    """prepare() injects the WHOLE google.com jar, not just the named subset.
+
+    Live validation proved the subset (~40 cookies) scores 511 while the full
+    jar (~87) scores 200 against El Al's /api/login oracle. So prepare() must
+    inject every google cookie, with only the reputation names forced to the
+    third-party secure+SameSite=None delivery, and the rest left natural.
+    """
+    from wraith import identity
+    from wraith import recaptcha_v3
+
+    jar = [
+        identity.Cookie(name="SAPISID", value="1", domain=".google.com", path="/",
+                        secure=False, same_site="Lax"),
+        identity.Cookie(name="SID", value="2", domain=".google.com", path="/",
+                        secure=False, same_site="Lax"),
+        # non-reputation google cookies that ALSO feed the v3 score
+        identity.Cookie(name="AEC", value="3", domain=".google.com", path="/",
+                        secure=True, same_site="Strict"),
+        identity.Cookie(name="__Secure-ENID", value="4", domain=".google.com",
+                        path="/", secure=True, same_site="Lax"),
+    ]
+
+    class _Accum:
+        def __init__(self):
+            self.all = []
+
+        def add_cookies(self, payload):
+            self.all.extend(payload)
+
+    monkeypatch.setattr(
+        identity, "extract_cookies",
+        lambda profile_path, domain_filter=None: jar,
+    )
+    src = BorrowedGoogleCookies()
+    monkeypatch.setattr(src, "_candidate_profiles", lambda: ["/fake/profile"])
+
+    ctx = _Accum()
+    n = src.prepare(ctx)
+
+    # the WHOLE jar got injected, not just the 2 reputation cookies
+    assert n == 4
+    by_name = {c["name"]: c for c in ctx.all}
+    assert set(by_name) == {"SAPISID", "SID", "AEC", "__Secure-ENID"}
+    # reputation names forced third-party
+    for name in ("SAPISID", "SID"):
+        assert by_name[name]["secure"] is True
+        assert by_name[name]["sameSite"] == "None"
+    # non-reputation cookies keep their natural attributes
+    assert by_name["AEC"]["sameSite"] == "Strict"
+    assert by_name["__Secure-ENID"]["sameSite"] == "Lax"
+    assert src.used_profile == "/fake/profile"
+
+
+def test_borrowed_prepare_skips_profile_without_reputation(monkeypatch):
+    """A google.com jar with no reputation cookies = not logged in -> skip it."""
+    from wraith import identity
+    from wraith import recaptcha_v3
+
+    jar = [
+        identity.Cookie(name="OGPC", value="1", domain=".google.com", path="/"),
+        identity.Cookie(name="AEC", value="2", domain=".google.com", path="/"),
+    ]
+    monkeypatch.setattr(
+        identity, "extract_cookies",
+        lambda profile_path, domain_filter=None: jar,
+    )
+    src = BorrowedGoogleCookies()
+    monkeypatch.setattr(src, "_candidate_profiles", lambda: ["/fake/profile"])
+
+    class _Accum:
+        def __init__(self):
+            self.all = []
+
+        def add_cookies(self, payload):
+            self.all.extend(payload)
+
+    ctx = _Accum()
+    with pytest.warns(RuntimeWarning):
+        n = src.prepare(ctx)
+    assert n == 0
+    assert ctx.all == []
+
+
 def test_google_reputation_cookies_contents():
     from wraith import identity
 

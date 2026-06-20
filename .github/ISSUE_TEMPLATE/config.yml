@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/YogevKr/wraith#readme
+    about: Read the README, DETECTION.md, PLAYBOOK.md, and AGENTS.md before opening an issue.
+  - name: Questions & discussion
+    url: https://github.com/YogevKr/wraith/discussions
+    about: For usage questions, ideas, and general discussion, please use Discussions.

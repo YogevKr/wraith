@@ -72,11 +72,15 @@ _reexport(
     [
         "launch",
         "browser",
+        "clear_challenge",
         "Session",
         "Engine",
         "WraithEngineError",
         "EngineUnavailableError",
         "PlaywrightVersionError",
+        "WaapRateLimitedError",
+        "WaapHardBlockError",
+        "WaapChallengeTimeout",
         "playwright_version",
     ],
 )

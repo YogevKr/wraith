@@ -71,14 +71,39 @@ _CAMOUFOX_MAX_PLAYWRIGHT = (1, 60)
 # renderer that is a softer-but-real server-side tell.
 _CHROMIUM_STRIP_ARGS = ["--enable-automation", "--enable-unsafe-swiftshader"]
 
+# Clearance-cookie names by WAAP vendor. The presence of any one of these in
+# the context's cookie jar means the defense handed out a pass and the page is
+# (or is about to be) cleared:
+#   * Reblaze/Link11 : waap_id, rbzid
+#   * Akamai         : _abck, bm_sz
+#   * DataDome       : datadome
+#   * Incapsula/Imperva : visid_incap, reese84
+_DEFAULT_CLEARANCE_COOKIES = (
+    "waap_id",
+    "rbzid",
+    "_abck",
+    "bm_sz",
+    "datadome",
+    "visid_incap",
+    "reese84",
+)
+
+# Reblaze status tiers that are NOT solvable challenges.
+_WAAP_RATE_LIMIT_STATUSES = frozenset({474, 481})
+_WAAP_HARD_BLOCK_STATUS = 492
+
 __all__ = [
     "Engine",
     "Session",
     "WraithEngineError",
     "EngineUnavailableError",
     "PlaywrightVersionError",
+    "WaapRateLimitedError",
+    "WaapHardBlockError",
+    "WaapChallengeTimeout",
     "launch",
     "browser",
+    "clear_challenge",
     "playwright_version",
 ]
 
@@ -99,6 +124,48 @@ class PlaywrightVersionError(WraithEngineError):
 
     Raised when the Camoufox engine is requested while ``playwright >= 1.60``
     is installed, which triggers the Firefox ``pageError`` serialization crash.
+    """
+
+
+class WaapRateLimitedError(WraithEngineError):
+    """The WAAP served an IP rate-limit tier instead of a solvable challenge.
+
+    Maps to Reblaze's HTTP **474 / 481** responses, which are returned *instead
+    of* the ``ac_v2`` 247 JS challenge once an exit IP has been hammered. The
+    challenge is never even served, so there is nothing the engine can solve and
+    no clearance cookie will ever appear.
+
+    This is a *reputation-of-IP* problem, independent of engine choice or
+    cookies. The only mitigation is a rotating **residential** proxy plus
+    backoff — switching engines or clearing cookies will not help.
+    """
+
+
+class WaapHardBlockError(WraithEngineError):
+    """The WAAP hard-blocked the request as obviously non-browser.
+
+    Maps to Reblaze's HTTP **492** response, served when the request looks like
+    a bot at the network layer — most commonly a ``HeadlessChrome`` token in the
+    User-Agent or another headless/automation leak. No challenge is served, so
+    there is nothing to solve.
+
+    Fix the identity leak (use Camoufox/Firefox, drop ``HeadlessChrome`` from
+    the UA, avoid automation tells) rather than retrying.
+    """
+
+
+class WaapChallengeTimeout(WraithEngineError):
+    """A WAAP clearance cookie never appeared within the allotted time.
+
+    The navigation neither settled on a clean 200 nor produced any known
+    clearance cookie before the timeout elapsed. Common causes:
+
+    * wrong engine for the defense (a Chrome engine facing an ``ac_v2`` 247
+      challenge that fingerprints ``isChrome()`` — use Camoufox/Firefox);
+    * the challenge simply needs longer (raise ``timeout``);
+    * you actually saw a 247 and the solver is too slow this run;
+    * you actually saw a 474/481 and are silently rate-limited (rotate a
+      residential proxy).
     """
 
 
@@ -538,3 +605,232 @@ def browser(
         yield session
     finally:
         session.close()
+
+
+# --------------------------------------------------------------------------- #
+# WAAP challenge clearing
+# --------------------------------------------------------------------------- #
+def _cookie_names(cookies: Any) -> set[str]:
+    """Best-effort extract cookie *names* from a Playwright ``cookies()`` list.
+
+    Duck-typed: accepts a list of dicts (the Playwright shape) or anything that
+    yields mappings/objects with a ``name`` field. Never raises.
+    """
+    names: set[str] = set()
+    try:
+        for ck in cookies or []:
+            name = None
+            if isinstance(ck, dict):
+                name = ck.get("name")
+            else:
+                name = getattr(ck, "name", None)
+            if name:
+                names.add(str(name))
+    except Exception:
+        pass
+    return names
+
+
+def clear_challenge(
+    url: str,
+    *,
+    session: Optional[Session] = None,
+    engine: Engine = "auto",
+    timeout: float = 30.0,
+    clearance_cookies: Optional["list[str] | tuple[str, ...]"] = None,
+    settle: float = 1.0,
+    **launch_kw: Any,
+) -> Session:
+    """Navigate to ``url`` and return a Session once the WAAP challenge clears.
+
+    This is the general-purpose, *cookie-free* WAAP front door. It handles the
+    family of JS interstitial challenges that a real browser engine can solve on
+    its own — most notably **Reblaze/Link11 ``ac_v2``** — and returns a
+    ready-to-drive :class:`Session` once a clearance cookie has been issued (or,
+    for an ordinary site with no WAAP at all, once the page has simply loaded).
+
+    How ``ac_v2`` clears (no cookies required)
+    ------------------------------------------
+    Reblaze's handshake is::
+
+        GET url            -> HTTP 247  (JS challenge: window.rbzns{seed,
+                                          bereshit:'1'} + winsocks())
+        <browser solves it>             (fingerprint + seed-keyed SHA-1 hashcash)
+        GET token          -> HTTP 248  + Set-Cookie waap_id
+        <retry>            -> HTTP 200  (cleared)
+
+    A fresh **Camoufox/Firefox** context solves this natively because Firefox
+    skips the Chrome-specific ``isChrome()`` detection cluster — so it needs no
+    warmed identity and no borrowed cookies. We just navigate, then poll the
+    cookie jar until a clearance cookie (``waap_id``/``rbzid``/...) appears.
+
+    Non-solvable tiers
+    ------------------
+    Two responses are *not* challenges and cannot be cleared by waiting:
+
+    * **HTTP 474 / 481** — Reblaze IP rate-limit, served *instead of* the 247
+      challenge after an exit IP is hammered. Raises
+      :class:`WaapRateLimitedError`. The only fix is a rotating **residential**
+      proxy (pass ``proxy="http://user:pass@host:port"``) plus backoff —
+      engine choice and cookies are irrelevant here.
+    * **HTTP 492** — hard block (non-browser / ``HeadlessChrome`` UA). Raises
+      :class:`WaapHardBlockError`. Fix the UA/automation leak.
+
+    Non-WAAP sites
+    --------------
+    If ``url`` has no anti-bot layer, no clearance cookie will ever appear — that
+    is success, not failure. Once the navigation settles on a 200 with real
+    content, the (unmodified) Session is returned immediately. There is nothing
+    to clear.
+
+    Args:
+        url: The URL to navigate to and clear.
+        session: An existing :class:`Session` to drive. When ``None`` (default)
+            a new one is launched via :func:`launch` and is **owned** by this
+            call — it is closed automatically if an error is raised. A
+            caller-supplied session is **never** closed here (you own it).
+        engine: Engine to use when self-launching (ignored if ``session`` is
+            given). For ``ac_v2`` prefer the default ``"auto"`` (Camoufox first).
+        timeout: Seconds to wait for a clearance cookie / clean settle before
+            raising :class:`WaapChallengeTimeout`.
+        clearance_cookies: Override the set of cookie names treated as a
+            clearance pass. Defaults to ``waap_id, rbzid, _abck, bm_sz,
+            datadome, visid_incap, reese84``.
+        settle: Seconds of post-load grace given to a clean 200 before treating
+            it as a cleared / non-WAAP success (lets a late challenge swap in).
+        **launch_kw: Forwarded to :func:`launch` when self-launching (e.g.
+            ``proxy``, ``headless``, ``geoip``, ``locale``, ``timezone``).
+
+    Returns:
+        The cleared :class:`Session` (the same object passed in, if any).
+
+    Raises:
+        WaapRateLimitedError: top-level navigation returned 474/481.
+        WaapHardBlockError: top-level navigation returned 492.
+        WaapChallengeTimeout: no clearance cookie / clean settle within
+            ``timeout``.
+    """
+    wanted = set(clearance_cookies) if clearance_cookies else set(_DEFAULT_CLEARANCE_COOKIES)
+
+    owns_session = session is None
+    if owns_session:
+        session = launch(engine=engine, **launch_kw)
+
+    # From here on, a self-launched session must be torn down on any error.
+    try:
+        page = session.page
+        context = session.context
+
+        # Capture the TOP-LEVEL navigation response status. We attach the
+        # listener BEFORE navigating so we never miss the main document
+        # response (sub-resource responses are ignored).
+        nav_status: dict[str, Any] = {"status": None}
+
+        def _on_response(response: Any) -> None:
+            try:
+                # Only the main-frame document response interests us. Match by
+                # URL against the request we issued; fall back to first 2xx-ish
+                # main response if frame info isn't available.
+                req = getattr(response, "request", None)
+                is_nav = bool(getattr(req, "is_navigation_request", lambda: False)()) \
+                    if req is not None and callable(getattr(req, "is_navigation_request", None)) \
+                    else None
+                resp_url = getattr(response, "url", None)
+                if is_nav is True or (is_nav is None and resp_url == url):
+                    nav_status["status"] = getattr(response, "status", None)
+            except Exception:
+                pass
+
+        with contextlib.suppress(Exception):
+            page.on("response", _on_response)
+
+        # Navigate. Capture the goto() response too — it is the most reliable
+        # source of the top-level status across engines.
+        goto_status: Any = None
+        try:
+            resp = page.goto(url)
+            if resp is not None:
+                goto_status = getattr(resp, "status", None)
+        except Exception:
+            # A navigation that throws (e.g. interstitial abort) is not fatal on
+            # its own; fall through to status/cookie polling.
+            resp = None
+
+        main_status = goto_status if goto_status is not None else nav_status["status"]
+
+        # Hard, non-solvable tiers — bail immediately with actionable guidance.
+        if main_status in _WAAP_RATE_LIMIT_STATUSES:
+            raise WaapRateLimitedError(
+                f"{url} returned HTTP {main_status} (Reblaze IP rate-limit tier): "
+                "the ac_v2 challenge was NOT served because this exit IP is "
+                "rate-limited. This is reputation-of-IP, not engine/cookies. "
+                "Rotate a residential proxy (proxy='http://user:pass@host:port') "
+                "and back off, then retry."
+            )
+        if main_status == _WAAP_HARD_BLOCK_STATUS:
+            raise WaapHardBlockError(
+                f"{url} returned HTTP {main_status} (hard block): the request "
+                "looked non-browser at the network layer (commonly a "
+                "'HeadlessChrome' User-Agent or another headless/automation "
+                "leak). No challenge was served. Use Camoufox/Firefox and "
+                "remove the UA/automation tell rather than retrying."
+            )
+
+        # Poll: success is either (a) a clearance cookie appearing, or (b) a
+        # clean 200 with real content (non-WAAP site / already cleared).
+        import time as _time  # local: keep module import-light & duck-typed
+
+        deadline = _time.monotonic() + float(timeout)
+        clean_since: Optional[float] = None
+
+        while True:
+            # (a) clearance cookie present?
+            try:
+                jar = context.cookies()
+            except Exception:
+                jar = []
+            if _cookie_names(jar) & wanted:
+                return session
+
+            # (b) settled on a clean 200 with real content?
+            now = _time.monotonic()
+            status_ok = main_status is None or 200 <= int(main_status) < 300
+            has_content = False
+            if status_ok:
+                try:
+                    content = page.content()
+                    has_content = bool(content) and len(content) > 200
+                except Exception:
+                    has_content = False
+            if status_ok and has_content:
+                if clean_since is None:
+                    clean_since = now
+                elif now - clean_since >= float(settle):
+                    # Stable clean page and no clearance cookie => non-WAAP (or
+                    # already cleared). Nothing to clear; success.
+                    return session
+            else:
+                clean_since = None
+
+            if now >= deadline:
+                seen = main_status if main_status is not None else "unknown"
+                raise WaapChallengeTimeout(
+                    f"No clearance cookie appeared for {url} within {timeout:.0f}s "
+                    f"(last top-level status: {seen}). Possible causes: wrong "
+                    "engine for this defense (a Chrome engine vs an ac_v2 247 "
+                    "challenge — use Camoufox/Firefox); the challenge needs "
+                    "longer (raise timeout); if you saw a 247 the solver is too "
+                    "slow this run; if you saw a 474/481 you are silently "
+                    "rate-limited (rotate a residential proxy)."
+                )
+
+            # Light poll cadence; tolerate engines without wait_for_timeout.
+            try:
+                page.wait_for_timeout(250)
+            except Exception:
+                _time.sleep(0.25)
+    except BaseException:
+        if owns_session and session is not None:
+            with contextlib.suppress(Exception):
+                session.close()
+        raise

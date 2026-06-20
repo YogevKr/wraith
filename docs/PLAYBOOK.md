@@ -10,6 +10,27 @@ contradicts itself.*
 
 ---
 
+## 0. The layer model — three independent problems
+
+Before picking a tactic, separate the three layers a WAAP stack can throw at
+you. They are **independent**: each has its own signal and its own mitigation,
+and a fix for one does nothing for the others. Diagnose which layer(s) you're
+hitting first.
+
+| Layer | What it is | Signal | Mitigation |
+| --- | --- | --- | --- |
+| **1. JS challenge** (general) | One-shot fingerprint + seed-keyed SHA-1 PoW, e.g. Reblaze `ac_v2` | HTTP **247** challenge | **Engine-solved, COOKIE-FREE.** A fresh Camoufox (Firefox) context solves it natively — Firefox skips the `isChrome()` detection cluster. No cookies, no warmed identity needed. |
+| **2. Reputation gate** (per-site auth only) | reCAPTCHA v3 login score, warmed-account requirements | low v3 score (~0.1–0.3) on the gated step | **Borrow a warmed identity** (cookies from disk / harvested token). Not solvable; not an engine problem. |
+| **3. IP rate-limit / reputation** | The exit IP has been hammered or is low-rep | HTTP **474 / 481** *instead of* the `247` challenge | **Rotate a residential proxy + back off.** Not an engine problem, not a cookie problem. |
+
+The common mistake is conflating them: throwing proxies at a `247` (layer 1
+solves cookie-free without them), or throwing a better engine at a `474` (layer
+3 doesn't even serve the challenge). **ac_v2 itself is engine-solved
+COOKIE-FREE; identity-borrowing is only for the reCAPTCHA-gated auth layer;
+proxies are only for the IP tier.**
+
+---
+
 ## 1. Engine choice — Firefox (Camoufox) beats Chromium
 
 **Primary engine: Camoufox (Firefox-based stealth). Fallback: patchright
@@ -67,6 +88,45 @@ every signal mutually consistent:
   SwiftShader / ANGLE are softer, server-side-evaluated risks — prefer a real or
   realistically-spoofed GPU.
 - **viewport / window:** real, non-default dimensions (see `viewport=None`).
+
+---
+
+## 2a. IP reputation / rate-limit (474 / 481)
+
+This is **layer 3** (see §0): the exit IP itself is the problem, not your
+browser. After an IP is hammered, Reblaze serves **HTTP 474 / 481 instead of
+the `247` challenge** — the challenge isn't even served, so there is nothing for
+the engine to solve. This is **distinct from a per-session block**: it's keyed
+to the IP's reputation.
+
+**Mitigation = rotating RESIDENTIAL proxy + backoff.** Not cookies, not engine
+choice.
+
+- Pass a proxy through the engine kwargs:
+  `launch(..., proxy="http://user:pass@host:port")` (forwarded via `**kw`).
+- **Use residential exits and rotate them**, with exponential backoff between
+  attempts. Datacenter IPs start low-reputation and get rate-limited fast.
+- **`geoip=True` makes the proxy safe to use:** it derives a consistent
+  timezone + locale from the **proxy exit IP**, so rotating to a German exit
+  automatically presents a German tz / locale / `Accept-Language`. Rotating the
+  IP *without* `geoip=True` reintroduces the layer-1 contradiction the proxy was
+  never meant to cause (US locale behind a German IP — see §2).
+
+### How the engine surfaces it
+
+`wraith.engine.clear_challenge()` distinguishes the layers by status code and
+raises a typed exception:
+
+- **`WaapRateLimitedError`** on **474 / 481** → the IP tier is exhausted;
+  **rotate the proxy** (and back off). Retrying on the same IP, or "fixing" the
+  engine, will not help.
+- **`WaapHardBlockError`** on **492** → a gross engine tell (e.g.
+  `HeadlessChrome` in the UA); fix the leak — rotating the proxy won't help
+  here.
+
+So the exception type tells you which layer you're on: `WaapRateLimitedError` ⇒
+proxy problem (layer 3), `WaapHardBlockError` ⇒ engine problem (layer 1 tell).
+A plain `247` needs neither — Camoufox solves it cookie-free.
 
 ---
 
@@ -159,19 +219,27 @@ reCAPTCHA-the-score do weigh behavior, so for those:
 
 ## 7. Decision flow (putting it together)
 
-1. **Identify the system** (`DETECTION.md` cheat sheet) from headers/cookies/status.
+1. **Identify the system** (`DETECTION.md` cheat sheet) from headers/cookies/status,
+   and **classify the layer** (§0): JS challenge (247) / reputation gate /
+   IP rate-limit (474/481).
 2. **Pick the engine:** Camoufox primary (with `playwright==1.55` pinned);
    patchright fallback (`viewport=None`, suppress `Runtime.enable`, strip
-   automation args).
+   automation args). For a plain `247` this alone gets you through — Camoufox
+   solves `ac_v2` cookie-free.
 3. **Set identity consistency:** `geoip=True`, matching locale, no
    `Brian Paul`/`Mesa OffScreen` WebGL.
-4. **If a reputation gate (reCAPTCHA v3 / warmed-account requirement) blocks the
+4. **If you get 474/481 (`WaapRateLimitedError`) → rotate a residential proxy +
+   back off** (§2a). `geoip=True` keeps tz/locale consistent with the new exit
+   IP. Don't touch the engine for this.
+5. **If you get 492 (`WaapHardBlockError`) → fix the engine tell** (e.g.
+   `HeadlessChrome` UA); a proxy won't help.
+6. **If a reputation gate (reCAPTCHA v3 / warmed-account requirement) blocks the
    path → borrow identity** (cookies from disk, §4) and skip the gated step.
-5. **If auth is a bearer token, not a cookie → harvest** the
+7. **If auth is a bearer token, not a cookie → harvest** the
    `{Authorization, Cookie, User-Agent}` triplet live (§5).
-6. **If a behavioral system (Akamai/DataDome) → add modest mouse/typing entropy**,
+8. **If a behavioral system (Akamai/DataDome) → add modest mouse/typing entropy**,
    never theatrical events (§6).
-7. **Self-check** against `rebrowser-bot-detector` and the reCAPTCHA-v3 score
+9. **Self-check** against `rebrowser-bot-detector` and the reCAPTCHA-v3 score
    tester (parse only the fresh `Result:` line) before trusting the session.
 
 ---

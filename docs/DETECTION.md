@@ -17,7 +17,7 @@ strategy from `PLAYBOOK.md`.
 
 | System | Tell-tale signal | Where to look |
 | --- | --- | --- |
-| **Reblaze / Link11** | `server: rhino-core-shield`; cookies `waap_id`, `rbzid`; statuses **247/248/492**; JS sets `window.rbzns = {seed, bereshit:'1'}` + `winsocks()` | Response headers, cookies, challenge body |
+| **Reblaze / Link11** | `server: rhino-core-shield`; clearance cookies `waap_id`, `rbzid`; statuses **247/248/492** and **474/481** (IP rate-limit); JS sets `window.rbzns = {seed, bereshit:'1'}` + `winsocks()` | Response headers, cookies, challenge body |
 | **Akamai Bot Manager** | cookies `_abck`, `bm_sz`, `AKA_A2`; header `x-akamai-transformed` | Response headers, cookies |
 | **Google reCAPTCHA v3** | `grecaptcha` JS globals; `https://www.google.com/recaptcha/api.js?render=<sitekey>`; tokens posted as `g-recaptcha-response` | Page DOM/JS, network |
 | **DataDome** | cookie `datadome`; header `x-datadome` / `x-dd-b` | Cookies, headers |
@@ -35,14 +35,24 @@ it beatable in practice is what it *doesn't* do.
 
 ### How to identify it
 - **Server header:** `server: rhino-core-shield` (rhino = Reblaze's engine).
-- **Cookies:** `waap_id` (visitor id) and `rbzid` (the validated-token cookie).
-- **Status codes (Reblaze-specific, non-standard):**
-  - **247** — challenge required (serve the JS challenge page).
+- **Cookies (clearance):** `waap_id` (visitor id) and `rbzid` (the
+  validated-token cookie) — these are the clearance cookies the solved challenge
+  mints.
+- **Status-code ladder (Reblaze-specific, non-standard):**
+  - **247** — challenge required (serve the JS challenge page; sets
+    `window.rbzns{seed, bereshit:'1'}` + `winsocks()`).
   - **248** — token / verification exchange (client submitting the solved
-    hashcash back).
+    hashcash back; clears to **200** with the `waap_id` / `rbzid` cookies set).
   - **492** — hard block. Triggered by gross tells, e.g. a `User-Agent`
-    containing `HeadlessChrome`. A 492 means you were caught at the cheapest
-    possible layer; fix the obvious leak before anything else.
+    containing `HeadlessChrome`. **No challenge is served** — you were caught at
+    the cheapest possible layer; fix the obvious leak before anything else.
+  - **474 / 481 — IP rate-limit tier (NEW).** Served *instead of* a `247`
+    after an IP has been hammered: the challenge **isn't even served**, so this
+    is **not** something a better engine or a fresh context can solve. It is
+    **distinct from a per-session block** — it's keyed to the **exit IP's
+    reputation**, not your browser. Mitigation is **proxy rotation + backoff**,
+    not cookies and not engine choice (see `PLAYBOOK.md` — IP reputation /
+    rate-limit).
 
 ### The challenge mechanism (`ac_v2`)
 - The challenge page sets `window.rbzns = { seed: <…>, bereshit: '1' }` and calls

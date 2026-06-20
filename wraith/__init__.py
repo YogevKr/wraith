@@ -136,6 +136,17 @@ _reexport(
     ],
 )
 
+# Providers: first-class residential-proxy provider integrations (DataImpulse).
+# These build proxy URL strings / ProxyPools that feed engine.launch(proxy=...)
+# and clear_challenge(proxy_pool=...).
+_reexport(
+    "providers",
+    [
+        "DataImpulse",
+        "DataImpulseAuthError",
+    ],
+)
+
 # Behavior: human-like mouse/keyboard helpers (the supporting act).
 _reexport(
     "behavior",

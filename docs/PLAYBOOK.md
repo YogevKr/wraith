@@ -174,6 +174,65 @@ This keeps the **layer separation** intact: the pool only ever helps the IP
 tier; it does nothing for a clean `247` (no rotation needed) or a reputation
 gate (borrow identity instead).
 
+### DataImpulse residential proxies
+
+`wraith.providers.DataImpulse` is a first-class **pay-per-GB residential**
+provider that turns a single account into the proxy URL strings (and
+`ProxyPool`s) the layer-3 machinery above consumes. You authenticate to one
+gateway and steer the exit IP entirely through the *username*.
+
+**Credentials** resolve most-specific-first and **never raise at construction**
+— a `DataImpulseAuthError` is raised lazily only when you actually request a URL:
+
+1. explicit `DataImpulse(username=..., password=...)`;
+2. env `DATAIMPULSE_USERNAME` / `DATAIMPULSE_PASSWORD`;
+3. `~/.secrets` (`KEY=value` lines, tolerates `export ` + quotes).
+
+**Rotating vs. sticky.** A *base* username (no `sessid`) rotates the exit IP on
+**every request**; add a `sessid` and the IP is **sticky** (~30 min, same IP):
+
+```python
+from wraith.providers import DataImpulse
+
+di = DataImpulse(country="il")                 # creds from env / ~/.secrets
+di.rotating()                                  # new IL IP per request
+# -> http://<user>__cr.il:<pw>@gw.dataimpulse.com:823
+di.sticky("profile01")                         # one pinned IL IP for ~30 min
+# -> http://<user>__cr.il;sessid.profile01:<pw>@gw.dataimpulse.com:823
+di.rotating(city="newyork", country="us")      # city pin
+DataImpulse(protocol="socks5").rotating()      # SOCKS5 -> port 824
+```
+
+The enrichment format is the base username, then `__`, then `;`-joined
+`key.value` params (`cr` country, `city`, `sessid`). HTTP/HTTPS use port **823**,
+SOCKS5 uses **824**.
+
+**`.pool()` with `clear_challenge`.** `di.pool(n)` mints `n` *distinct* sticky
+sessions (`wraith-0`..`wraith-(n-1)`) → `n` different exit IPs the `ProxyPool`
+can rotate across when retrying a 474/481/492:
+
+```python
+from wraith.engine import clear_challenge
+from wraith.providers import DataImpulse
+
+sess = clear_challenge(
+    "https://target.example/gated",
+    proxy_pool=DataImpulse(country="il").pool(5),  # 5 distinct sticky IL exits
+    geoip=True,
+)
+```
+
+(`pool(n, sticky=False)` instead returns the rotating endpoint, which de-dupes
+to a single pool entry since every request through it already rotates.)
+
+**geoip note.** Pair any DataImpulse proxy with `geoip=True` (the default): the
+engine derives a coherent timezone / locale / `Accept-Language` from the proxy
+*exit IP* (§2). A **sticky** session keeps that identity stable for its whole
+lifetime — prefer it over rotating when you need a consistent identity across
+several navigations. From the CLI, `--proxy dataimpulse` (or `--dataimpulse`)
+with `--proxy-country il` builds a rotating IL exit for `launch`/`borrow`/
+`harvest`/`agent`.
+
 ---
 
 ## 2b. Akamai `_abck` validity — `~0~` solved, `~-1~` is NOT

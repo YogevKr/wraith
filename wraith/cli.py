@@ -63,6 +63,42 @@ def _lazy(module: str):
 
 
 # --------------------------------------------------------------------------
+# proxy resolution
+# --------------------------------------------------------------------------
+
+# Special --proxy value that resolves to a live DataImpulse residential exit.
+_DATAIMPULSE_PROXY = "dataimpulse"
+
+
+def _resolve_proxy(args: argparse.Namespace) -> Optional[str]:
+    """Turn the ``--proxy`` / ``--dataimpulse`` flags into a proxy URL or None.
+
+    A literal ``--proxy dataimpulse`` (or the ``--dataimpulse`` shortcut) builds
+    a rotating DataImpulse residential exit via :class:`wraith.providers.DataImpulse`,
+    honoring ``--proxy-country``. Any other ``--proxy`` value is passed through
+    verbatim. Credential errors surface as a clean CLI message + non-zero exit.
+    """
+    use_di = getattr(args, "dataimpulse", False)
+    raw = getattr(args, "proxy", None)
+    if not use_di and (raw is None or raw.strip().lower() != _DATAIMPULSE_PROXY):
+        return raw
+
+    providers = _lazy("providers")
+    country = getattr(args, "proxy_country", None)
+    try:
+        di = providers.DataImpulse(country=country)
+        url = di.rotating(country=country)
+    except providers.DataImpulseAuthError as exc:
+        raise SystemExit(f"wraith: {exc}")
+    print(
+        "wraith: using DataImpulse residential proxy"
+        + (f" (country={country})" if country else " (rotating)"),
+        file=sys.stderr,
+    )
+    return url
+
+
+# --------------------------------------------------------------------------
 # command handlers
 # --------------------------------------------------------------------------
 
@@ -78,7 +114,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
         args.engine,
         headless=args.headless,
         geoip=not args.no_geoip,
-        proxy=args.proxy,
+        proxy=_resolve_proxy(args),
     ) as session:
         page = _page_of(session)
         page.goto(args.url, wait_until="domcontentloaded")
@@ -106,7 +142,7 @@ def cmd_borrow(args: argparse.Namespace) -> int:
         args.engine,
         headless=args.headless,
         geoip=not args.no_geoip,
-        proxy=args.proxy,
+        proxy=_resolve_proxy(args),
     ) as session:
         context = _context_of(session)
         injected = identity.inject_cookies(context, cookies)
@@ -186,6 +222,7 @@ def cmd_harvest(args: argparse.Namespace) -> int:
             headless=args.headless,
             geoip=not args.no_geoip,
             timeout=args.timeout,
+            proxy=_resolve_proxy(args),
         )
     except RuntimeError as exc:
         print(f"wraith: {exc}", file=sys.stderr)
@@ -279,6 +316,7 @@ def cmd_agent(args: argparse.Namespace) -> int:
         engine=args.engine,
         headless=args.headless,
         geoip=not args.no_geoip,
+        proxy=_resolve_proxy(args),
     ) as ab:
         snap = ab.navigate(args.url)
         if args.json:
@@ -394,6 +432,35 @@ def _add_engine_flags(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_proxy_flags(p: argparse.ArgumentParser) -> None:
+    """Add the shared ``--proxy`` / ``--dataimpulse`` / ``--proxy-country`` flags.
+
+    ``--proxy`` accepts any proxy URL, plus the special literal value
+    ``dataimpulse`` (equivalent to the ``--dataimpulse`` shortcut) that builds a
+    rotating DataImpulse residential exit, steered by ``--proxy-country``.
+    """
+    p.add_argument(
+        "--proxy",
+        default=None,
+        metavar="URL|dataimpulse",
+        help="proxy server URL, or the literal 'dataimpulse' for a rotating "
+        "DataImpulse residential exit (see --proxy-country)",
+    )
+    p.add_argument(
+        "--dataimpulse",
+        action="store_true",
+        help="use a rotating DataImpulse residential proxy "
+        "(creds from DATAIMPULSE_USERNAME/PASSWORD env or ~/.secrets); "
+        "shorthand for --proxy dataimpulse",
+    )
+    p.add_argument(
+        "--proxy-country",
+        default=None,
+        metavar="CC",
+        help="country code for the DataImpulse exit (lowercase ISO, e.g. 'il')",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wraith",
@@ -412,12 +479,12 @@ def build_parser() -> argparse.ArgumentParser:
         "launch", help="open a stealth browser at a URL"
     )
     p_launch.add_argument("url", help="URL to open")
-    p_launch.add_argument("--proxy", default=None, help="proxy server URL")
     p_launch.add_argument(
         "--no-wait",
         action="store_true",
         help="do not hold the browser open waiting for Enter",
     )
+    _add_proxy_flags(p_launch)
     _add_engine_flags(p_launch)
     p_launch.set_defaults(func=cmd_launch)
 
@@ -438,12 +505,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="cookie host filter (default: derived from URL)",
     )
-    p_borrow.add_argument("--proxy", default=None, help="proxy server URL")
     p_borrow.add_argument(
         "--no-wait",
         action="store_true",
         help="do not hold the browser open waiting for Enter",
     )
+    _add_proxy_flags(p_borrow)
     _add_engine_flags(p_borrow)
     p_borrow.set_defaults(func=cmd_borrow)
 
@@ -489,6 +556,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=120.0,
         help="seconds to wait for the authenticated request (default: 120)",
     )
+    _add_proxy_flags(p_harvest)
     _add_engine_flags(p_harvest)
     p_harvest.set_defaults(func=cmd_harvest)
 
@@ -539,6 +607,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not hold the browser open waiting for Enter (headed only)",
     )
+    _add_proxy_flags(p_agent)
     _add_engine_flags(p_agent)
     p_agent.set_defaults(func=cmd_agent)
 

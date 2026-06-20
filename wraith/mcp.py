@@ -3,45 +3,42 @@ Protocol.
 
 This exposes Wraith's :class:`~wraith.agent.AgentBrowser` (browser-use-style
 perception + action over the Camoufox stealth engine) as a set of MCP tools so
-an LLM client (Claude Desktop, etc.) can navigate, perceive, and act on real
-web pages — passing WAAP challenges and, crucially, *borrowing* a warmed,
-already-authenticated identity from a real on-disk browser profile.
+an LLM client (Claude Desktop / Claude Code, etc.) can navigate, perceive, and
+act on real web pages — passing WAAP challenges and, crucially, *borrowing* a
+warmed, already-authenticated identity from a real on-disk browser profile.
 
 Design notes
 ------------
-* A single lazily-created :class:`AgentBrowser` is shared across tool calls
-  (``_get_browser()``), so the same tab/session persists for the whole MCP
-  session. The first tool that needs a browser launches it; ``import wraith.mcp``
-  on its own never touches Playwright/Camoufox.
-* Every heavy import (``wraith.agent``, ``wraith.detect``, ``wraith.identity``)
-  is done **lazily inside the tools**. This means ``import wraith.mcp`` succeeds
-  even when no browser binary is installed — only *calling* a tool that needs a
-  browser will surface a missing-dependency error, as a returned string rather
-  than an import-time crash.
-* Tool return values are all plain strings (or JSON-serialisable), since MCP
-  tools return text content. Snapshots are returned in browser-use ``.to_text()``
-  form: one line per interactive element, ``[12]<button role=button>Search</button>``.
+* A single lazily-created :class:`AgentBrowser` is shared across tool calls, so
+  the same tab/session (and any borrowed identity) persists for the whole MCP
+  session. ``import wraith.mcp`` on its own never touches Playwright/Camoufox.
+* **Threading:** ``AgentBrowser`` uses the *sync* Playwright API (Camoufox),
+  which refuses to run inside an asyncio event loop and whose objects are
+  thread-affine. FastMCP runs tools in the event loop, so every browser
+  operation is dispatched to a single dedicated worker thread via a
+  ``max_workers=1`` executor (``_run``). The browser is created and used only on
+  that thread, which keeps Playwright happy and the session consistent.
+* Heavy imports (``wraith.agent`` etc.) are done lazily inside the worker so
+  ``import wraith.mcp`` succeeds even without a browser binary installed.
 
 Run it
 ------
-``python -m wraith.mcp`` or the installed console script, or point an MCP client
-at ``wraith.mcp:app`` / call :func:`main`. Requires the ``mcp`` package
-(``pip install mcp``) and a browser engine for the action tools.
+``python -m wraith.mcp`` / the ``wraith-mcp`` console script / ``wraith mcp``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
 from mcp.server.fastmcp import FastMCP
 
-if TYPE_CHECKING:  # pragma: no cover - typing only, never imported at runtime here
+if TYPE_CHECKING:  # pragma: no cover - typing only
     from .agent import AgentBrowser
 
+T = TypeVar("T")
 
-# --------------------------------------------------------------------------- #
-# Server instance
-# --------------------------------------------------------------------------- #
 app = FastMCP(
     "wraith",
     instructions=(
@@ -59,20 +56,25 @@ app = FastMCP(
     ),
 )
 
-
 # --------------------------------------------------------------------------- #
-# Lazy singleton browser
+# Single-thread browser worker (sync Playwright must stay off the event loop)
 # --------------------------------------------------------------------------- #
-# Held at module scope so the same AgentBrowser (and therefore the same tab and
-# borrowed identity) is reused across tool invocations within an MCP session.
+_EXEC = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wraith-browser")
 _browser: "Optional[AgentBrowser]" = None
+
+
+async def _run(fn: "Callable[[], T]") -> T:
+    """Dispatch ``fn`` to the dedicated browser worker thread and await it."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_EXEC, fn)
 
 
 def _get_browser() -> "AgentBrowser":
     """Return the shared AgentBrowser, launching it on first use.
 
-    ``wraith.agent`` is imported here (not at module top) so that merely
-    importing ``wraith.mcp`` does not require Playwright/Camoufox to be present.
+    MUST be called on the worker thread (i.e. from inside a function passed to
+    :func:`_run`), because the AgentBrowser owns thread-affine sync Playwright
+    objects.
     """
     global _browser
     if _browser is None:
@@ -83,7 +85,6 @@ def _get_browser() -> "AgentBrowser":
 
 
 def _reset_browser() -> None:
-    """Close and drop the shared browser (best-effort)."""
     global _browser
     if _browser is not None:
         try:
@@ -94,23 +95,15 @@ def _reset_browser() -> None:
 
 
 def _ctx_from_browser(browser: "AgentBrowser") -> Any:
-    """Best-effort retrieval of the live Playwright BrowserContext.
-
-    The AgentBrowser wraps a :class:`wraith.engine.Session` (which exposes
-    ``.context`` / ``.page``). We probe a few attribute paths defensively so we
-    stay decoupled from the exact attribute name the agent module settles on.
-    """
-    # Direct passthrough, if exposed.
+    """Best-effort retrieval of the live Playwright BrowserContext."""
     ctx = getattr(browser, "context", None)
     if ctx is not None and hasattr(ctx, "add_cookies"):
         return ctx
-    # Via the underlying session.
     session = getattr(browser, "session", None)
     if session is not None:
         ctx = getattr(session, "context", None)
         if ctx is not None and hasattr(ctx, "add_cookies"):
             return ctx
-    # Via the page's context.
     page = getattr(browser, "page", None)
     if page is None and session is not None:
         page = getattr(session, "page", None)
@@ -122,121 +115,89 @@ def _ctx_from_browser(browser: "AgentBrowser") -> Any:
 
 
 # --------------------------------------------------------------------------- #
-# Tools
+# Tools (async wrappers -> sync browser work on the worker thread)
 # --------------------------------------------------------------------------- #
 @app.tool()
-def navigate(url: str) -> str:
+async def navigate(url: str) -> str:
     """Open a URL and return an indexed snapshot of the page's interactive
     elements.
 
     Automatically passes WAAP/anti-bot challenges and dismisses common
-    cookie/consent banners. The returned text lists one interactive element per
-    line as ``[index]<tag role=...>text</tag>``; use the index with `click` /
-    `type_text`.
+    cookie/consent banners. Each line is ``[index]<tag role=...>text</tag>``;
+    use the index with `click` / `type_text`.
     """
-    browser = _get_browser()
-    snapshot = browser.navigate(url)
-    return snapshot.to_text()
+    return await _run(lambda: _get_browser().navigate(url).to_text())
 
 
 @app.tool()
-def snapshot() -> str:
-    """Re-perceive the current page: return a fresh indexed snapshot of its
-    interactive elements (use after the DOM may have changed)."""
-    browser = _get_browser()
-    snap = browser.snapshot()
-    return snap.to_text()
+async def snapshot() -> str:
+    """Re-perceive the current page: a fresh indexed snapshot of its interactive
+    elements (use after the DOM may have changed)."""
+    return await _run(lambda: _get_browser().snapshot().to_text())
 
 
 @app.tool()
-def click(index: int) -> str:
-    """Click the interactive element with the given index (from the latest
-    snapshot) and return the resulting snapshot."""
-    browser = _get_browser()
-    snap = browser.click(index)
-    return snap.to_text()
+async def click(index: int) -> str:
+    """Click the element with the given index (from the latest snapshot) and
+    return the resulting snapshot."""
+    return await _run(lambda: _get_browser().click(index).to_text())
 
 
 @app.tool()
-def type_text(index: int, text: str, enter: bool = False) -> str:
-    """Type ``text`` into the input element with the given index.
-
-    Clears the field first. If ``enter`` is true, presses Enter afterward (e.g.
-    to submit a search). Returns the resulting snapshot.
-    """
-    browser = _get_browser()
-    snap = browser.type(index, text, enter=enter)
-    return snap.to_text()
+async def type_text(index: int, text: str, enter: bool = False) -> str:
+    """Type ``text`` into the input with the given index (clears it first; if
+    ``enter`` is true, presses Enter to submit). Returns the resulting snapshot."""
+    return await _run(lambda: _get_browser().type(index, text, enter=enter).to_text())
 
 
 @app.tool()
-def scroll(direction: str = "down") -> str:
-    """Scroll the page (``"down"`` or ``"up"``) to reveal more content, then
-    return a fresh snapshot."""
-    browser = _get_browser()
-    snap = browser.scroll(direction=direction)
-    return snap.to_text()
+async def scroll(direction: str = "down") -> str:
+    """Scroll the page (``"down"`` or ``"up"``) and return a fresh snapshot."""
+    return await _run(lambda: _get_browser().scroll(direction=direction).to_text())
 
 
 @app.tool()
-def read() -> str:
-    """Return the current page's readable content as markdown/plain text (good
-    for extraction and summarisation, as opposed to acting on elements)."""
-    browser = _get_browser()
-    return browser.read()
+async def read() -> str:
+    """Return the current page's readable content as markdown (for extraction /
+    summarisation, as opposed to acting on elements)."""
+    return await _run(lambda: _get_browser().read())
 
 
 @app.tool()
-def screenshot() -> str:
-    """Capture a screenshot of the current page. Saves it to a temporary PNG
-    file and returns the absolute path."""
+async def screenshot() -> str:
+    """Capture a screenshot of the current page; save it to a temp PNG and return
+    the absolute path."""
+    import os
     import tempfile
 
-    browser = _get_browser()
     fd, path = tempfile.mkstemp(prefix="wraith-shot-", suffix=".png")
-    import os
-
     os.close(fd)
-    browser.screenshot(path=path)
+    await _run(lambda: _get_browser().screenshot(path=path))
     return path
 
 
 @app.tool()
 def detect_waap(url: str) -> list[str]:
-    """Fingerprint a URL's web-application-firewall / anti-bot defenses (e.g.
-    Akamai, Cloudflare, PerimeterX/HUMAN, DataDome). Returns a list of detected
-    vendor/technology names — empty if none were identified.
-
-    This is a passive diagnostic and does not require the browser.
-    """
+    """Fingerprint a URL's WAAP / anti-bot defenses (Akamai, Cloudflare,
+    Reblaze/Link11, DataDome, Incapsula, SiteMinder, reCAPTCHA, ...). Returns a
+    list of detected vendor names — empty if none. Passive; no browser needed."""
     from .detect import identify_waap  # lazy: pulls httpx
 
     return identify_waap(url)
 
 
 @app.tool()
-def borrow(domain: str, profile: Optional[str] = None) -> str:
-    """Borrow a warmed, already-authenticated identity for ``domain`` from a
-    real browser profile on this machine.
+async def borrow(domain: str, profile: Optional[str] = None) -> str:
+    """Borrow a warmed, already-authenticated identity for ``domain`` from a real
+    Firefox/Zen profile on this machine and inject its cookies into the live
+    browser, so subsequent `navigate` calls load as that logged-in user — the
+    core Wraith move for sidestepping reputation-based defenses.
 
-    Extracts cookies scoped to ``domain`` (and its subdomains) from a local
-    Firefox/Zen profile and injects them into the live browser context, so
-    subsequent `navigate` calls load as that already-logged-in user — the core
-    Wraith move for sidestepping reputation-based defenses.
-
-    ``profile`` optionally selects a profile by a substring of its path (e.g.
-    ``"default"`` or a profile name); if omitted, the first discovered Zen
-    profile is used, falling back to the first Firefox profile.
-
-    Returns a human-readable summary of what was borrowed.
+    ``profile`` optionally selects a profile by a path substring; otherwise the
+    first Zen profile is used, falling back to the first Firefox profile.
     """
-    from .identity import (  # lazy
-        extract_cookies,
-        find_firefox_profiles,
-        find_zen_profiles,
-    )
+    from .identity import find_firefox_profiles, find_zen_profiles  # lazy
 
-    # Discover candidate profiles (Zen first — it's the preferred warmed source).
     profiles = list(find_zen_profiles()) + list(find_firefox_profiles())
     if not profiles:
         return "No Firefox/Zen browser profiles found on this machine to borrow from."
@@ -245,43 +206,43 @@ def borrow(domain: str, profile: Optional[str] = None) -> str:
         needle = profile.lower()
         matched = [p for p in profiles if needle in str(p).lower()]
         if not matched:
-            available = ", ".join(str(p) for p in profiles)
             return (
-                f"No profile matching {profile!r} found. "
-                f"Available profiles: {available}"
+                f"No profile matching {profile!r}. Available: "
+                + ", ".join(str(p) for p in profiles)
             )
         chosen = matched[0]
     else:
         chosen = profiles[0]
 
+    from .identity import extract_cookies  # lazy
+
     try:
         cookies = extract_cookies(chosen, domain_filter=domain)
-    except Exception as exc:  # ChromeEncryptionError, FileNotFoundError, ...
+    except Exception as exc:
         return f"Failed to extract cookies from {chosen}: {type(exc).__name__}: {exc}"
-
     if not cookies:
         return (
             f"No cookies for {domain!r} found in profile {chosen}. "
-            "Make sure you have visited/logged into that site in that browser."
+            "Have you logged into that site in that browser?"
         )
 
-    # Need a live context to inject into; this launches the browser if needed.
-    browser = _get_browser()
-    ctx = _ctx_from_browser(browser)
-    if ctx is None:
+    def _inject() -> str:
+        browser = _get_browser()
+        ctx = _ctx_from_browser(browser)
+        if ctx is None:
+            return (
+                f"Extracted {len(cookies)} cookie(s) for {domain!r} from {chosen}, but "
+                "no live context to inject into — call `navigate` first."
+            )
+        from .identity import inject_cookies  # lazy
+
+        n = inject_cookies(ctx, cookies)
         return (
-            f"Extracted {len(cookies)} cookie(s) for {domain!r} from {chosen}, but "
-            "could not access the live browser context to inject them. Try calling "
-            "`navigate` first to ensure a page is open."
+            f"Borrowed {n} cookie(s) for {domain!r} from {chosen}. The browser now "
+            "navigates as that identity — open the site with `navigate`."
         )
 
-    from .identity import inject_cookies  # lazy
-
-    injected = inject_cookies(ctx, cookies)
-    return (
-        f"Borrowed {injected} cookie(s) for {domain!r} from profile {chosen}. "
-        f"The browser now navigates as that identity — open the site with `navigate`."
-    )
+    return await _run(_inject)
 
 
 # --------------------------------------------------------------------------- #

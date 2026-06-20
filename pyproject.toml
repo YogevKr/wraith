@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wraith"
+version = "0.1.0"
+description = "The identity-borrowing stealth browser for autonomous agents."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Yogev" }]
+dependencies = [
+    "camoufox[geoip]",
+    "playwright==1.55.0",
+    "patchright",
+    "httpx",
+]
+
+[project.optional-dependencies]
+# Browser binaries (camoufox Firefox, patchright Chromium) are runtime installs,
+# not pip deps:  `camoufox fetch`  and  `patchright install chromium`.
+dev = ["pytest"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[project.scripts]
+wraith = "wraith.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["wraith"]

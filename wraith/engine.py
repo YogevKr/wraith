@@ -55,6 +55,7 @@ from __future__ import annotations
 import contextlib
 import sys
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
@@ -610,25 +611,149 @@ def browser(
 # --------------------------------------------------------------------------- #
 # WAAP challenge clearing
 # --------------------------------------------------------------------------- #
+def _cookie_pairs(cookies: Any) -> list[tuple[str, str]]:
+    """Best-effort extract ``(name, value)`` pairs from a ``cookies()`` list.
+
+    Duck-typed: accepts a list of dicts (the Playwright shape) or anything that
+    yields mappings/objects with ``name``/``value`` fields. Never raises. The
+    value defaults to ``""`` when absent.
+    """
+    pairs: list[tuple[str, str]] = []
+    try:
+        for ck in cookies or []:
+            if isinstance(ck, dict):
+                name = ck.get("name")
+                value = ck.get("value", "")
+            else:
+                name = getattr(ck, "name", None)
+                value = getattr(ck, "value", "")
+            if name:
+                pairs.append((str(name), "" if value is None else str(value)))
+    except Exception:
+        pass
+    return pairs
+
+
 def _cookie_names(cookies: Any) -> set[str]:
     """Best-effort extract cookie *names* from a Playwright ``cookies()`` list.
 
     Duck-typed: accepts a list of dicts (the Playwright shape) or anything that
     yields mappings/objects with a ``name`` field. Never raises.
     """
-    names: set[str] = set()
+    return {name for name, _ in _cookie_pairs(cookies)}
+
+
+def _load_detect() -> Any:
+    """Import :mod:`wraith.detect` lazily, returning ``None`` on failure.
+
+    Imported lazily (inside callers) to avoid a module-level import cycle:
+    ``detect`` may itself reach for engine helpers. A failed/partial import is
+    non-fatal — callers fall back to the engine's own built-in defaults.
+    """
     try:
-        for ck in cookies or []:
-            name = None
-            if isinstance(ck, dict):
-                name = ck.get("name")
-            else:
-                name = getattr(ck, "name", None)
-            if name:
-                names.add(str(name))
+        from wraith import detect as _detect  # local import: break import cycle
+        return _detect
+    except Exception:  # pragma: no cover - defensive (detect should import)
+        return None
+
+
+def _default_clearance_cookies(detect: Any) -> set[str]:
+    """The default set of clearance-cookie names.
+
+    Prefers :data:`detect.CLEARANCE_COOKIES` (the single source of truth — a
+    ``dict[vendor -> list[name]]`` whose union is the usable default) when the
+    detect module exposes it; otherwise falls back to this module's own
+    :data:`_DEFAULT_CLEARANCE_COOKIES` tuple so the engine stays self-contained
+    if ``detect`` is older / partially built.
+    """
+    table = getattr(detect, "CLEARANCE_COOKIES", None) if detect is not None else None
+    if isinstance(table, Mapping):
+        union: set[str] = set()
+        for names in table.values():
+            try:
+                union.update(str(n) for n in (names or []))
+            except TypeError:
+                continue
+        if union:
+            return union
+    return set(_DEFAULT_CLEARANCE_COOKIES)
+
+
+def _cookie_is_valid(detect: Any, name: str, value: str) -> bool:
+    """Is this clearance cookie actually in a *solved* (pass-granting) state?
+
+    Delegates to :func:`detect.cookie_is_valid` when available (the single
+    source of truth). Otherwise applies the engine's built-in rule, whose only
+    non-trivial case is **Akamai ``_abck``**:
+
+    For most vendors, *presence* of the cookie is sufficient. But Akamai's
+    ``_abck`` is set on the very first response in an *unsolved* state whose
+    value contains the sentinel ``~-1~``; it only flips to a cleared/solved
+    state once the sensor POST is accepted, at which point the value contains
+    ``~0~`` (and no longer ``~-1~``). So a fresh ``_abck`` must NOT be treated
+    as cleared — we require ``~0~`` present and ``~-1~`` absent.
+    """
+    if detect is not None:
+        fn = getattr(detect, "cookie_is_valid", None)
+        if callable(fn):
+            try:
+                return bool(fn(name, value))
+            except Exception:
+                pass
+    # Built-in fallback rule.
+    if name == "_abck":
+        return ("~0~" in value) and ("~-1~" not in value)
+    return True
+
+
+def _pool_next(proxy_pool: Any) -> Optional[str]:
+    """Advance the pool and return the next proxy URL, or ``None``. Never raises.
+
+    Duck-typed against :class:`wraith.proxy.ProxyPool.next`.
+    """
+    if proxy_pool is None:
+        return None
+    nxt = getattr(proxy_pool, "next", None)
+    if not callable(nxt):
+        return None
+    try:
+        result = nxt()
     except Exception:
-        pass
-    return names
+        return None
+    return str(result) if result else None
+
+
+def _pool_mark_bad(proxy_pool: Any, proxy: str) -> None:
+    """Mark a proxy as bad on the pool so it is skipped. Never raises.
+
+    Duck-typed against :class:`wraith.proxy.ProxyPool.mark_bad`.
+    """
+    if proxy_pool is None:
+        return
+    mark = getattr(proxy_pool, "mark_bad", None)
+    if callable(mark):
+        with contextlib.suppress(Exception):
+            mark(proxy)
+
+
+def _behavioral_nudge(page: Any) -> None:
+    """Best-effort human-like activity to lift behavioural scores. Never raises.
+
+    A short cursor move + dwell nudges score-based defenses (Akamai Bot
+    Manager, DataDome, PerimeterX/HUMAN) toward "human" while the challenge is
+    being evaluated. Wrapped so a missing ``behavior`` module, a headless quirk,
+    or an engine without a real mouse is non-fatal.
+    """
+    try:
+        from wraith import behavior as _behavior  # local: keep import light
+    except Exception:
+        return
+    with contextlib.suppress(Exception):
+        _behavior.human_move(page)
+    with contextlib.suppress(Exception):
+        # A *short* dwell — deliberately briefer than behavior.dwell()'s default
+        # 0.4-1.8s so the nudge never dominates a small `timeout` budget.
+        _behavior.dwell(0.1, 0.3)
 
 
 def clear_challenge(
@@ -639,6 +764,7 @@ def clear_challenge(
     timeout: float = 30.0,
     clearance_cookies: Optional["list[str] | tuple[str, ...]"] = None,
     settle: float = 1.0,
+    proxy_pool: Optional["Any"] = None,
     **launch_kw: Any,
 ) -> Session:
     """Navigate to ``url`` and return a Session once the WAAP challenge clears.
@@ -694,10 +820,27 @@ def clear_challenge(
         timeout: Seconds to wait for a clearance cookie / clean settle before
             raising :class:`WaapChallengeTimeout`.
         clearance_cookies: Override the set of cookie names treated as a
-            clearance pass. Defaults to ``waap_id, rbzid, _abck, bm_sz,
-            datadome, visid_incap, reese84``.
+            clearance pass. When ``None`` (default) the set is the union of all
+            :data:`wraith.detect.CLEARANCE_COOKIES` vendor entries (the single
+            source of truth), falling back to this module's built-in
+            ``waap_id, rbzid, _abck, bm_sz, datadome, visid_incap, reese84`` if
+            ``detect`` is unavailable. A clearance cookie counts as a pass ONLY
+            when :func:`wraith.detect.cookie_is_valid` says its *value* is in a
+            solved state — most notably a fresh Akamai ``_abck`` containing the
+            ``~-1~`` sentinel is **not** cleared (it must reach ``~0~``).
         settle: Seconds of post-load grace given to a clean 200 before treating
             it as a cleared / non-WAAP success (lets a late challenge swap in).
+        proxy_pool: Optional rotating-proxy pool (a duck-typed object exposing
+            ``next() -> str | None``, ``mark_bad(str)`` and ``len()`` — e.g.
+            :class:`wraith.proxy.ProxyPool`). Only used when this call **owns**
+            the session (``session is None``): on a :class:`WaapRateLimitedError`
+            (474/481) or :class:`WaapHardBlockError` (492) — both
+            reputation-of-IP problems — the owned session is closed, a fresh one
+            is launched on ``proxy_pool.next()``, and the navigation is retried,
+            bounded by ``len(proxy_pool)`` attempts (the failing proxy is
+            ``mark_bad``-ed first). When a session was *passed in* (we don't own
+            it) rotation is skipped — a live session's proxy can't be changed —
+            and the error is re-raised unchanged.
         **launch_kw: Forwarded to :func:`launch` when self-launching (e.g.
             ``proxy``, ``headless``, ``geoip``, ``locale``, ``timezone``).
 
@@ -705,21 +848,37 @@ def clear_challenge(
         The cleared :class:`Session` (the same object passed in, if any).
 
     Raises:
-        WaapRateLimitedError: top-level navigation returned 474/481.
-        WaapHardBlockError: top-level navigation returned 492.
-        WaapChallengeTimeout: no clearance cookie / clean settle within
-            ``timeout``.
+        WaapRateLimitedError: top-level navigation returned 474/481 and no
+            (further) proxy was available to rotate to.
+        WaapHardBlockError: top-level navigation returned 492 and no (further)
+            proxy was available to rotate to.
+        WaapChallengeTimeout: no valid clearance cookie / clean settle within
+            ``timeout`` (the message names any detected WAAP vendor as a hint).
     """
-    wanted = set(clearance_cookies) if clearance_cookies else set(_DEFAULT_CLEARANCE_COOKIES)
+    import time as _time  # local: keep module import-light & duck-typed
+
+    # detect is the single source of truth for clearance-cookie names and for
+    # whether a cookie *value* is in a solved state. Imported lazily to avoid an
+    # import cycle; falls back to this module's built-ins if unavailable.
+    detect = _load_detect()
+    wanted = (
+        set(clearance_cookies)
+        if clearance_cookies
+        else _default_clearance_cookies(detect)
+    )
 
     owns_session = session is None
-    if owns_session:
-        session = launch(engine=engine, **launch_kw)
 
-    # From here on, a self-launched session must be torn down on any error.
-    try:
-        page = session.page
-        context = session.context
+    def _navigate_and_poll(active: Session) -> Session:
+        """Drive one session: navigate, classify status, then poll to clearance.
+
+        Returns the (same) session on success. Raises
+        :class:`WaapRateLimitedError` / :class:`WaapHardBlockError` on the
+        non-solvable tiers (so the caller may rotate a proxy), or
+        :class:`WaapChallengeTimeout` when no valid clearance appears.
+        """
+        page = active.page
+        context = active.context
 
         # Capture the TOP-LEVEL navigation response status. We attach the
         # listener BEFORE navigating so we never miss the main document
@@ -776,21 +935,26 @@ def clear_challenge(
                 "remove the UA/automation tell rather than retrying."
             )
 
-        # Poll: success is either (a) a clearance cookie appearing, or (b) a
-        # clean 200 with real content (non-WAAP site / already cleared).
-        import time as _time  # local: keep module import-light & duck-typed
+        # Best-effort BEHAVIOURAL NUDGE before polling: a short human-like
+        # cursor move + dwell helps score-based defenses (Akamai Bot Manager,
+        # DataDome, PerimeterX/HUMAN) tip toward "human" while the challenge is
+        # evaluated. Entirely non-fatal.
+        _behavioral_nudge(page)
 
+        # Poll: success is either (a) a *valid* clearance cookie appearing, or
+        # (b) a clean 200 with real content (non-WAAP site / already cleared).
         deadline = _time.monotonic() + float(timeout)
         clean_since: Optional[float] = None
 
         while True:
-            # (a) clearance cookie present?
+            # (a) a wanted clearance cookie present AND in a solved state?
             try:
                 jar = context.cookies()
             except Exception:
                 jar = []
-            if _cookie_names(jar) & wanted:
-                return session
+            for name, value in _cookie_pairs(jar):
+                if name in wanted and _cookie_is_valid(detect, name, value):
+                    return active
 
             # (b) settled on a clean 200 with real content?
             now = _time.monotonic()
@@ -808,20 +972,36 @@ def clear_challenge(
                 elif now - clean_since >= float(settle):
                     # Stable clean page and no clearance cookie => non-WAAP (or
                     # already cleared). Nothing to clear; success.
-                    return session
+                    return active
             else:
                 clean_since = None
 
             if now >= deadline:
                 seen = main_status if main_status is not None else "unknown"
+                # Vendor-aware hint: name any WAAP we can fingerprint on the page
+                # so the caller knows which defense outlasted the timeout.
+                vendor_hint = ""
+                if detect is not None:
+                    ident = getattr(detect, "identify_waap", None)
+                    if callable(ident):
+                        try:
+                            vendors = ident(page) or []
+                        except Exception:
+                            vendors = []
+                        if vendors:
+                            vendor_hint = (
+                                f" Detected WAAP vendor(s): {', '.join(vendors)}."
+                            )
                 raise WaapChallengeTimeout(
-                    f"No clearance cookie appeared for {url} within {timeout:.0f}s "
-                    f"(last top-level status: {seen}). Possible causes: wrong "
-                    "engine for this defense (a Chrome engine vs an ac_v2 247 "
-                    "challenge — use Camoufox/Firefox); the challenge needs "
-                    "longer (raise timeout); if you saw a 247 the solver is too "
-                    "slow this run; if you saw a 474/481 you are silently "
-                    "rate-limited (rotate a residential proxy)."
+                    f"No valid clearance cookie appeared for {url} within "
+                    f"{timeout:.0f}s (last top-level status: {seen}).{vendor_hint} "
+                    "Possible causes: wrong engine for this defense (a Chrome "
+                    "engine vs an ac_v2 247 challenge — use Camoufox/Firefox); "
+                    "the challenge needs longer (raise timeout); a fresh Akamai "
+                    "_abck stuck at '~-1~' (sensor POST not accepted yet); if you "
+                    "saw a 247 the solver is too slow this run; if you saw a "
+                    "474/481 you are silently rate-limited (rotate a residential "
+                    "proxy)."
                 )
 
             # Light poll cadence; tolerate engines without wait_for_timeout.
@@ -829,8 +1009,81 @@ def clear_challenge(
                 page.wait_for_timeout(250)
             except Exception:
                 _time.sleep(0.25)
-    except BaseException:
-        if owns_session and session is not None:
+
+    # ----------------------------------------------------------------------- #
+    # Caller-supplied session: we do NOT own it. No proxy rotation possible
+    # (can't swap a live session's proxy) and we never close it.
+    # ----------------------------------------------------------------------- #
+    if not owns_session:
+        return _navigate_and_poll(session)  # type: ignore[arg-type]
+
+    # ----------------------------------------------------------------------- #
+    # We OWN the session. Launch it (optionally on the first pool proxy) and,
+    # on a reputation-of-IP failure (474/481/492), rotate to the next proxy and
+    # retry — bounded by len(proxy_pool) attempts. The failing session is closed
+    # before each relaunch; the failing proxy is marked bad.
+    # ----------------------------------------------------------------------- #
+    # Total attempts: 1 base attempt, plus one extra per additional pool proxy.
+    try:
+        pool_size = len(proxy_pool) if proxy_pool is not None else 0
+    except Exception:
+        pool_size = 0
+    # Total navigation attempts are bounded by the number of pool proxies (a
+    # rotation can only ever try one IP per proxy). With no pool there is exactly
+    # one attempt. The first attempt draws a pool proxy UNLESS the caller pinned
+    # an explicit proxy in launch_kw (which we honour first, then rotate).
+    max_attempts = max(1, pool_size)
+    explicit_proxy = launch_kw.get("proxy") is not None
+    draw_on_first = proxy_pool is not None and not explicit_proxy
+
+    current_proxy: Optional[str] = None
+    last_rotatable_exc: Optional[WraithEngineError] = None
+    active: Optional[Session] = None
+
+    for attempt in range(max_attempts):
+        # Pick this attempt's proxy. The first attempt either honours the
+        # caller's explicit proxy (current_proxy stays None — not pool-owned) or
+        # draws the first pool proxy; later attempts always draw from the pool.
+        if attempt > 0 or draw_on_first:
+            current_proxy = _pool_next(proxy_pool)
+            if current_proxy is None:
+                break  # pool exhausted — surface the last rotatable error
+            launch_kw = {**launch_kw, "proxy": current_proxy}
+
+        try:
+            active = launch(engine=engine, **launch_kw)
+        except WraithEngineError:
+            # A launch failure on a pool proxy: mark it bad before propagating.
+            if current_proxy is not None and proxy_pool is not None:
+                _pool_mark_bad(proxy_pool, current_proxy)
+            raise
+
+        try:
+            return _navigate_and_poll(active)
+        except (WaapRateLimitedError, WaapHardBlockError) as exc:
+            # Reputation-of-IP failure. Tear down this session; if the pool has
+            # another proxy, rotate and retry. Otherwise re-raise.
+            last_rotatable_exc = exc
             with contextlib.suppress(Exception):
-                session.close()
-        raise
+                active.close()
+            active = None
+            if current_proxy is not None and proxy_pool is not None:
+                _pool_mark_bad(proxy_pool, current_proxy)
+            if proxy_pool is None or attempt + 1 >= max_attempts:
+                raise
+            # else: loop to the next proxy.
+        except BaseException:
+            # Any other failure (timeout, etc.): close the owned session and
+            # propagate — rotation only helps reputation-of-IP tiers.
+            with contextlib.suppress(Exception):
+                active.close()
+            raise
+
+    # Pool exhausted without clearing. Re-raise the last reputation-of-IP error.
+    if last_rotatable_exc is not None:
+        raise last_rotatable_exc
+    # Defensive: should be unreachable (max_attempts >= 1 always runs the body).
+    raise WaapChallengeTimeout(  # pragma: no cover
+        f"Exhausted all {max_attempts} proxy attempt(s) clearing {url} "
+        "without a result."
+    )

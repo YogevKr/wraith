@@ -27,6 +27,67 @@ strategy from `PLAYBOOK.md`.
 
 ---
 
+## Coverage matrix
+
+The complete vendor set Wraith fingerprints, with the signals each is detected
+by, the realistic clearance approach, the **tier** (how hard it is to get
+through), and a rough **confidence** in detection. This is the canonical summary
+— deeper per-vendor notes follow in the numbered sections.
+
+**Tier legend** — the *cost* of getting through, not of detecting:
+- **Tier 1 — engine-passes:** a clean stealth engine (Camoufox primary,
+  patchright fallback) clears it natively, often cookie-free, plus a decent exit
+  IP. No solver, no behavior loop needed.
+- **Tier 2 — smarter:** needs a *clean engine + a behavioral nudge* (modest
+  mouse/typing entropy, `clear_challenge`'s pre-poll `human_move` + dwell) and a
+  cookie that only counts once it reaches its *solved* state — most importantly
+  Akamai `_abck`, which is valid only when its value contains `~0~` and **not**
+  `~-1~` (see `cookie_is_valid` below).
+- **Tier 3 — solver-needed:** Wraith **cannot** clear it head-on. These are
+  reputation scores (reCAPTCHA v3), interactive CAPTCHAs (hCaptcha, the
+  reCAPTCHA/DataDome/Turnstile *challenge* path), or VM-grade integrity
+  (Kasada, F5 Shape). The realistic route is **identity borrowing / token
+  harvesting** (inject a warmed session) or an external CAPTCHA-solver service —
+  *not* something the engine solves. **Do not assume Tier 3 is beaten; treat it
+  as "needs an outside solver or a borrowed identity."**
+
+`Confidence` reflects how reliably the *fingerprint* fires from a single probe:
+**High** = unambiguous header/cookie tells; **Med** = tells that overlap with a
+plain CDN/auth deployment or only appear after JS/challenge.
+
+| Vendor | Detect signals (headers / cookies / script-src / JS globals / status) | Clearance approach | Tier | Confidence |
+| --- | --- | --- | --- | --- |
+| **Reblaze / Link11** | `server: rhino-core-shield`; cookies `waap_id`, `rbzid`; status **247/248** and **474/481/492**; body `window.rbzns` / `winsocks()` / `bereshit` | Camoufox solves `ac_v2` **cookie-free** (Firefox skips the `isChrome()` cluster); clearance cookies `waap_id`,`rbzid` get minted. 474/481 = IP tier → rotate proxy | **1** | High |
+| **Cloudflare** | `cf-ray`; `server: cloudflare`; cookies `__cf_bm`, `cf_clearance`; "Just a moment…" interstitial; Turnstile script `challenges.cloudflare.com` | Managed/JS challenge → clean engine mints `cf_clearance` (Tier 1). An **interactive Turnstile** widget → solver/identity (Tier 3) | **1** (Turnstile→3) | High |
+| **Akamai Bot Manager** | cookies `_abck`, `bm_sz`, `ak_bmsc`, `bm_sv`, `AKA_A2`; header `x-akamai-transformed`; `server: AkamaiGHost` | Clean engine + **behavioral nudge**; success only when `_abck` reaches solved `~0~` state (not `~-1~`). Prefer identity borrowing for a session | **2** | High |
+| **DataDome** | cookie `datadome`; header `x-datadome`; scripts `js.datadome.co`, `captcha-delivery.com` | Clean engine + behavioral nudge mints a trusted `datadome` cookie. If it serves the **CAPTCHA interstitial** → solver/identity (Tier 3) | **2** (CAPTCHA→3) | High |
+| **PerimeterX / HUMAN** | cookies `_px`, `_px2`, `_px3`, `_pxhd`, `_pxvid`; script `client.perimeterx.net` | Clean engine + behavioral nudge; `_px3` is the trust cookie. Hard cases → identity borrowing | **2** | High |
+| **Imperva / Incapsula** | cookies `visid_incap_*`, `incap_ses_*`, `reese84`, `nlbi_*`; header `x-iinfo`; `x-cdn: Incapsula`; path `/_Incapsula_Resource` | JS challenge mints `reese84` + `visid_incap`; fingerprint-consistency is the lever (Tier 2 clean engine) | **2** | High |
+| **AWS WAF** | cookie/token `aws-waf-token`; headers `x-amzn-waf-*` | JS/CAPTCHA challenge → clean engine mints `aws-waf-token` (Tier 1–2). The **CAPTCHA/Challenge** action needs a solver (Tier 3) | **1–2** | Med |
+| **F5 BIG-IP / Shape** | BIG-IP persistence cookies `BIGipServer*`, `TS*`-style cookies | BIG-IP-only is just LB persistence (Tier 2 clean engine, `TS*` cookie). **Shape/Distributed Cloud Bot Defense** is VM-grade → solver/identity (Tier 3) | **2** (Shape→3) | Med |
+| **Kasada** | headers `x-kpsdk-ct`, `x-kpsdk-cd`, `x-kpsdk-r`; script `/ips.js`; telemetry POST `/tl` | VM-based integrity + PoW; **no casual bypass.** Token harvesting / identity borrowing is the only realistic route | **3** | High |
+| **reCAPTCHA (v3)** | `grecaptcha` global; `www.google.com/recaptcha/api.js`; token `g-recaptcha-response` | **Not solvable** — a reputation *score*, not a gate. **Borrow a warmed identity** and skip the gated step. No clearance cookie | **3** | High |
+| **hCaptcha** | scripts/iframe `hcaptcha.com`; widget `h-captcha` | Interactive CAPTCHA — needs a human or an external **solver service**; no clearance cookie | **3** | High |
+| **CA / Broadcom SiteMinder** | cookie `SMSESSION` (`=LOGGEDOFF` ⇒ none); redirects via `/siteminderagent/`; `SMCHALLENGE`, `SMIDENTITY` | **Not bot-defense — IAM/SSO.** No fingerprinting to beat; **borrow/harvest a valid `SMSESSION`** to act authenticated | **n/a (IAM)** | High |
+
+### Cookie validity is not just presence — `cookie_is_valid(name, value)`
+
+For most vendors a clearance cookie's mere **presence** in the jar means the
+defense handed out a pass. The critical exception is **Akamai `_abck`**:
+
+- A **fresh / unsolved** `_abck` contains **`~-1~`** — the bot cookie exists but
+  is in its *unvalidated* state. Treating its presence as "cleared" is a false
+  positive that bit earlier runs.
+- A **solved** `_abck` contains **`~0~`** (and not `~-1~`). Only then has the
+  sensor data been accepted.
+
+So `detect.cookie_is_valid(name, value)` returns presence==valid for everything
+**except** `_abck`, where it requires the value to contain `~0~` and not `~-1~`.
+`clear_challenge` uses this so a `~-1~` `_abck` does **not** count as success
+(see `PLAYBOOK.md §2b`).
+
+---
+
 ## 1. Reblaze / Link11 (`ac_v2`) — the headline target
 
 Reblaze (acquired by Link11) fronts the EL AL stack. There is **no public

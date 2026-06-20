@@ -21,6 +21,19 @@ SiteMinder):
   front of a URL from its response headers, cookies and status codes, so the
   caller can pick the right engine/strategy before wasting a session.
 
+The WAAP layer is driven by a single source of truth, :data:`SIGNATURES`, a
+table of vendor signatures (response headers, set-cookie/cookie names,
+script-src hosts, in-page JS globals, status codes). On top of it sit:
+
+* :func:`identify_waap` — back-compatible ``list[str]`` of vendor names;
+* :func:`fingerprint` — a richer structured ``dict`` (per-vendor tier,
+  strategy, evidence, clearance cookies);
+* :data:`CLEARANCE_COOKIES` — ``{vendor: [cookie names]}`` whose union is the
+  default set of cookies the engine polls for when clearing a challenge;
+* :func:`cookie_is_valid` — whether a clearance cookie's *value* actually
+  represents a solved/cleared state (the Akamai ``_abck`` ``~0~``/``~-1~``
+  subtlety lives here).
+
 httpx is used for cheap header-only probes; Playwright is used wherever the
 signal only exists after JavaScript runs (the reCAPTCHA score and the
 bot-detector results are both JS-rendered).
@@ -30,8 +43,9 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping, Union
+from typing import Any, Mapping, Sequence, Union
 
 import httpx
 
@@ -41,6 +55,11 @@ __all__ = [
     "recaptcha_v3_score",
     "bot_detector",
     "identify_waap",
+    "fingerprint",
+    "Signature",
+    "SIGNATURES",
+    "CLEARANCE_COOKIES",
+    "cookie_is_valid",
 ]
 
 # Public test endpoints used by the JS-rendered probes.
@@ -366,11 +385,25 @@ def bot_detector(page: Any) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# WAAP / anti-bot vendor fingerprinting
+# WAAP / anti-bot vendor fingerprinting — the signature table
 # ---------------------------------------------------------------------------
-
-# Vendor signatures, checked against the response's headers, set cookies,
-# status code and (when available) JS-rendered globals.
+#
+# `SIGNATURES` is the single source of truth for vendor detection AND for the
+# clearance specs the engine consumes. Each `Signature` declares the signals
+# that prove a vendor is present, plus how hard it is to get past and which
+# cookies (if any) mark a cleared session.
+#
+# Matching is intentionally cheap and offline: we only look at response headers,
+# Set-Cookie / cookie names, the response body (script-src hosts and in-page JS
+# globals show up as substrings there) and the status code. JS-only globals that
+# appear only after rendering are best detected by passing a Playwright page (see
+# `fingerprint`), but most also leave a substring tell in the served HTML.
+#
+# Tiers (how the rest of Wraith should treat the vendor):
+#   1 — engine choice alone usually passes (a good stealth browser clears it).
+#   2 — needs a smarter approach (behavioral nudge, warmed identity, retries).
+#   3 — a human-grade solver / CAPTCHA or IAM credential is required; no
+#       cookie-poll clearance is possible from automation alone.
 #
 # Reblaze / Link11 is the one we care most about: no public bypass exists for
 # it (even commercial multi-WAF SDKs skip it). Tells, all empirically seen on
@@ -378,7 +411,7 @@ def bot_detector(page: Any) -> dict:
 #   * Server header literally "rhino-core-shield"
 #   * cookies waap_id and/or rbzid
 #   * non-standard statuses 247 (JS challenge), 248 (token exchange),
-#     492 (hard block — e.g. UA contains "HeadlessChrome")
+#     474/481 (IP rate-limit), 492 (hard block — e.g. UA "HeadlessChrome")
 #   * challenge page sets window.rbzns = {seed, bereshit:'1'} and calls
 #     winsocks()
 #
@@ -387,111 +420,574 @@ def bot_detector(page: Any) -> dict:
 # identity-borrowing approach beats it where solvers can't.)
 
 
-def _vendor_checks(
-    headers: Mapping[str, str],
-    cookies: Mapping[str, str],
-    status: int | None,
-    body: str | None,
-) -> list[str]:
-    """Pure mapping of normalised signals -> vendor names. Order = stable."""
-    # Normalise: lowercase header names and cookie names for case-insensitive
-    # matching; keep values as-is (some matches are substring on value).
-    h = {k.lower(): (v or "") for k, v in headers.items()}
-    hvals = " ".join(h.values()).lower()
-    ck = {k.lower(): (v or "") for k, v in cookies.items()}
-    b = (body or "").lower()
+@dataclass(frozen=True)
+class Signature:
+    """One vendor's detection signature + clearance spec.
 
-    def has_header(name: str) -> bool:
-        return name.lower() in h
+    Detection is the OR of every populated signal field below; the first that
+    matches flags the vendor. All matching is case-insensitive.
 
-    def header_contains(name: str, needle: str) -> bool:
-        return needle.lower() in h.get(name.lower(), "").lower()
+    :param name: canonical vendor name (the string ``identify_waap`` returns).
+    :param tier: 1 (engine passes) / 2 (smarter) / 3 (solver/IAM needed).
+    :param strategy: a short human hint on how to get past this vendor.
+    :param clearance_cookies: cookies whose presence (and, per
+        :func:`cookie_is_valid`, value) marks a cleared session. May be empty
+        for IAM gateways and pure-CAPTCHA vendors where no cookie clears.
+    :param headers: header names whose mere presence flags the vendor.
+    :param header_contains: ``{header: substring}`` value matches.
+    :param server: substrings to look for in the ``Server`` header.
+    :param header_substr_any: substrings matched against ANY header name OR
+        value (catches vendor names sprayed across odd custom headers).
+    :param cookies: cookie names whose presence flags the vendor.
+    :param cookie_prefixes: cookie-name prefixes (e.g. ``visid_incap``) — match
+        any cookie whose name starts with one of these.
+    :param body: substrings to look for in the response body (script-src hosts
+        and in-page JS globals show up here).
+    :param statuses: non-standard status codes that flag the vendor.
+    """
 
-    def any_header_contains(needle: str) -> bool:
-        return needle.lower() in hvals or any(
-            needle.lower() in k for k in h
+    name: str
+    tier: int
+    strategy: str
+    clearance_cookies: tuple[str, ...] = ()
+    headers: tuple[str, ...] = ()
+    header_contains: tuple[tuple[str, str], ...] = ()
+    server: tuple[str, ...] = ()
+    header_substr_any: tuple[str, ...] = ()
+    cookies: tuple[str, ...] = ()
+    cookie_prefixes: tuple[str, ...] = ()
+    body: tuple[str, ...] = ()
+    statuses: tuple[int, ...] = ()
+
+
+# Order matters: it determines the stable order of `identify_waap`'s output.
+# Reblaze first (our headline target), then the heavyweight WAAPs, then the
+# CDN/edge ones, then the CAPTCHA widgets and IAM gateways.
+SIGNATURES: tuple[Signature, ...] = (
+    Signature(
+        name="Reblaze/Link11",
+        tier=3,  # ac_v2 one-shot hashcash; no public solver — engine + identity.
+        strategy="camoufox/firefox engine + warmed identity; ac_v2 has no public solver",
+        clearance_cookies=("waap_id", "rbzid"),
+        server=("rhino-core-shield",),
+        header_substr_any=("rhino-core-shield",),
+        cookies=("waap_id", "rbzid"),
+        body=("window.rbzns", "bereshit", "winsocks"),
+        statuses=(247, 248, 474, 481, 492),
+    ),
+    Signature(
+        name="Akamai",
+        tier=2,  # behavioral + fingerprint; needs a nudge + warmed session.
+        strategy="behavioral nudge + warmed identity; _abck must reach the ~0~ solved state",
+        clearance_cookies=("_abck", "bm_sz"),
+        headers=("x-akamai-transformed",),
+        server=("akamaighost", "akamai"),
+        header_substr_any=("akamaighost",),
+        cookies=("_abck", "bm_sz", "ak_bmsc", "bm_sv", "aka_a2"),
+        body=("akam",),
+    ),
+    Signature(
+        name="DataDome",
+        tier=2,  # fingerprint + behavioral; device-check/CAPTCHA interstitial.
+        strategy="behavioral nudge + warmed identity; may serve a captcha-delivery interstitial",
+        clearance_cookies=("datadome",),
+        headers=("x-datadome", "x-datadome-cid", "x-dd-b"),
+        header_substr_any=("datadome",),
+        cookies=("datadome",),
+        body=("js.datadome.co", "captcha-delivery.com", "datadome"),
+    ),
+    Signature(
+        name="PerimeterX/HUMAN",
+        tier=2,  # PX/HUMAN behavioral scoring; needs a nudge + warmed session.
+        strategy="behavioral nudge + warmed identity; HUMAN scores continuously",
+        clearance_cookies=("_px", "_px2", "_px3"),
+        headers=("x-px",),
+        cookies=("_px", "_px2", "_px3", "_pxhd", "_pxvid", "_pxde"),
+        body=("client.perimeterx.net", "perimeterx", "px-captcha", "_pxAppId"),
+    ),
+    Signature(
+        name="Kasada",
+        tier=3,  # ips.js POST-to-/tl token exchange; no public cookie clearance.
+        strategy="no public bypass; requires solving the ips.js /tl telemetry exchange",
+        clearance_cookies=(),
+        headers=("x-kpsdk-ct", "x-kpsdk-cd", "x-kpsdk-r", "x-kpsdk-v"),
+        header_substr_any=("kpsdk",),
+        body=("/ips.js", "kpsdk", "KPSDK"),
+    ),
+    Signature(
+        name="Imperva/Incapsula",
+        tier=2,  # reese84 JS challenge; interstitial "Incapsula incident ID".
+        strategy="solve the reese84 JS challenge via a real engine; warmed identity helps",
+        clearance_cookies=("visid_incap", "incap_ses", "reese84"),
+        headers=("x-iinfo",),
+        header_contains=(("x-cdn", "incapsula"),),
+        header_substr_any=("incapsula",),
+        cookies=("reese84",),
+        cookie_prefixes=("visid_incap", "incap_ses", "nlbi_"),
+        body=("/_incapsula_resource", "incapsula incident", "incapsula"),
+    ),
+    Signature(
+        name="Cloudflare",
+        tier=2,  # Turnstile / "Just a moment" JS challenge; cf_clearance clears it.
+        strategy="real engine clears the JS challenge; Turnstile may need a solver",
+        clearance_cookies=("cf_clearance",),
+        headers=("cf-ray", "cf-mitigated"),
+        server=("cloudflare",),
+        cookies=("cf_clearance", "__cf_bm"),
+        body=(
+            "just a moment",
+            "challenges.cloudflare.com",
+            "cf-turnstile",
+            "/cdn-cgi/challenge-platform",
+        ),
+    ),
+    Signature(
+        name="AWS WAF",
+        tier=2,  # token-based WAF; aws-waf-token cookie marks a cleared session.
+        strategy="real engine solves the WAF challenge to mint aws-waf-token",
+        clearance_cookies=("aws-waf-token",),
+        headers=("x-amzn-waf-action",),
+        header_substr_any=("x-amzn-waf-",),
+        cookies=("aws-waf-token",),
+        body=("token.awswaf.com", "challenge.js"),
+    ),
+    Signature(
+        name="F5 BIG-IP/Shape",
+        tier=2,  # F5/Shape bot defense; opaque TS* tokens, BIGipServer* persistence.
+        strategy="real engine + warmed identity; Shape (F5 Distributed Cloud) scores behavior",
+        clearance_cookies=(),
+        cookie_prefixes=("BIGipServer", "TS"),
+        body=("/TSPD/", "BIGipServer"),
+    ),
+    Signature(
+        name="reCAPTCHA",
+        tier=3,  # v2 needs a solver; v3 is a reputation score with NO solver.
+        strategy="v3 has no solver — borrow a warmed identity (see recaptcha_v3_score); v2 needs a human/solver",
+        clearance_cookies=(),
+        body=(
+            "grecaptcha",
+            "recaptcha/api.js",
+            "www.google.com/recaptcha",
+            "google.com/recaptcha",
+            "g-recaptcha",
+        ),
+    ),
+    Signature(
+        name="hCaptcha",
+        tier=3,  # interactive CAPTCHA; needs a human-grade solver.
+        strategy="interactive CAPTCHA — needs a human-grade solver or warmed identity",
+        clearance_cookies=(),
+        body=("hcaptcha.com", "h-captcha", "js.hcaptcha.com"),
+    ),
+    Signature(
+        name="SiteMinder",
+        tier=3,  # CA/Broadcom IAM SSO gateway; auth, not a bot challenge — no cookie poll clears it.
+        strategy="IAM SSO gateway — needs valid credentials, not a bot bypass",
+        clearance_cookies=(),
+        cookies=("smsession", "smidentity", "smchallenge"),
+        header_substr_any=("siteminder",),
+        body=("/siteminderagent/", "siteminder"),
+    ),
+)
+
+
+def _signatures_by_name() -> dict[str, Signature]:
+    return {sig.name: sig for sig in SIGNATURES}
+
+
+# ``{vendor: [clearance cookie names]}`` — built straight from SIGNATURES so the
+# table stays the single source of truth. The union of every value is the
+# default set of cookies the engine polls for when clearing a challenge.
+CLEARANCE_COOKIES: dict[str, list[str]] = {
+    sig.name: list(sig.clearance_cookies)
+    for sig in SIGNATURES
+    if sig.clearance_cookies
+}
+
+
+# ---------------------------------------------------------------------------
+# Clearance-cookie validity
+# ---------------------------------------------------------------------------
+
+def cookie_is_valid(name: str, value: str) -> bool:
+    """Is a clearance cookie's *value* actually in a cleared/solved state?
+
+    For most WAAP clearance cookies presence is enough: if the defense set the
+    cookie at all, the session is (or is about to be) cleared, so any non-empty
+    value counts as valid.
+
+    SPECIAL CASE — Akamai ``_abck``: presence is NOT enough. Akamai sets an
+    ``_abck`` cookie *immediately*, long before the Bot Manager has decided you
+    are human. The cookie's value carries the verdict in a ``~N~``-delimited
+    field:
+
+      * a fresh / unsolved ``_abck`` contains ``~-1~``  (sensor not yet
+        accepted — you are still being challenged), e.g.
+        ``...~-1~-1~-1`` ;
+      * a *solved* ``_abck`` contains ``~0~`` and NOT ``~-1~`` (sensor accepted
+        — you have cleared), e.g. ``...~0~-1~...`` only flips to all-zero once
+        cleared, so we require ``~0~`` present AND ``~-1~`` absent.
+
+    So we treat ``_abck`` as valid only when its value contains ``~0~`` and does
+    NOT contain ``~-1~``. This is why the engine must keep polling after the
+    first ``_abck`` appears: the initial one is the ``~-1~`` unsolved form and
+    must not be counted as a pass.
+
+    :param name: cookie name (case-insensitive for the special cases).
+    :param value: cookie value as stored in the jar.
+    :returns: True if the cookie value represents a cleared/solved session.
+    """
+    if value is None:
+        return False
+    v = str(value).strip()
+    if not v:
+        return False
+
+    lname = name.lower()
+
+    # Akamai _abck: solved only once the value reaches the ~0~ state and no
+    # longer carries the ~-1~ unsolved marker.
+    if lname == "_abck":
+        return ("~0~" in v) and ("~-1~" not in v)
+
+    # Everything else: presence (non-empty value) == valid.
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Signal extraction (shared by identify_waap / fingerprint)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _Signals:
+    """Normalised signals pulled off a target, ready for signature matching."""
+
+    headers: dict[str, str] = field(default_factory=dict)  # lower-name -> value
+    cookies: dict[str, str] = field(default_factory=dict)  # name -> value
+    status: int | None = None
+    body: str = ""
+    url: str | None = None
+
+    # Pre-computed lowercased helpers.
+    _header_blob: str = ""
+    _cookies_lower: dict[str, str] = field(default_factory=dict)
+    _body_lower: str = ""
+
+    def finalize(self) -> "_Signals":
+        self.headers = {k.lower(): (v or "") for k, v in self.headers.items()}
+        self._header_blob = " ".join(
+            f"{k} {v}" for k, v in self.headers.items()
+        ).lower()
+        self._cookies_lower = {k.lower(): (v or "") for k, v in self.cookies.items()}
+        self._body_lower = (self.body or "").lower()
+        return self
+
+
+def _match_signature(sig: Signature, sig_signals: _Signals) -> list[str]:
+    """Return the list of evidence strings proving ``sig`` matched (empty=no match)."""
+    h = sig_signals.headers
+    hblob = sig_signals._header_blob
+    ck = sig_signals._cookies_lower
+    b = sig_signals._body_lower
+    evidence: list[str] = []
+
+    for name in sig.headers:
+        if name.lower() in h:
+            evidence.append(f"header:{name}")
+
+    for name, needle in sig.header_contains:
+        if needle.lower() in h.get(name.lower(), "").lower():
+            evidence.append(f"header:{name}~={needle}")
+
+    for needle in sig.server:
+        if needle.lower() in h.get("server", "").lower():
+            evidence.append(f"server~={needle}")
+
+    for needle in sig.header_substr_any:
+        if needle.lower() in hblob:
+            evidence.append(f"header*~={needle}")
+
+    for name in sig.cookies:
+        if name.lower() in ck:
+            evidence.append(f"cookie:{name}")
+
+    for prefix in sig.cookie_prefixes:
+        pl = prefix.lower()
+        if any(k.startswith(pl) for k in ck):
+            evidence.append(f"cookie:{prefix}*")
+
+    for needle in sig.body:
+        if needle.lower() in b:
+            evidence.append(f"body~={needle}")
+
+    if sig_signals.status is not None and sig_signals.status in sig.statuses:
+        evidence.append(f"status:{sig_signals.status}")
+
+    return evidence
+
+
+def _match_all(sig_signals: _Signals) -> list[tuple[Signature, list[str]]]:
+    """Match every signature, preserving SIGNATURES order. Returns (sig, evidence)."""
+    out: list[tuple[Signature, list[str]]] = []
+    for sig in SIGNATURES:
+        evidence = _match_signature(sig, sig_signals)
+        if evidence:
+            out.append((sig, evidence))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Target -> signals adapters (URL str / httpx.Response / Playwright page)
+# ---------------------------------------------------------------------------
+
+# A small set of JS globals we read off a live Playwright page to catch tells
+# that only exist after the vendor's script runs. Mapped to the body substring
+# the corresponding signature already looks for, so a hit lands on the right
+# vendor without growing the signature schema.
+_PAGE_JS_GLOBAL_PROBE = r"""
+() => {
+  const present = [];
+  const checks = {
+    'grecaptcha': typeof window.grecaptcha !== 'undefined',
+    'hcaptcha': typeof window.hcaptcha !== 'undefined',
+    'window.rbzns': typeof window.rbzns !== 'undefined',
+    'datadome': typeof window.DataDome !== 'undefined' || typeof window.dd !== 'undefined',
+    'perimeterx': typeof window._pxAppId !== 'undefined' || typeof window.PX !== 'undefined',
+    'kpsdk': typeof window.KPSDK !== 'undefined',
+  };
+  for (const [k, v] of Object.entries(checks)) { if (v) present.push(k); }
+  return present;
+}
+"""
+
+
+def _signals_from_httpx(resp: httpx.Response) -> _Signals:
+    return _Signals(
+        headers=dict(resp.headers),
+        cookies=_cookies_from_headers(
+            resp.headers,
+            resp.headers.get_list("set-cookie")
+            if hasattr(resp.headers, "get_list")
+            else None,
+        ),
+        status=resp.status_code,
+        body=_safe_text(resp) or "",
+        url=str(resp.request.url) if resp.request is not None else None,
+    ).finalize()
+
+
+def _signals_from_url(url: str) -> _Signals:
+    with httpx.Client(
+        follow_redirects=True,
+        timeout=20.0,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            )
+        },
+    ) as client:
+        resp = client.get(url)
+    sig = _signals_from_httpx(resp)
+    sig.url = url
+    return sig
+
+
+def _is_playwright_page(obj: Any) -> bool:
+    """A Playwright Page exposes both goto() and context."""
+    return (
+        hasattr(obj, "goto")
+        and callable(getattr(obj, "goto"))
+        and hasattr(obj, "context")
+    )
+
+
+def _signals_from_page(page: Any) -> _Signals:
+    """Pull signals off a *live* Playwright page (cookies, body, JS globals).
+
+    A page has no single response object, so we read what is observable now:
+    the cookie jar, the rendered HTML (which carries script-src hosts and most
+    in-page tells), the URL, and a handful of JS globals. Headers and status are
+    not reliably available from a Page alone, so they stay empty.
+    """
+    cookies: dict[str, str] = {}
+    body = ""
+    url: str | None = None
+    extra_body_tells: list[str] = []
+
+    try:
+        url = page.url
+    except Exception:
+        url = None
+
+    try:
+        jar = page.context.cookies()
+        cookies = {c["name"]: c.get("value", "") for c in jar if "name" in c}
+    except Exception:
+        cookies = {}
+
+    try:
+        body = page.content() or ""
+    except Exception:
+        body = ""
+
+    try:
+        present = page.evaluate(_PAGE_JS_GLOBAL_PROBE)
+        if isinstance(present, (list, tuple)):
+            extra_body_tells = [str(x) for x in present]
+    except Exception:
+        extra_body_tells = []
+
+    # Fold the JS-global hits into the body blob so signature body-matching
+    # picks them up (each probe key is also a body substring some signature
+    # already looks for).
+    if extra_body_tells:
+        body = body + "\n" + "\n".join(extra_body_tells)
+
+    return _Signals(headers={}, cookies=cookies, status=None, body=body, url=url).finalize()
+
+
+def _signals_from_target(target: Any) -> _Signals:
+    """Duck-type ``target`` into normalised signals.
+
+    ``target`` may be a URL ``str`` (an httpx GET is issued), an
+    ``httpx.Response`` (analysed directly), a live Playwright ``Page`` (cookies
+    + body + JS globals are read), or a Playwright ``Response`` (headers +
+    status + body, plus the owning context's cookies if reachable).
+    """
+    if isinstance(target, str):
+        return _signals_from_url(target)
+
+    if isinstance(target, httpx.Response):
+        return _signals_from_httpx(target)
+
+    if _is_playwright_page(target):
+        return _signals_from_page(target)
+
+    # Otherwise: treat as a Playwright Response (duck-typed: .headers/.status).
+    return _signals_from_playwright_response(target)
+
+
+def _signals_from_playwright_response(resp: Any) -> _Signals:
+    try:
+        raw_headers = resp.headers  # dict in Playwright
+    except Exception as exc:  # pragma: no cover - bad input
+        raise TypeError(
+            "identify_waap/fingerprint expect a URL str, httpx.Response, "
+            "Playwright Page, or Playwright Response "
+            f"(got {type(resp).__name__})"
+        ) from exc
+
+    headers = dict(raw_headers) if isinstance(raw_headers, Mapping) else dict(raw_headers)
+    # Playwright merges Set-Cookie into the headers dict (comma-joined).
+    cookies = _cookies_from_headers(headers)
+    # Augment with the real cookie jar from the owning context if reachable.
+    cookies.update(_playwright_response_cookies(resp))
+
+    status = getattr(resp, "status", None)
+    if callable(status):  # some bindings expose status() as a method
+        try:
+            status = status()
+        except Exception:
+            status = None
+
+    url = None
+    try:
+        url = resp.url
+        if callable(url):
+            url = url()
+    except Exception:
+        url = None
+
+    return _Signals(
+        headers=headers,
+        cookies=cookies,
+        status=status if isinstance(status, int) else None,
+        body=_playwright_response_body(resp) or "",
+        url=url if isinstance(url, str) else None,
+    ).finalize()
+
+
+# ---------------------------------------------------------------------------
+# Public WAAP API
+# ---------------------------------------------------------------------------
+
+def identify_waap(url_or_response: Union[str, httpx.Response, Any]) -> list[str]:
+    """Fingerprint the WAAP/anti-bot vendor(s) in front of a target.
+
+    Accepts either:
+      * a URL string — an httpx GET is issued (redirects followed, browser-ish
+        UA) and its headers/cookies/status/body are analysed; or
+      * an ``httpx.Response`` — analysed directly (no network call); or
+      * a live Playwright ``Page`` — its cookies, rendered HTML and a few JS
+        globals are analysed; or
+      * a Playwright ``Response`` — its headers, status and body are analysed,
+        plus the owning context's cookies if reachable.
+
+    Returns a de-duplicated, stably-ordered (``SIGNATURES`` order) list of
+    detected vendor names — e.g. ``Reblaze/Link11``, ``Akamai``, ``DataDome``,
+    ``PerimeterX/HUMAN``, ``Kasada``, ``Imperva/Incapsula``, ``Cloudflare``,
+    ``AWS WAF``, ``F5 BIG-IP/Shape``, ``reCAPTCHA``, ``hCaptcha``,
+    ``SiteMinder``. Empty list means none recognised.
+
+    This is the back-compatible thin wrapper over :func:`fingerprint`; use
+    :func:`fingerprint` when you want tiers, strategies and evidence.
+    """
+    sig_signals = _signals_from_target(url_or_response)
+    return [sig.name for sig, _ev in _match_all(sig_signals)]
+
+
+def fingerprint(target: Union[str, httpx.Response, Any]) -> dict:
+    """Structured WAAP fingerprint of a target.
+
+    Same accepted target types as :func:`identify_waap` (URL str, httpx
+    response, live Playwright page, or Playwright response).
+
+    :returns: a dict of the shape::
+
+        {
+          "url": str | None,
+          "status": int | None,
+          "vendors": [
+            {
+              "name": str,                # canonical vendor name
+              "tier": int,                # 1 engine / 2 smarter / 3 solver
+              "strategy": str,            # short how-to-pass hint
+              "evidence": [str, ...],     # which signals matched
+              "clearance_cookies": [str], # cookies marking a cleared session
+            },
+            ...
+          ],
+        }
+
+    ``vendors`` is in stable ``SIGNATURES`` order and empty if nothing matched.
+    """
+    sig_signals = _signals_from_target(target)
+    vendors: list[dict] = []
+    for sig, evidence in _match_all(sig_signals):
+        vendors.append(
+            {
+                "name": sig.name,
+                "tier": sig.tier,
+                "strategy": sig.strategy,
+                "evidence": evidence,
+                "clearance_cookies": list(sig.clearance_cookies),
+            }
         )
+    return {
+        "url": sig_signals.url,
+        "status": sig_signals.status,
+        "vendors": vendors,
+    }
 
-    def has_cookie(name: str) -> bool:
-        return name.lower() in ck
 
-    found: list[str] = []
-
-    # --- Reblaze / Link11 -------------------------------------------------
-    reblaze = (
-        header_contains("server", "rhino-core-shield")
-        or any_header_contains("rhino-core-shield")
-        or has_cookie("waap_id")
-        or has_cookie("rbzid")
-        or (status in (247, 248, 492))
-        or ("window.rbzns" in b)
-        or ("bereshit" in b)
-        or ("winsocks" in b)
-    )
-    if reblaze:
-        found.append("Reblaze/Link11")
-
-    # --- Akamai -----------------------------------------------------------
-    akamai = (
-        has_cookie("aka_a2")
-        or has_cookie("_abck")
-        or has_cookie("bm_sz")
-        or has_cookie("ak_bmsc")
-        or has_header("x-akamai-transformed")
-        or any_header_contains("akamaighost")
-        or header_contains("server", "akamai")
-    )
-    if akamai:
-        found.append("Akamai")
-
-    # --- reCAPTCHA --------------------------------------------------------
-    recaptcha = (
-        "grecaptcha" in b
-        or "recaptcha/api.js" in b
-        or "www.google.com/recaptcha" in b
-        or "g-recaptcha" in b
-    )
-    if recaptcha:
-        found.append("reCAPTCHA")
-
-    # --- DataDome ---------------------------------------------------------
-    datadome = (
-        has_cookie("datadome")
-        or has_header("x-datadome")
-        or has_header("x-datadome-cid")
-        or any_header_contains("datadome")
-    )
-    if datadome:
-        found.append("DataDome")
-
-    # --- Incapsula / Imperva ---------------------------------------------
-    incapsula = (
-        has_cookie("visid_incap")
-        or has_cookie("reese84")
-        or any(k.startswith("incap_ses") for k in ck)
-        or any(k.startswith("visid_incap") for k in ck)
-        or any_header_contains("incapsula")
-        or header_contains("x-cdn", "incapsula")
-        or has_header("x-iinfo")  # Imperva info header
-    )
-    if incapsula:
-        found.append("Incapsula/Imperva")
-
-    # --- SiteMinder (CA SSO) ---------------------------------------------
-    siteminder = (
-        has_cookie("smsession")
-        or has_cookie("smidentity")
-        or "/siteminderagent/" in b
-        or any_header_contains("siteminder")
-    )
-    if siteminder:
-        found.append("SiteMinder")
-
-    return found
-
+# ---------------------------------------------------------------------------
+# Low-level helpers (cookie/body extraction)
+# ---------------------------------------------------------------------------
 
 def _cookies_from_headers(headers: Mapping[str, str], raw_set_cookie: Any = None) -> dict:
-    """Extract cookie *names* from Set-Cookie headers (values not needed)."""
+    """Extract cookie *names*+values from Set-Cookie headers."""
     cookies: dict[str, str] = {}
 
     def _ingest(line: str) -> None:
@@ -517,88 +1013,6 @@ def _cookies_from_headers(headers: Mapping[str, str], raw_set_cookie: Any = None
         for part in re.split(r",\s*(?=[^=;,\s]+=)", sc):
             _ingest(part)
     return cookies
-
-
-def identify_waap(url_or_response: Union[str, httpx.Response, Any]) -> list[str]:
-    """Fingerprint the WAAP/anti-bot vendor(s) in front of a target.
-
-    Accepts either:
-      * a URL string — an httpx GET is issued (redirects followed, browser-ish
-        UA) and its headers/cookies/status/body are analysed; or
-      * an ``httpx.Response`` — analysed directly (no network call); or
-      * a Playwright ``Response`` — its headers, status and body are analysed,
-        plus the owning page's cookies if reachable.
-
-    Returns a de-duplicated, stably-ordered list of detected vendor names,
-    drawn from: ``Reblaze/Link11``, ``Akamai``, ``reCAPTCHA``, ``DataDome``,
-    ``Incapsula/Imperva``, ``SiteMinder``. Empty list means none recognised.
-
-    Detection is header/cookie/status driven (see :func:`_vendor_checks`); for
-    a URL or httpx response we also scan the body for JS tells (grecaptcha,
-    window.rbzns/winsocks/bereshit, /siteminderagent/). JS-only globals that
-    appear only after rendering are best detected by passing a Playwright
-    response or by combining with :func:`bot_detector`'s page.
-    """
-    headers: Mapping[str, str]
-    cookies: dict[str, str]
-    status: int | None
-    body: str | None
-
-    if isinstance(url_or_response, str):
-        with httpx.Client(
-            follow_redirects=True,
-            timeout=20.0,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                )
-            },
-        ) as client:
-            resp = client.get(url_or_response)
-        headers = resp.headers
-        cookies = _cookies_from_headers(
-            resp.headers,
-            resp.headers.get_list("set-cookie") if hasattr(resp.headers, "get_list") else None,
-        )
-        status = resp.status_code
-        body = _safe_text(resp)
-
-    elif isinstance(url_or_response, httpx.Response):
-        resp = url_or_response
-        headers = resp.headers
-        cookies = _cookies_from_headers(
-            resp.headers,
-            resp.headers.get_list("set-cookie") if hasattr(resp.headers, "get_list") else None,
-        )
-        status = resp.status_code
-        body = _safe_text(resp)
-
-    else:
-        # Treat as a Playwright Response (duck-typed: has .headers and .status).
-        resp = url_or_response
-        try:
-            raw_headers = resp.headers  # dict in Playwright
-        except Exception as exc:  # pragma: no cover - bad input
-            raise TypeError(
-                "identify_waap expects a URL str, httpx.Response, or "
-                f"Playwright Response (got {type(url_or_response).__name__})"
-            ) from exc
-        headers = raw_headers if isinstance(raw_headers, Mapping) else dict(raw_headers)
-        # Playwright merges Set-Cookie into the headers dict (comma-joined).
-        cookies = _cookies_from_headers(headers)
-        # Augment with the real cookie jar from the owning context if reachable.
-        cookies.update(_playwright_response_cookies(resp))
-        status = getattr(resp, "status", None)
-        if callable(status):  # some bindings expose status() as a method
-            try:
-                status = status()
-            except Exception:
-                status = None
-        body = _playwright_response_body(resp)
-
-    return _vendor_checks(headers, cookies, status, body)
 
 
 def _safe_text(resp: httpx.Response) -> str | None:

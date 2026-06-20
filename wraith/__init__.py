@@ -134,5 +134,38 @@ _reexport(
     ],
 )
 
+# Snapshot: the agent perception layer — indexed, browser-use-style DOM
+# snapshots of the interactive elements on a page.
+_reexport(
+    "snapshot",
+    [
+        "take_snapshot",
+        "Snapshot",
+        "Element",
+    ],
+)
+
+# Agent: the perceive/act-by-index browser wrapper built on the snapshot layer.
+_reexport(
+    "agent",
+    [
+        "AgentBrowser",
+        "agent_browser",
+    ],
+)
+
+# reCAPTCHA: v3 token harvesting from a warmed/borrowed session + solver
+# service skeletons (reputation is set at mint; there is no client solver).
+_reexport(
+    "recaptcha",
+    [
+        "harvest_token",
+        "score",
+        "SolverService",
+        "CapSolver",
+        "TwoCaptcha",
+    ],
+)
+
 # Always-available metadata.
 __all__ += ["__version__", "missing_imports"]

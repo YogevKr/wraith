@@ -10,6 +10,8 @@ Subcommands:
   (Authorization + auth cookie) to a JSON file.
 * ``score``   — run a reCAPTCHA-v3 reputation score check.
 * ``detect``  — identify the WAAP / anti-bot stack guarding a URL.
+* ``agent``   — open an agent browser to a URL and print the indexed snapshot.
+* ``mcp``     — run the MCP server (stdio) exposing the agent over tools.
 
 Design notes
 ------------
@@ -261,6 +263,56 @@ def cmd_detect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_agent(args: argparse.Namespace) -> int:
+    """Open an :class:`~wraith.agent.AgentBrowser` to a URL and print the snapshot.
+
+    This drives the full agent perception path — navigate through any WAAP via
+    ``clear_challenge``, auto-dismiss cookie/consent banners, then render the
+    indexed, browser-use-style snapshot of the page's interactive elements.
+    """
+    agent = _lazy("agent")
+    print(
+        f"wraith: opening agent browser ({args.engine}) -> {args.url}",
+        file=sys.stderr,
+    )
+    with agent.agent_browser(
+        engine=args.engine,
+        headless=args.headless,
+        geoip=not args.no_geoip,
+    ) as ab:
+        snap = ab.navigate(args.url)
+        if args.json:
+            elements = [
+                {
+                    "index": e.index,
+                    "tag": e.tag,
+                    "role": e.role,
+                    "text": e.text,
+                    "attributes": e.attributes,
+                }
+                for e in snap.elements
+            ]
+            print(
+                json.dumps(
+                    {"url": snap.url, "title": snap.title, "elements": elements},
+                    indent=2,
+                )
+            )
+        else:
+            print(snap.to_text())
+        if not args.headless and not args.no_wait:
+            _hold_open()
+    return 0
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """Run the Wraith MCP server (stdio transport) for agent integration."""
+    mcp = _lazy("mcp")
+    print("wraith: starting MCP server (stdio)", file=sys.stderr)
+    mcp.main()
+    return 0
+
+
 # --------------------------------------------------------------------------
 # small adapters over the integrator modules (kept loose on purpose)
 # --------------------------------------------------------------------------
@@ -469,6 +521,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="emit raw JSON result"
     )
     p_detect.set_defaults(func=cmd_detect)
+
+    # agent
+    p_agent = sub.add_parser(
+        "agent",
+        help="open an agent browser to a URL and print the indexed snapshot",
+        description="Drive the agent perception layer: navigate through any "
+        "WAAP, auto-dismiss consent banners, and print a browser-use-style "
+        "indexed snapshot of the page's interactive elements.",
+    )
+    p_agent.add_argument("url", help="URL to open")
+    p_agent.add_argument(
+        "--json", action="store_true", help="emit the snapshot as JSON"
+    )
+    p_agent.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="do not hold the browser open waiting for Enter (headed only)",
+    )
+    _add_engine_flags(p_agent)
+    p_agent.set_defaults(func=cmd_agent)
+
+    # mcp
+    p_mcp = sub.add_parser(
+        "mcp",
+        help="run the MCP server (stdio) exposing the agent over tools",
+        description="Start the Wraith MCP server over stdio. Wire it into an "
+        "MCP client, e.g. `claude mcp add wraith -- uv run --directory "
+        "/path/to/wraith wraith mcp`.",
+    )
+    p_mcp.set_defaults(func=cmd_mcp)
 
     return parser
 

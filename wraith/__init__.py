@@ -119,8 +119,31 @@ _reexport(
         "recaptcha_v3_score",
         "bot_detector",
         "identify_waap",
+        "fingerprint",
+        "cookie_is_valid",
+        "CLEARANCE_COOKIES",
         "RECAPTCHA_V3_TEST_URL",
         "BOT_DETECTOR_URL",
+    ],
+)
+
+# Proxy: dependency-free proxy pool for clear_challenge rotation.
+_reexport(
+    "proxy",
+    [
+        "ProxyPool",
+        "normalize_proxy",
+    ],
+)
+
+# Providers: first-class residential-proxy provider integrations (DataImpulse).
+# These build proxy URL strings / ProxyPools that feed engine.launch(proxy=...)
+# and clear_challenge(proxy_pool=...).
+_reexport(
+    "providers",
+    [
+        "DataImpulse",
+        "DataImpulseAuthError",
     ],
 )
 

@@ -61,8 +61,14 @@ EXPECTED_API = [
     "recaptcha_v3_score",
     "bot_detector",
     "identify_waap",
+    "fingerprint",
+    "cookie_is_valid",
+    "CLEARANCE_COOKIES",
     "RECAPTCHA_V3_TEST_URL",
     "BOT_DETECTOR_URL",
+    # proxy
+    "ProxyPool",
+    "normalize_proxy",
     # behavior
     "human_move",
     "human_type",

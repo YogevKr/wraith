@@ -11,6 +11,8 @@ Subcommands:
 * ``score``   — run a reCAPTCHA-v3 reputation score check.
 * ``detect``  — identify the WAAP / anti-bot stack guarding a URL.
 * ``agent``   — open an agent browser to a URL and print the indexed snapshot.
+* ``v3``      — GENERAL reCAPTCHA-v3 pass: borrow a logged-in Google identity's
+  reputation cookies, open the URL, and report the detected reCAPTCHA params.
 * ``mcp``     — run the MCP server (stdio) exposing the agent over tools.
 
 Design notes
@@ -343,6 +345,94 @@ def cmd_agent(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_v3(args: argparse.Namespace) -> int:
+    """Open an agent browser and run the GENERAL reCAPTCHA-v3 pass.
+
+    The v3 score is minted inside the google.com reCAPTCHA iframe from the
+    .google.com reputation cookies present in the context. With ``--borrow`` we
+    inject a warmed, logged-in Google identity's reputation cookies (delivered
+    3rd-party with secure+SameSite=None into an un-partitioned Camoufox context)
+    so the score is lifted across any sitekey/site. We navigate (passing any
+    WAAP, dismissing consent), then print the detected reCAPTCHA params and
+    whether a ``/recaptcha/api2/reload`` request carried the reputation cookies.
+
+    The v3 score is run-variable and there is no trustworthy score readout for a
+    3rd-party sitekey — VERIFY acceptance against the real protected endpoint.
+    """
+    agent = _lazy("agent")
+    detect = _lazy("detect")
+
+    reputation = None
+    if args.borrow is not None:
+        recaptcha_v3 = _lazy("recaptcha_v3")
+        # --borrow may be given without a value (selects the default profile) or
+        # with a profile path-substring.
+        substring = args.borrow or None
+        reputation = recaptcha_v3.BorrowedGoogleCookies(profile_substring=substring)
+        print(
+            "wraith: borrowing logged-in Google reputation"
+            + (f" (profile~={substring!r})" if substring else " (default profile)")
+            + " — WARNING: anomalous-session / 2FA risk on your primary Google.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "wraith: no --borrow given; navigating without a reputation source "
+            "(score will not be lifted). Pass --borrow to inject Google reputation.",
+            file=sys.stderr,
+        )
+
+    print(
+        f"wraith: opening agent browser ({args.engine}) for reCAPTCHA-v3 -> {args.url}",
+        file=sys.stderr,
+    )
+    with agent.agent_browser(
+        engine=args.engine,
+        headless=args.headless,
+        geoip=not args.no_geoip,
+        proxy=_resolve_proxy(args),
+        reputation=reputation,
+    ) as ab:
+        ab.navigate(args.url)
+        params = detect.recaptcha_params(ab.page)
+
+        info = {
+            "url": ab.current_url,
+            "version": getattr(params, "version", None),
+            "enterprise": getattr(params, "enterprise", None),
+            "sitekey": getattr(params, "sitekey", None),
+            "actions": list(getattr(params, "actions", []) or []),
+            "host": getattr(params, "host", None),
+            "borrowed_reputation": reputation is not None,
+        }
+
+        if args.json:
+            print(json.dumps(info, indent=2))
+        else:
+            print(f"reCAPTCHA on {info['url']}:")
+            print(f"  version    : {info['version']}")
+            print(f"  enterprise : {info['enterprise']}")
+            print(f"  host       : {info['host']}")
+            print(f"  sitekey    : {info['sitekey'] or '(none)'}")
+            print(f"  actions    : {', '.join(info['actions']) or '(none)'}")
+            print(
+                "  reputation : "
+                + (
+                    "borrowed Google identity injected (see stderr for whether "
+                    "the /recaptcha/api2/reload carried SID/SAPISID)"
+                    if reputation is not None
+                    else "none — pass --borrow to lift the score"
+                )
+            )
+            print(
+                "  NOTE       : the v3 score is run-variable with no trustworthy "
+                "3rd-party readout — verify acceptance on the real endpoint."
+            )
+        if not args.headless and not args.no_wait:
+            _hold_open()
+    return 0
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     """Run the Wraith MCP server (stdio transport) for agent integration."""
     mcp = _lazy("mcp")
@@ -610,6 +700,41 @@ def build_parser() -> argparse.ArgumentParser:
     _add_proxy_flags(p_agent)
     _add_engine_flags(p_agent)
     p_agent.set_defaults(func=cmd_agent)
+
+    # v3
+    p_v3 = sub.add_parser(
+        "v3",
+        help="GENERAL reCAPTCHA-v3 pass: borrow Google reputation, open the URL",
+        description="Lift a reCAPTCHA-v3 score across any sitekey by borrowing a "
+        "logged-in Google identity's .google.com reputation cookies (delivered "
+        "3rd-party into an un-partitioned Camoufox context). Opens the URL "
+        "through any WAAP, then prints the detected reCAPTCHA params and whether "
+        "the /recaptcha/api2/reload carried the reputation. The score is "
+        "run-variable — verify acceptance against the real protected endpoint.",
+    )
+    p_v3.add_argument("url", help="URL to open (the reCAPTCHA-protected page)")
+    p_v3.add_argument(
+        "--borrow",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PROFILE",
+        help="inject a logged-in Google identity's reputation cookies; optional "
+        "value is a profile path-substring (default: first Zen, then Firefox). "
+        "WARNING: borrowing your primary Google carries 2FA / anomalous-session "
+        "risk.",
+    )
+    p_v3.add_argument(
+        "--json", action="store_true", help="emit the reCAPTCHA params as JSON"
+    )
+    p_v3.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="do not hold the browser open waiting for Enter (headed only)",
+    )
+    _add_proxy_flags(p_v3)
+    _add_engine_flags(p_v3)
+    p_v3.set_defaults(func=cmd_v3)
 
     # mcp
     p_mcp = sub.add_parser(

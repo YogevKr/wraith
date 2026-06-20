@@ -103,6 +103,7 @@ class AgentBrowser:
         session: Optional[Any] = None,
         *,
         engine: str = "auto",
+        reputation: Optional[Any] = None,
         **launch_kw: Any,
     ) -> None:
         """Create an agent browser.
@@ -114,6 +115,20 @@ class AgentBrowser:
                 :func:`wraith.engine.launch`.
             engine: Engine to use when self-launching ("auto"/"camoufox"/
                 "chromium"). Ignored when ``session`` is supplied.
+            reputation: An optional
+                :class:`wraith.recaptcha_v3.ReputationSource`. When set, the
+                self-launched Camoufox engine is started with the
+                un-partition firefox prefs
+                (:data:`wraith.recaptcha_v3.UNPARTITION_PREFS`) so 3rd-party
+                ``google.com`` cookies reach the reCAPTCHA iframe, and every
+                :meth:`navigate` runs
+                :func:`wraith.recaptcha_v3.ensure_high_score` (after the WAAP is
+                cleared and consent dismissed) to inject the reputation cookies
+                and lift the reCAPTCHA-v3 score. See that module for the honest
+                limits (run-variable score; can't replay tokens). Passing a
+                borrowed ``session`` does **not** re-launch it, so for that path
+                the caller is responsible for the un-partition prefs — the
+                reputation source still primes the existing context on navigate.
             **launch_kw: Extra kwargs forwarded to :func:`wraith.engine.launch`
                 when self-launching (e.g. ``headless``, ``geoip``, ``locale``,
                 ``proxy``, ``profile_dir``).
@@ -122,8 +137,28 @@ class AgentBrowser:
         self._owns_session: bool = session is None
         self._engine: str = engine
         self._launch_kw: dict[str, Any] = dict(launch_kw)
+        self.reputation: Optional[Any] = reputation
         self._closed: bool = False
         self.last_snapshot: Optional[Snapshot] = None
+
+        # When we self-launch with a reputation source, the Camoufox engine must
+        # un-partition 3rd-party cookies so the borrowed google.com reputation
+        # actually reaches the reCAPTCHA iframe. Merge UNPARTITION_PREFS into any
+        # caller-supplied firefox_user_prefs (caller keys win). Done eagerly so
+        # the lazy launch in .session picks it up; lazily imported to keep
+        # `import wraith.agent` working without the recaptcha_v3 stack.
+        if reputation is not None and self._owns_session:
+            try:
+                from .recaptcha_v3 import UNPARTITION_PREFS
+
+                merged = dict(UNPARTITION_PREFS)
+                merged.update(self._launch_kw.get("firefox_user_prefs") or {})
+                self._launch_kw["firefox_user_prefs"] = merged
+            except Exception:
+                # recaptcha_v3 unavailable: fall back gracefully — navigate()
+                # will still attempt ensure_high_score, which no-ops on import
+                # failure. The score lift may be weaker without the prefs.
+                pass
 
     # ------------------------------------------------------------------ #
     # Session / page plumbing
@@ -182,6 +217,13 @@ class AgentBrowser:
         Args:
             url: The URL to open.
 
+        When a ``reputation`` source was supplied at construction, this also
+        runs :func:`wraith.recaptcha_v3.ensure_high_score` *after* the WAAP is
+        cleared and consent is dismissed — injecting the borrowed reputation
+        cookies and (best-effort) confirming a ``/recaptcha/api2/reload``
+        request carried them — so a reCAPTCHA-v3 score is minted high before the
+        agent acts.
+
         Returns:
             A :class:`~wraith.snapshot.Snapshot` of the settled page.
 
@@ -198,6 +240,7 @@ class AgentBrowser:
         self._wait_for_settle()
         self._dismiss_consent()
         self._wait_for_settle()
+        self._ensure_high_score()
         return self.snapshot()
 
     # ------------------------------------------------------------------ #
@@ -422,6 +465,33 @@ class AgentBrowser:
         """
         return self.page.locator(f'[data-wraith-index="{int(index)}"]')
 
+    def _ensure_high_score(self) -> Optional[Any]:
+        """Best-effort reCAPTCHA-v3 score lift via the reputation source.
+
+        No-op when no ``reputation`` source was configured. Otherwise delegates
+        to :func:`wraith.recaptcha_v3.ensure_high_score`, which detects the
+        page's reCAPTCHA params, primes the context with the reputation cookies,
+        and (best-effort) verifies a ``/recaptcha/api2/reload`` request carried
+        them. The function is idempotent/cached per (context, host), so calling
+        it on every :meth:`navigate` is cheap. Never raises — a missing
+        ``recaptcha_v3`` module or a probe failure must not break navigation.
+
+        Returns:
+            The :class:`wraith.recaptcha_v3.RecaptchaParams` produced by
+            ``ensure_high_score``, or ``None`` if no source is set or the lift
+            could not run.
+        """
+        if self.reputation is None:
+            return None
+        try:
+            from .recaptcha_v3 import ensure_high_score
+
+            return ensure_high_score(self.page, source=self.reputation)
+        except Exception:
+            # recaptcha_v3 unavailable, or the probe/injection failed: the score
+            # lift is opportunistic, so we swallow and let navigation proceed.
+            return None
+
     def _wait_for_settle(self) -> None:
         """Best-effort wait for the page to quiesce after a navigation/action.
 
@@ -489,6 +559,7 @@ def agent_browser(
     session: Optional[Any] = None,
     *,
     engine: str = "auto",
+    reputation: Optional[Any] = None,
     **launch_kw: Any,
 ):
     """Context-manager factory for an :class:`AgentBrowser`.
@@ -501,6 +572,9 @@ def agent_browser(
         session: An existing :class:`~wraith.engine.Session` to borrow, or
             ``None`` to launch lazily.
         engine: Engine to use when self-launching.
+        reputation: Optional :class:`wraith.recaptcha_v3.ReputationSource`;
+            forwarded to :class:`AgentBrowser` (un-partition launch prefs +
+            ``ensure_high_score`` on navigate).
         **launch_kw: Forwarded to :func:`wraith.engine.launch` when
             self-launching.
 
@@ -509,7 +583,9 @@ def agent_browser(
         with agent_browser(engine="camoufox", headless=True) as ab:
             print(ab.navigate("https://example.com").to_text())
     """
-    ab = AgentBrowser(session=session, engine=engine, **launch_kw)
+    ab = AgentBrowser(
+        session=session, engine=engine, reputation=reputation, **launch_kw
+    )
     try:
         yield ab
     finally:

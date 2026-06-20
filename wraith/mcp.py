@@ -52,7 +52,11 @@ app = FastMCP(
         "`screenshot()` to capture an image. `detect_waap(url)` fingerprints a "
         "site's bot defenses. `borrow(domain)` injects a warmed, authenticated "
         "identity (cookies) from a real Firefox/Zen profile on this machine so the "
-        "browser navigates as that already-logged-in user."
+        "browser navigates as that already-logged-in user. "
+        "`ensure_high_score(url)` borrows a logged-in Google identity's "
+        "reputation cookies and opens the URL so a reCAPTCHA-v3 score is minted "
+        "high (general across any sitekey) — opt-in; verify acceptance against "
+        "the real protected endpoint."
     ),
 )
 
@@ -69,18 +73,33 @@ async def _run(fn: "Callable[[], T]") -> T:
     return await loop.run_in_executor(_EXEC, fn)
 
 
-def _get_browser() -> "AgentBrowser":
+def _get_browser(reputation: Optional[Any] = None) -> "AgentBrowser":
     """Return the shared AgentBrowser, launching it on first use.
 
     MUST be called on the worker thread (i.e. from inside a function passed to
     :func:`_run`), because the AgentBrowser owns thread-affine sync Playwright
     objects.
+
+    Args:
+        reputation: Optional :class:`wraith.recaptcha_v3.ReputationSource`. The
+            source must be wired in at *construction* time so the engine launches
+            with the un-partition firefox prefs (3rd-party google.com cookies
+            must reach the reCAPTCHA iframe). If a browser already exists without
+            this source, it is torn down and re-created with it; if it already
+            has a reputation source, it is reused as-is.
     """
     global _browser
+    if reputation is not None and _browser is not None and getattr(
+        _browser, "reputation", None
+    ) is None:
+        # An existing un-reputationed browser can't be retrofitted with the
+        # launch-time un-partition prefs — recycle it so the next construction
+        # picks them up. (No live session is lost on first navigate.)
+        _reset_browser()
     if _browser is None:
         from .agent import AgentBrowser  # lazy: needs the browser stack
 
-        _browser = AgentBrowser()
+        _browser = AgentBrowser(reputation=reputation)
     return _browser
 
 
@@ -243,6 +262,64 @@ async def borrow(domain: str, profile: Optional[str] = None) -> str:
         )
 
     return await _run(_inject)
+
+
+@app.tool()
+async def ensure_high_score(url: str, profile: Optional[str] = None) -> str:
+    """Borrow a logged-in Google identity's reputation and open ``url`` so a
+    reCAPTCHA-v3 score is minted high.
+
+    This is the GENERAL reCAPTCHA-v3 pass: the v3 score is computed inside the
+    google.com reCAPTCHA iframe from the .google.com reputation cookies present
+    in the context, so injecting a warmed Google identity's cookies (delivered
+    3rd-party with secure+SameSite=None into an un-partitioned context) lifts the
+    score across any sitekey/site. The browser is (re)launched with the
+    un-partition firefox prefs, the reputation cookies are injected, then the URL
+    is navigated (passing any WAAP and dismissing consent first).
+
+    ``profile`` optionally selects the source Firefox/Zen profile by a path
+    substring; otherwise the first Zen profile is used, falling back to Firefox.
+
+    WARNING: borrowing your *primary* Google identity carries
+    anomalous-session / 2FA risk — this is opt-in. After it returns, VERIFY
+    success against the real protected endpoint (accept vs reject); the v3 score
+    is run-variable and there is no trustworthy score readout for a 3rd-party
+    sitekey. Returns the detected reCAPTCHA params and whether the reload request
+    carried the reputation cookies.
+    """
+
+    def _go() -> str:
+        try:
+            from .recaptcha_v3 import BorrowedGoogleCookies
+        except Exception as exc:
+            return (
+                "wraith: the reCAPTCHA-v3 capability is unavailable "
+                f"({type(exc).__name__}: {exc})."
+            )
+        source = BorrowedGoogleCookies(profile_substring=profile)
+        browser = _get_browser(reputation=source)
+        snap = browser.navigate(url)
+        params = browser._ensure_high_score()
+        n = snap.to_text().count("\n") + 1 if snap else 0
+        if params is None:
+            return (
+                f"Navigated to {url} with borrowed Google reputation, but no "
+                "reCAPTCHA params were resolved (recaptcha_v3 unavailable or no "
+                f"reCAPTCHA on page). Snapshot has ~{n} interactive line(s). "
+                "Verify acceptance against the real protected endpoint."
+            )
+        return (
+            f"Navigated to {url} with borrowed Google reputation. "
+            f"reCAPTCHA: version={getattr(params, 'version', '?')}, "
+            f"enterprise={getattr(params, 'enterprise', '?')}, "
+            f"host={getattr(params, 'host', '?')}, "
+            f"sitekey={getattr(params, 'sitekey', '') or '(none)'}. "
+            "The v3 score is run-variable with no trustworthy readout for a "
+            "3rd-party sitekey — verify acceptance against the real protected "
+            "endpoint."
+        )
+
+    return await _run(_go)
 
 
 # --------------------------------------------------------------------------- #

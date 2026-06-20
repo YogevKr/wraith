@@ -95,8 +95,10 @@ _reexport(
         "find_zen_profiles",
         "find_chrome_profile",
         "extract_cookies",
+        "extract_google_reputation",
         "to_playwright_cookies",
         "inject_cookies",
+        "GOOGLE_REPUTATION_COOKIES",
         "ChromeEncryptionError",
     ],
 )
@@ -117,6 +119,7 @@ _reexport(
     "detect",
     [
         "recaptcha_v3_score",
+        "recaptcha_params",
         "bot_detector",
         "identify_waap",
         "fingerprint",
@@ -187,6 +190,25 @@ _reexport(
         "SolverService",
         "CapSolver",
         "TwoCaptcha",
+    ],
+)
+
+# reCAPTCHA-v3 reputation lifting: the GENERAL "high-score" capability — borrow
+# a warmed Google reputation into the 3rd-party reCAPTCHA iframe (the proven
+# secure+sameSite=None / un-partitioned-3p-cookie recipe) so the minted v3 score
+# clears threshold. ``ensure_high_score`` is the entry point; the reputation
+# sources span the risk spectrum (account-free floor -> burner -> primary).
+_reexport(
+    "recaptcha_v3",
+    [
+        "ensure_high_score",
+        "RecaptchaParams",
+        "PlacementSpec",
+        "UNPARTITION_PREFS",
+        "ReputationSource",
+        "BorrowedGoogleCookies",
+        "PersistentGrecaptcha",
+        "WarmedAccount",
     ],
 )
 

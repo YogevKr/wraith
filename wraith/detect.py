@@ -41,6 +41,7 @@ bot-detector results are both JS-rendered).
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from dataclasses import dataclass, field
@@ -49,10 +50,13 @@ from typing import Any, Mapping, Union
 
 import httpx
 
+log = logging.getLogger("wraith.detect")
+
 __all__ = [
     "RECAPTCHA_V3_TEST_URL",
     "BOT_DETECTOR_URL",
     "recaptcha_v3_score",
+    "recaptcha_params",
     "bot_detector",
     "identify_waap",
     "fingerprint",
@@ -274,6 +278,322 @@ def recaptcha_v3_score(page_or_launcher: Any) -> float:
         )
     finally:
         close()
+
+
+# ---------------------------------------------------------------------------
+# reCAPTCHA-v3 parameter probe (sitekey / action / enterprise / host)
+# ---------------------------------------------------------------------------
+#
+# Where recaptcha_v3_score answers "what reputation does *this identity* get",
+# recaptcha_params answers the orthogonal "what reCAPTCHA is this page running"
+# — the facts a token harvester / reputation-borrowing flow needs before it can
+# act: the sitekey, the action label(s), whether it is the *enterprise* product,
+# and which host serves the iframe.
+#
+# It is a LAYERED probe because no single source is reliable on its own:
+#
+#   1. window.___grecaptcha_cfg.clients — grecaptcha's own internal client
+#      registry. This is the ground truth when present: each client carries the
+#      sitekey it was rendered with, and the client-id (cid) encodes the
+#      version: v2 widgets get small integer cids (0, 1, ...), while v3
+#      (render=...) clients are allocated ids >= 10000. We walk the (deeply
+#      nested, minified, version-varying) client objects defensively, pulling
+#      any 'sitekey' and any 'action' we can find and noting whether any cid is
+#      a v3 id.
+#   2. DOM/script fallbacks — if cfg isn't populated yet (script still loading,
+#      or an explicitly-rendered widget) we fall back to: data-sitekey on any
+#      element, the .g-recaptcha container's data-sitekey, the iframe ?k=
+#      param, and the api.js?render=<sitekey> query param.
+#   3. Enterprise detection — the enterprise product uses a different JS object
+#      (grecaptcha.enterprise), a different loader (enterprise.js), and a
+#      different verification backend (recaptchaenterprise.googleapis.com). Any
+#      of these flips enterprise=True. This matters because enterprise tokens
+#      are verified server-side against a Google Cloud project and may *ignore*
+#      borrowed .google.com reputation cookies.
+#   4. Host — the iframe is normally served from www.google.com (reads the
+#      .google.com reputation cookies). Some sites load it from
+#      www.recaptcha.net instead (the China-friendly mirror) which does NOT see
+#      .google.com cookies — so reputation borrowing silently fails there. We
+#      surface the host and warn on recaptcha.net.
+#
+# The probe is wholly defensive: every JS read is wrapped, every layer has a
+# fallback, and a page with no reCAPTCHA at all yields version "none" rather
+# than raising. The returned object is a RecaptchaParams (imported lazily from
+# wraith.recaptcha_v3 to avoid an import cycle; a duck-typed local shim is used
+# if that module isn't importable yet, so detect.py always imports cleanly).
+
+# v3 (render=...) grecaptcha clients are allocated client-ids at/above this
+# threshold; v2 widgets get small sequential ids (0, 1, ...).
+_RECAPTCHA_V3_CID_THRESHOLD = 10000
+
+# The canonical host that serves the reCAPTCHA iframe and reads .google.com
+# reputation cookies; the .net mirror does not, so borrowing fails there.
+_RECAPTCHA_GOOGLE_HOST = "www.google.com"
+_RECAPTCHA_NET_HOST = "www.recaptcha.net"
+
+# In-page probe that mines grecaptcha's internal client registry plus the DOM /
+# script tags for the sitekey, action(s), version, enterprise flag and iframe
+# host. Returns a plain JSON-able object; every access is guarded so a hostile
+# or half-loaded page can't throw out of evaluate().
+_RECAPTCHA_PARAMS_PROBE = r"""
+() => {
+  const out = {
+    present: false,
+    enterprise: false,
+    sitekeys: [],
+    actions: [],
+    v3_cid: false,
+    v2_cid: false,
+    hosts: [],
+    loader_enterprise: false,
+    backend_enterprise: false,
+  };
+  const SITEKEY_RE = /^[A-Za-z0-9_-]{30,60}$/;
+  const addKey = (k) => {
+    if (typeof k === 'string' && SITEKEY_RE.test(k) && !out.sitekeys.includes(k)) {
+      out.sitekeys.push(k);
+    }
+  };
+  const addAction = (a) => {
+    if (typeof a === 'string' && a && !out.actions.includes(a)) out.actions.push(a);
+  };
+
+  // ---- Layer 1: window.___grecaptcha_cfg.clients ------------------------
+  try {
+    const cfg = window.___grecaptcha_cfg;
+    if (cfg && cfg.clients && typeof cfg.clients === 'object') {
+      out.present = true;
+      for (const cid of Object.keys(cfg.clients)) {
+        const idnum = parseInt(cid, 10);
+        if (!isNaN(idnum)) {
+          if (idnum >= 10000) out.v3_cid = true; else out.v2_cid = true;
+        }
+        // The client object is deeply/minified-nested; BFS for sitekey/action.
+        const root = cfg.clients[cid];
+        const seen = new Set();
+        const stack = [root];
+        let budget = 5000;  // bounded traversal — minified graphs can cycle.
+        while (stack.length && budget-- > 0) {
+          const node = stack.pop();
+          if (!node || typeof node !== 'object' || seen.has(node)) continue;
+          seen.add(node);
+          for (const key of Object.keys(node)) {
+            let val;
+            try { val = node[key]; } catch (e) { continue; }
+            const lk = key.toLowerCase();
+            if (typeof val === 'string') {
+              if (lk === 'sitekey' || lk === 'k') addKey(val);
+              if (lk === 'action') addAction(val);
+            } else if (val && typeof val === 'object') {
+              stack.push(val);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) { /* fall through to DOM/script fallbacks */ }
+
+  // ---- Layer 2: DOM / script fallbacks ----------------------------------
+  try {
+    // data-sitekey on .g-recaptcha (and any element that carries it).
+    document.querySelectorAll('[data-sitekey]').forEach((el) => {
+      out.present = true;
+      addKey(el.getAttribute('data-sitekey'));
+      const act = el.getAttribute('data-action');
+      if (act) addAction(act);
+    });
+    if (document.querySelector('.g-recaptcha, .grecaptcha-badge')) out.present = true;
+
+    // reCAPTCHA iframe(s): host + ?k=<sitekey> param.
+    document.querySelectorAll('iframe[src*="recaptcha"]').forEach((f) => {
+      out.present = true;
+      let u;
+      try { u = new URL(f.src, location.href); } catch (e) { return; }
+      if (u.hostname && !out.hosts.includes(u.hostname)) out.hosts.push(u.hostname);
+      const k = u.searchParams.get('k');
+      if (k) addKey(k);
+    });
+
+    // Loader script: api.js?render=<sitekey> (v3) and enterprise.js (ent).
+    document.querySelectorAll('script[src]').forEach((s) => {
+      const src = s.src || '';
+      if (!/recaptcha/i.test(src)) return;
+      out.present = true;
+      let u;
+      try { u = new URL(src, location.href); } catch (e) { return; }
+      if (u.hostname && !out.hosts.includes(u.hostname)) out.hosts.push(u.hostname);
+      if (/enterprise\.js/i.test(u.pathname)) out.loader_enterprise = true;
+      const render = u.searchParams.get('render');
+      if (render && render !== 'explicit' && render !== 'onload') addKey(render);
+    });
+  } catch (e) { /* defensive */ }
+
+  // ---- Layer 3: enterprise detection ------------------------------------
+  try {
+    if (window.grecaptcha && window.grecaptcha.enterprise) {
+      out.enterprise = true;
+      out.present = true;
+    }
+  } catch (e) { /* defensive */ }
+  out.enterprise = out.enterprise || out.loader_enterprise;
+
+  // recaptchaenterprise.googleapis.com referenced anywhere in inline scripts.
+  try {
+    for (const s of document.scripts) {
+      const t = s.textContent || '';
+      if (t.indexOf('recaptchaenterprise.googleapis.com') !== -1) {
+        out.backend_enterprise = true;
+        out.enterprise = true;
+        break;
+      }
+    }
+  } catch (e) { /* defensive */ }
+
+  return out;
+}
+"""
+
+
+def _resolve_recaptcha_params_cls():
+    """Return the ``RecaptchaParams`` class to instantiate.
+
+    Imported lazily from :mod:`wraith.recaptcha_v3` to avoid an import cycle
+    (recaptcha_v3 imports detect). If that module is not importable yet (e.g.
+    during a partial build), fall back to a local duck-typed dataclass with the
+    identical field shape so ``detect.py`` always imports and runs cleanly.
+    """
+    try:
+        from wraith.recaptcha_v3 import RecaptchaParams  # type: ignore
+
+        return RecaptchaParams
+    except Exception:
+        return _RecaptchaParamsShim
+
+
+@dataclass
+class _RecaptchaParamsShim:
+    """Duck-typed stand-in for :class:`wraith.recaptcha_v3.RecaptchaParams`.
+
+    Same field shape (``version, enterprise, sitekey, actions, host``) so the
+    two are interchangeable for callers. Used only when recaptcha_v3 cannot be
+    imported (keeps detect.py self-contained / cycle-free).
+    """
+
+    version: str
+    enterprise: bool
+    sitekey: str
+    actions: list
+    host: str
+
+
+def recaptcha_params(page: Any) -> Any:
+    """Probe a live page for the reCAPTCHA it runs (sitekey/action/version/host).
+
+    This is the *configuration* counterpart to :func:`recaptcha_v3_score`: it
+    reports what reCAPTCHA the page is wired to, not what score the current
+    identity earns. A reputation-borrowing / token-harvesting flow needs both.
+
+    Layered, defensive probe (see the module note above for the full rationale):
+
+      1. ``window.___grecaptcha_cfg.clients`` — grecaptcha's own client
+         registry is ground truth when present; client-ids ``>= 10000`` mark a
+         v3 (``render=...``) client, smaller ids mark v2 widgets. We BFS each
+         (minified, version-varying) client object for ``sitekey``/``action``.
+      2. DOM/script fallbacks — ``data-sitekey`` (incl. ``.g-recaptcha``), the
+         reCAPTCHA ``iframe`` ``?k=`` param, and ``api.js?render=<sitekey>``.
+      3. Enterprise — ``grecaptcha.enterprise`` object, ``enterprise.js``
+         loader, or a ``recaptchaenterprise.googleapis.com`` reference flips
+         ``enterprise=True`` (enterprise tokens are verified against a Cloud
+         project and may ignore borrowed ``.google.com`` cookies).
+      4. Host — the iframe host (``www.google.com`` vs the ``www.recaptcha.net``
+         mirror). We **warn** on ``www.recaptcha.net`` because it does not read
+         ``.google.com`` reputation cookies, so identity-borrowing silently
+         fails there.
+
+    Version is resolved as: ``"v3"`` if a v3 client-id is present or only a
+    ``render=`` sitekey (no v2 widget) was found; ``"v2"`` if a v2 widget/cid
+    is present; ``"enterprise"`` if enterprise was detected (orthogonal to v2/v3
+    but reported in the ``version`` field as the dominant fact, with the
+    ``enterprise`` flag also set); ``"none"`` if no reCAPTCHA is detected at all.
+
+    :param page: a live Playwright ``Page`` (must have already navigated to the
+        target so grecaptcha has had a chance to load).
+    :returns: a :class:`wraith.recaptcha_v3.RecaptchaParams` (imported lazily; a
+        local duck-typed shim with the same fields is returned if that module is
+        not importable yet). On a page with no reCAPTCHA, ``version="none"``,
+        ``sitekey=""``, ``actions=[]``, ``host=""``, ``enterprise=False``.
+    """
+    cls = _resolve_recaptcha_params_cls()
+
+    probe: dict[str, Any] = {}
+    try:
+        result = page.evaluate(_RECAPTCHA_PARAMS_PROBE)
+        if isinstance(result, dict):
+            probe = result
+    except Exception as exc:
+        # A page that can't be evaluated (closed, cross-origin nav in flight)
+        # is treated as "no reCAPTCHA detected" rather than raising.
+        log.debug("recaptcha_params: page.evaluate failed: %s", exc)
+        probe = {}
+
+    sitekeys = [s for s in probe.get("sitekeys", []) if isinstance(s, str) and s]
+    actions = [a for a in probe.get("actions", []) if isinstance(a, str) and a]
+    hosts = [h for h in probe.get("hosts", []) if isinstance(h, str) and h]
+    enterprise = bool(probe.get("enterprise"))
+    v3_cid = bool(probe.get("v3_cid"))
+    v2_cid = bool(probe.get("v2_cid"))
+    present = bool(probe.get("present")) or bool(sitekeys) or v3_cid or v2_cid
+
+    if not present:
+        return cls(version="none", enterprise=False, sitekey="", actions=[], host="")
+
+    # Host resolution: prefer a real reCAPTCHA host; warn on the .net mirror.
+    host = ""
+    recaptcha_hosts = [
+        h for h in hosts if "google.com" in h or "recaptcha.net" in h
+    ]
+    if recaptcha_hosts:
+        # Prefer www.google.com if present; else take the first (likely .net).
+        google = next((h for h in recaptcha_hosts if h == _RECAPTCHA_GOOGLE_HOST), None)
+        host = google or recaptcha_hosts[0]
+    elif hosts:
+        host = hosts[0]
+
+    if host == _RECAPTCHA_NET_HOST or (host and "recaptcha.net" in host):
+        log.warning(
+            "recaptcha_params: reCAPTCHA iframe served from %s (recaptcha.net "
+            "mirror) — it does NOT read .google.com reputation cookies, so "
+            "identity-borrowing will silently fail against this site.",
+            host,
+        )
+
+    # Version resolution. v3 if a v3 client-id is present, OR a sitekey was
+    # found with no v2 widget in evidence (render=<key> flows are v3). v2 if a
+    # v2 client/widget is present. Enterprise is reported in the version field
+    # as the dominant fact (the enterprise flag is also set independently).
+    if enterprise:
+        version = "enterprise"
+    elif v3_cid:
+        version = "v3"
+    elif v2_cid:
+        version = "v2"
+    elif sitekeys:
+        # Sitekey found via render=/iframe but no cfg client classified it.
+        version = "v3"
+    else:
+        # reCAPTCHA detected (e.g. a bare .g-recaptcha container) but no
+        # sitekey/version evidence yet — call it v2 (the explicit-render case).
+        version = "v2"
+
+    sitekey = sitekeys[0] if sitekeys else ""
+
+    return cls(
+        version=version,
+        enterprise=enterprise,
+        sitekey=sitekey,
+        actions=actions,
+        host=host,
+    )
 
 
 # ---------------------------------------------------------------------------

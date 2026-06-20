@@ -93,6 +93,14 @@ _DEFAULT_CLEARANCE_COOKIES = (
 _WAAP_RATE_LIMIT_STATUSES = frozenset({474, 481})
 _WAAP_HARD_BLOCK_STATUS = 492
 
+# The Camoufox launch kwarg through which Firefox ``about:config`` prefs are set.
+# A caller may pass their own ``firefox_user_prefs`` (e.g. the un-partition prefs
+# that let .google.com reputation cookies reach the 3rd-party reCAPTCHA iframe —
+# see :data:`wraith.recaptcha_v3.UNPARTITION_PREFS`). The engine must *merge*
+# such a dict into whatever prefs the camoufox-routing code itself sets, never
+# silently drop it and never let it destroy Camoufox's own essential prefs.
+_FIREFOX_PREFS_KEY = "firefox_user_prefs"
+
 __all__ = [
     "Engine",
     "Session",
@@ -332,8 +340,23 @@ def _launch_camoufox(
         opts["persistent_context"] = True
         opts["user_data_dir"] = profile_dir
 
+    # firefox_user_prefs needs a dict-MERGE, not the override that a plain
+    # opts.update(extra) would do: a caller may pass un-partition prefs (so
+    # .google.com reputation cookies reach the 3rd-party reCAPTCHA iframe — see
+    # wraith.recaptcha_v3.UNPARTITION_PREFS) and we must add those to, not
+    # replace, any prefs the routing code above already set. Pull both sides out
+    # first so the bulk update below can't clobber the merged result.
+    caller_prefs = extra.pop(_FIREFOX_PREFS_KEY, None)
+    base_prefs = opts.pop(_FIREFOX_PREFS_KEY, None)
+    merged_prefs = _merge_firefox_prefs(base_prefs, caller_prefs)
+
     # Caller passthrough (proxy, block_images, window, fingerprint, ...).
     opts.update(extra)
+
+    # Only set firefox_user_prefs when there is actually something to set, so we
+    # don't hand Camoufox an empty dict when no prefs were requested either side.
+    if merged_prefs:
+        opts[_FIREFOX_PREFS_KEY] = merged_prefs
 
     cm = Camoufox(**opts)
     # Camoufox is itself a context manager that owns the Playwright lifetime.
@@ -387,6 +410,12 @@ def _launch_chromium(
         ) from exc
 
     pw = sync_playwright().start()
+
+    # firefox_user_prefs is a Camoufox/Firefox-only knob; it is meaningless to
+    # Chromium and would explode if forwarded to launch()/new_context(). Drop it
+    # silently so a caller can pass the same kwargs to either engine. (This is
+    # the "ignored for the chromium engine" half of the merge contract.)
+    extra.pop(_FIREFOX_PREFS_KEY, None)
 
     # Split caller kwargs into launch-level vs context-level so we can place
     # them correctly for both persistent and non-persistent launches.
@@ -445,6 +474,32 @@ def _launch_chromium(
 # --------------------------------------------------------------------------- #
 # Misc helpers
 # --------------------------------------------------------------------------- #
+def _merge_firefox_prefs(
+    base: Optional[Mapping[str, Any]],
+    incoming: Optional[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Shallow-merge two ``firefox_user_prefs`` dicts, ``incoming`` winning ties.
+
+    Used so a caller-supplied ``firefox_user_prefs`` (e.g.
+    :data:`wraith.recaptcha_v3.UNPARTITION_PREFS`) is *added to* — not substituted
+    for — any prefs the camoufox-routing code itself sets, rather than one dict
+    clobbering the other. Either side may be ``None``/empty. Never raises: a
+    non-mapping argument is treated as empty.
+
+    A flat (shallow) merge is correct here because ``firefox_user_prefs`` is a
+    flat ``{pref_name: value}`` map — each key is an independent ``about:config``
+    entry, so last-writer-wins per key is the desired semantics. ``incoming``
+    (the caller's prefs) wins on key collisions so callers can intentionally
+    override an engine default.
+    """
+    merged: dict[str, Any] = {}
+    if isinstance(base, Mapping):
+        merged.update(base)
+    if isinstance(incoming, Mapping):
+        merged.update(incoming)
+    return merged
+
+
 def _host_os_family() -> str:
     """Map the host platform to a Camoufox ``os`` value for identity consistency."""
     if sys.platform.startswith("darwin"):

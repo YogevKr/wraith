@@ -50,9 +50,11 @@ __all__ = [
     "find_zen_profiles",
     "find_chrome_profile",
     "extract_cookies",
+    "extract_google_reputation",
     "to_playwright_cookies",
     "inject_cookies",
     "ChromeEncryptionError",
+    "GOOGLE_REPUTATION_COOKIES",
 ]
 
 
@@ -78,6 +80,43 @@ class Cookie:
     same_site: str = "Lax"
     expires: float | None = None
     source: str = "unknown"  # profile path / browser this came from
+
+
+# --------------------------------------------------------------------------- #
+# reCAPTCHA-v3 reputation cookie set
+# --------------------------------------------------------------------------- #
+# The .google.com cookies that carry a logged-in Google identity's *reputation*
+# into the 3rd-party www.google.com reCAPTCHA iframe. When these are present in
+# the browser context, the v3 score that the iframe mints reflects that warmed
+# account rather than a cold automated profile — the GENERAL-across-any-sitekey
+# lift that takes EL AL's /api/login oracle from 511 (rejected) to 200.
+#
+#   SID / HSID / SSID / APISID / SAPISID  — the classic Google auth quintet
+#   __Secure-1PSID / __Secure-3PSID       — modern first/third-party SID cookies
+#       (the 3P* variants are the ones that actually ride into a 3rd-party
+#        iframe, so they are essential to the score lift)
+#   NID                                   — Google preferences / consent
+#   SIDCC / __Secure-3PSIDCC              — short-lived SID integrity checks
+#   _GRECAPTCHA                           — reCAPTCHA's own aged trust cookie
+#
+# NOTE: delivery matters as much as presence — these must reach the cross-site
+# google.com iframe, which requires secure + SameSite=None (see
+# :func:`inject_cookies` ``third_party=True``). A naive Firefox SameSite mapping
+# would demote a non-secure "None" cookie to "Lax" and the 3P SID cookies would
+# never be sent cross-site, dropping the score back below threshold.
+GOOGLE_REPUTATION_COOKIES = (
+    "SID",
+    "HSID",
+    "SSID",
+    "APISID",
+    "SAPISID",
+    "__Secure-1PSID",
+    "__Secure-3PSID",
+    "NID",
+    "SIDCC",
+    "__Secure-3PSIDCC",
+    "_GRECAPTCHA",
+)
 
 
 class ChromeEncryptionError(NotImplementedError):
@@ -381,6 +420,27 @@ def _extract_firefox(db_path: Path, domain_filter: str | None) -> list[Cookie]:
     return cookies
 
 
+def extract_google_reputation(profile_path: str | Path) -> list[Cookie]:
+    """Extract just the Google reputation cookies from a real browser profile.
+
+    Convenience wrapper over :func:`extract_cookies` that filters to the
+    ``.google.com`` domain and then keeps only the cookies in
+    :data:`GOOGLE_REPUTATION_COOKIES` — the set that carries a warmed Google
+    identity's reCAPTCHA-v3 reputation into the 3rd-party reCAPTCHA iframe.
+
+    ``profile_path`` is a Firefox/Zen profile directory (or a direct
+    ``cookies.sqlite`` path), exactly as accepted by :func:`extract_cookies`.
+
+    Pair this with ``inject_cookies(context, cookies, third_party=True)`` so the
+    cookies are delivered with secure + SameSite=None and actually reach the
+    cross-site google.com iframe. Returns an empty list if the profile holds no
+    Google session (e.g. the user is not signed in there).
+    """
+    rows = extract_cookies(profile_path, domain_filter="google.com")
+    wanted = set(GOOGLE_REPUTATION_COOKIES)
+    return [c for c in rows if c.name in wanted]
+
+
 def _raise_chrome_encryption(db_path: Path) -> None:
     system = platform.system()
     keystore = {
@@ -446,6 +506,8 @@ def to_playwright_cookies(rows: Iterable[Cookie]) -> list[dict[str, Any]]:
 def inject_cookies(
     context: Any,
     cookies: Iterable[Cookie] | Iterable[dict[str, Any]],
+    *,
+    third_party: bool = False,
 ) -> int:
     """Inject borrowed cookies into a Playwright/Camoufox BrowserContext.
 
@@ -455,13 +517,34 @@ def inject_cookies(
 
     ``context`` is duck-typed (anything with ``add_cookies``) so this module
     imports cleanly without Playwright/Camoufox installed.
+
+    ``third_party`` (default False) is the proven 3rd-party-delivery fix for
+    reCAPTCHA-v3 reputation borrowing: when True, every injected cookie is
+    forced to ``secure=True`` and ``sameSite="None"`` so the browser actually
+    sends it to the cross-site www.google.com reCAPTCHA iframe. Without this a
+    naive Firefox SameSite mapping demotes a non-secure "None" cookie to "Lax",
+    the 3P SID cookies are never sent cross-site, and the v3 score stays below
+    threshold (the 511 failure mode). Leave it False (back-compat) for ordinary
+    same-site identity borrowing where you want to preserve the cookie's real
+    secure/SameSite attributes.
+
+    NOTE: this complements (rather than replaces) un-partitioning 3rd-party
+    cookies at the engine layer — Camoufox must also be launched with
+    ``firefox_user_prefs`` that disable cookie partitioning / first-party
+    isolation, otherwise the cookies are present but partitioned away from the
+    iframe's storage.
     """
     cookies = list(cookies)
     if cookies and isinstance(cookies[0], Cookie):
         payload = to_playwright_cookies(cookies)  # type: ignore[arg-type]
     else:
-        payload = list(cookies)  # type: ignore[assignment]
+        # Copy so we never mutate caller-supplied dicts in place.
+        payload = [dict(c) for c in cookies]  # type: ignore[arg-type]
     if not payload:
         return 0
+    if third_party:
+        for cookie in payload:
+            cookie["secure"] = True
+            cookie["sameSite"] = "None"
     context.add_cookies(payload)
     return len(payload)

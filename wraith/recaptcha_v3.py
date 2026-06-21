@@ -208,8 +208,24 @@ class BorrowedGoogleCookies(ReputationSource):
         :class:`PersistentGrecaptcha`; for an isolated medium-risk lift use a
         dedicated burner via :class:`WarmedAccount`.
 
+    .. danger::
+
+        **DO NOT fan ONE borrowed identity across MANY (rotating/residential)
+        IPs.** This is the documented burn: Google's anti-abuse reads one
+        account appearing from dozens of ASNs at machine velocity as a single
+        compromised/automated identity and **down-weights its v3 score
+        GLOBALLY** — not per-site — for *days*, with no per-site recovery. We
+        observed exactly this: a target's accept verdict flipped ``200 -> 511``
+        and stayed there once the identity was reused across a proxy pool. Safe
+        usage is a **single one-off run from one stable IP** (ideally the same
+        IP the cookies were minted on). For repeated or multi-IP automation,
+        use a pool of dedicated **warmed burner** identities, each pinned 1:1 to
+        one stable IP — never a borrowed *primary* identity across a rotating
+        :class:`~wraith.proxy.ProxyPool`.
+
     This is the strongest source — a fully warmed human identity — and is the
-    one that drove El Al's ``/api/login`` oracle from 511 to 200.
+    one that drove El Al's ``/api/login`` oracle from 511 to 200 (on a single
+    stable IP; see the burn note above for why that doesn't survive fan-out).
 
     :param profile_substring: optional case-insensitive substring to pick a
         specific profile path when several Firefox/Zen profiles exist (e.g.

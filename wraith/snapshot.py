@@ -61,11 +61,31 @@ class Element:
     role: str
     text: str
     attributes: dict = field(default_factory=dict)
+    #: Set by AgentBrowser.snapshot() when this element wasn't in the prior
+    #: snapshot (browser-use-style new-element marking; shown with a leading *).
+    is_new: bool = False
+
+    @property
+    def signature(self) -> str:
+        """Content signature identifying this element across re-snapshots.
+
+        Stable even though ``index`` renumbers every snapshot, so a stale index
+        (after a DOM mutation) can be re-resolved by signature (AgentBrowser
+        self-heal) and genuinely-new elements can be flagged.
+        """
+        a = self.attributes or {}
+        key = "|".join(
+            f"{k}={a[k]}"
+            for k in ("name", "id", "type", "href", "aria-label", "placeholder", "value")
+            if a.get(k)
+        )
+        return f"{self.tag}#{self.role}#{(self.text or '')[:40]}#{key}"
 
     def to_text(self) -> str:
         """Render this element as one browser-use-style line.
 
         Example: ``[12]<button role=button aria-label="Search">Search</button>``.
+        A leading ``*`` marks an element new since the previous snapshot.
         """
         parts = [self.tag]
         if self.role:
@@ -84,9 +104,10 @@ class Element:
 
         head = " ".join(parts)
         body = _clip(self.text, 120)
+        mark = "* " if self.is_new else ""
         if body:
-            return f"[{self.index}]<{head}>{body}</{self.tag}>"
-        return f"[{self.index}]<{head}/>"
+            return f"{mark}[{self.index}]<{head}>{body}</{self.tag}>"
+        return f"{mark}[{self.index}]<{head}/>"
 
 
 @dataclass
@@ -105,15 +126,22 @@ class Snapshot:
     title: str
     elements: list[Element]
     screenshot: Optional[bytes] = None
+    #: A human-readable observation of what an action changed (set by
+    #: AgentBrowser.click/type), e.g. "url changed -> ...", "+3 elements",
+    #: "no visible change detected". None for a plain snapshot.
+    changed: Optional[str] = None
 
     def to_text(self) -> str:
         """Render the snapshot as browser-use-style text for an LLM.
 
         One line per interactive element (with its action index); a small
-        header carries the URL and title so the model has page context without
-        an index it might try to act on.
+        header carries the URL/title (and, after an action, what changed) so the
+        model has page context without an index it might try to act on.
         """
-        lines = [f"URL: {self.url}", f"Title: {self.title}", ""]
+        lines = [f"URL: {self.url}", f"Title: {self.title}"]
+        if self.changed:
+            lines.append(f"Changed: {self.changed}")
+        lines.append("")
         if self.elements:
             lines.extend(el.to_text() for el in self.elements)
         else:

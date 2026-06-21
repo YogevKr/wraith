@@ -201,9 +201,52 @@ class AgentBrowser:
             The new :class:`~wraith.snapshot.Snapshot`, also stored on
             :attr:`last_snapshot`.
         """
+        prior = self.last_snapshot
         snap = take_snapshot(self.page, **kw)
+        if prior is not None:
+            prior_sigs = {e.signature for e in prior.elements}
+            for el in snap.elements:
+                if el.signature not in prior_sigs:
+                    el.is_new = True
         self.last_snapshot = snap
         return snap
+
+    def _page_signature(self) -> Optional[dict]:
+        """Cheap pre/post-action page fingerprint for change observation."""
+        try:
+            return self.page.evaluate(
+                """() => {
+                    const t = (document.body && document.body.innerText) || '';
+                    let h = 0;
+                    for (let i = 0; i < t.length; i++) { h = ((h << 5) - h + t.charCodeAt(i)) | 0; }
+                    return {
+                        url: location.href,
+                        n: document.querySelectorAll('a,button,input,select,textarea,[role]').length,
+                        h,
+                    };
+                }"""
+            )
+        except Exception:
+            return None
+
+    def _set_changed(self, pre: Optional[dict], snap: Snapshot) -> None:
+        """Annotate ``snap.changed`` with what changed vs the pre-action page."""
+        if pre is None:
+            return
+        post = self._page_signature()
+        if post is None:
+            return
+        parts: list[str] = []
+        if pre.get("url") != post.get("url"):
+            parts.append(f"url changed -> {post.get('url')}")
+        dn = int(post.get("n", 0)) - int(pre.get("n", 0))
+        if dn > 0:
+            parts.append(f"+{dn} elements")
+        elif dn < 0:
+            parts.append(f"{dn} elements")
+        if not parts and pre.get("h") != post.get("h"):
+            parts.append("content changed")
+        snap.changed = "; ".join(parts) if parts else "no visible change detected"
 
     def navigate(self, url: str) -> Snapshot:
         """Navigate to ``url`` through the WAAP, dismiss consent, and snapshot.
@@ -260,9 +303,12 @@ class AgentBrowser:
             A fresh :class:`~wraith.snapshot.Snapshot` taken after the click
             settles.
         """
+        pre = self._page_signature()
         self._locator(index).click()
         self._wait_for_settle()
-        return self.snapshot()
+        snap = self.snapshot()
+        self._set_changed(pre, snap)
+        return snap
 
     def type(
         self,
@@ -289,6 +335,7 @@ class AgentBrowser:
             A fresh :class:`~wraith.snapshot.Snapshot` taken after the action
             settles.
         """
+        pre = self._page_signature()
         locator = self._locator(index)
 
         if clear:
@@ -313,7 +360,9 @@ class AgentBrowser:
                 locator.press("Enter")
 
         self._wait_for_settle()
-        return self.snapshot()
+        snap = self.snapshot()
+        self._set_changed(pre, snap)
+        return snap
 
     def scroll(self, direction: str = "down", amount: int = 700) -> Snapshot:
         """Scroll the page and re-snapshot.
@@ -458,12 +507,30 @@ class AgentBrowser:
     # Internal helpers
     # ------------------------------------------------------------------ #
     def _locator(self, index: int) -> Any:
-        """Build a Playwright locator for the snapshot ``index``.
+        """Build a Playwright locator for the snapshot ``index``, self-healing.
 
         The selector targets the ``data-wraith-index`` attribute stamped onto
         the live DOM by the most recent :func:`wraith.snapshot.take_snapshot`.
+        If that stamp is gone (the DOM changed since the snapshot), re-resolve by
+        the element's content :pyattr:`~wraith.snapshot.Element.signature`:
+        re-snapshot once and return the locator for the element that still
+        matches — so a slightly-stale index recovers instead of throwing.
         """
-        return self.page.locator(f'[data-wraith-index="{int(index)}"]')
+        loc = self.page.locator(f'[data-wraith-index="{int(index)}"]')
+        try:
+            if loc.count() > 0:
+                return loc
+        except Exception:
+            return loc
+        # Stale stamp — try to heal by signature against a fresh snapshot.
+        prior = self.last_snapshot.by_index(index) if self.last_snapshot else None
+        if prior is not None:
+            sig = prior.signature
+            fresh = self.snapshot()
+            match = next((e for e in fresh.elements if e.signature == sig), None)
+            if match is not None:
+                return self.page.locator(f'[data-wraith-index="{int(match.index)}"]')
+        return loc  # let the caller's action raise a clear error if truly gone
 
     def _ensure_high_score(self) -> Optional[Any]:
         """Best-effort reCAPTCHA-v3 score lift via the reputation source.

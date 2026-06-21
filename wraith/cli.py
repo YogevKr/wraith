@@ -302,6 +302,38 @@ def cmd_detect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_selftest(args: argparse.Namespace) -> int:
+    """Run the stealth self-test (rebrowser leak suite) on the live engine."""
+    detect = _lazy("detect")
+    engine = _lazy("engine")
+    print("wraith: running stealth self-test (this opens a browser)...", file=sys.stderr)
+    session = engine.launch(
+        engine=args.engine,
+        headless=args.headless,
+        geoip=not args.no_geoip,
+        proxy=_resolve_proxy(args),
+    )
+    try:
+        result = detect.selftest(session.page)
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result["passed"] else 2
+
+    for name, check in result["checks"].items():
+        print(f"  {check['status']:>7}  {name}")
+    if result["passed"]:
+        print("PASS — no critical automation leaks detected")
+    else:
+        print(f"FAIL — critical leaks: {', '.join(result['critical_failures'])}")
+    return 0 if result["passed"] else 2
+
+
 def cmd_agent(args: argparse.Namespace) -> int:
     """Open an :class:`~wraith.agent.AgentBrowser` to a URL and print the snapshot.
 
@@ -797,6 +829,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_fetch.add_argument("--max-bytes", type=int, default=2000, help="max body bytes to print")
     _add_proxy_flags(p_fetch)
     p_fetch.set_defaults(func=cmd_fetch)
+
+    # selftest
+    p_selftest = sub.add_parser(
+        "selftest",
+        help="run the stealth self-test (rebrowser leak suite) and report pass/fail",
+        description="Open the stealth engine, run the bot-detector leak suite, and "
+        "report a normalized pass/fail per check (runtimeEnableLeak / "
+        "navigatorWebdriver / pwInitScripts / sourceUrlLeak / ...). Exit non-zero "
+        "on a critical leak — wire it into CI/regression checks.",
+    )
+    p_selftest.add_argument("--json", action="store_true", help="emit the full result as JSON")
+    _add_engine_flags(p_selftest)
+    _add_proxy_flags(p_selftest)
+    p_selftest.set_defaults(func=cmd_selftest)
 
     # mcp
     p_mcp = sub.add_parser(

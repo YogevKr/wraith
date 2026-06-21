@@ -122,6 +122,7 @@ _reexport(
         "recaptcha_v3_score",
         "recaptcha_params",
         "bot_detector",
+        "selftest",
         "identify_waap",
         "fingerprint",
         "cookie_is_valid",

@@ -67,6 +67,7 @@ __all__ = [
     "ResponseSignal",
     "classify_response",
     "is_blocked",
+    "selftest",
 ]
 
 # Public test endpoints used by the JS-rendered probes.
@@ -704,6 +705,57 @@ def bot_detector(page: Any) -> dict:
     # Guarantee the Wraith-relevant keys exist so callers can assert on them.
     return {test: results.get(test) for test in _BOT_DETECTOR_TESTS} | {
         k: v for k, v in results.items() if k not in _BOT_DETECTOR_TESTS
+    }
+
+
+# Tests whose failure means "detected as automation" (vs config/cosmetic).
+_SELFTEST_CRITICAL = (
+    "runtimeEnableLeak",
+    "navigatorWebdriver",
+    "pwInitScripts",
+    "sourceUrlLeak",
+    "dummyFn",
+)
+
+
+def _normalize_status(status: Any) -> str:
+    """Map a detector's per-test status to ``pass`` | ``fail`` | ``warn`` | ``unknown``."""
+    if status is None:
+        return "unknown"
+    t = str(status).strip().lower()
+    if not t:
+        return "unknown"
+    if any(k in t for k in ("pass", "ok", "green", "clean", "good", "✅", "🟢")) or t == "true":
+        return "pass"
+    if any(k in t for k in ("fail", "leak", "detect", "red", "bot", "🔴", "❌")) or t == "false":
+        return "fail"
+    if any(k in t for k in ("warn", "orange", "yellow", "🟡", "🟠")):
+        return "warn"
+    return "unknown"
+
+
+def selftest(page: Any) -> dict:
+    """Run the stealth self-test battery and return a normalized verdict.
+
+    Drives :func:`bot_detector` (rebrowser's leak suite) and normalizes each
+    check to ``pass``/``fail``/``warn``/``unknown``, surfacing which automation
+    leaks (if any) are present. Use it as a regression gate: a Camoufox /
+    playwright bump that silently reintroduces ``runtimeEnableLeak`` /
+    ``navigatorWebdriver`` / ``pwInitScripts`` / ``sourceUrlLeak`` flips
+    ``passed`` to ``False``.
+
+    :returns: ``{checks: {name: {status, raw}}, failures: [...],
+        critical_failures: [...], passed: bool}``.
+    """
+    raw = bot_detector(page)
+    checks = {k: {"status": _normalize_status(v), "raw": v} for k, v in raw.items()}
+    failures = [k for k, c in checks.items() if c["status"] == "fail"]
+    critical = [k for k in _SELFTEST_CRITICAL if checks.get(k, {}).get("status") == "fail"]
+    return {
+        "checks": checks,
+        "failures": failures,
+        "critical_failures": critical,
+        "passed": not critical,
     }
 
 

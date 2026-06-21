@@ -70,19 +70,33 @@ is needed at all: a real Firefox engine clears the challenge natively, and
   Chromium fallback; enforces the `playwright==1.55` pin Camoufox needs.
 - **Identity borrowing** — discover and read cookies from your own Firefox / Zen
   / Chrome profiles and inject them into the stealth context.
+- **No-browser TLS fast path** — `wraith.fastpath` (curl_cffi) replays a
+  borrowed/harvested session with a real-browser TLS+HTTP/2 fingerprint and **no
+  browser**: do the expensive challenge-clear/login once in Camoufox, then drive
+  authenticated requests cheaply. `wraith fetch` / MCP `fetch`.
+  *(`pip install 'wraith[fastpath]'`.)*
 - **Live session harvesting** — latch the first request carrying both an
   `Authorization` header and a named auth cookie, for tokens never stored on
-  disk.
+  disk. Export a portable Playwright `storageState` from any cleared session.
 - **WAAP/bot-defense fingerprinting** — `identify_waap()` recognises Reblaze/
-  Link11, Akamai, reCAPTCHA, DataDome, Imperva/Incapsula, Kasada, SiteMinder.
-- **Self-assessment** — read your own reCAPTCHA-v3 score and rebrowser
-  automation tells.
-- **Agent perception layer** — browser-use-style indexed DOM snapshots; act on
-  elements by index (`click`, `type`, `scroll`, `read`).
+  Link11, Akamai, reCAPTCHA, DataDome, Imperva/Incapsula, Kasada, SiteMinder;
+  `classify_response()` / `is_blocked()` tell the fast path when to escalate.
+- **Challenge solving** — a vendor-dispatching `Challenge` + `solve_challenge()`
+  (Turnstile / hCaptcha / reCAPTCHA v2+v3 / FunCaptcha / AWS-WAF via CapSolver /
+  2Captcha) and `inject_token()` to feed a solved token back into the page.
+  `clear_challenge` fails fast on a hard block instead of burning the timeout.
+- **Stealth self-test** — `wraith selftest` runs the rebrowser leak suite and
+  exits non-zero on a critical automation leak (CI/regression gate).
+- **Agent perception layer** — browser-use-style indexed DOM snapshots with
+  **change-observation** (what each action did), **new-element marking**, and
+  **signature self-heal** for stale indices; act by index (`click`, `type`,
+  `scroll`, `read`) across multiple tabs.
 - **MCP-native** — a stdio MCP server (`wraith-mcp`) exposing the agent browser
-  as tools for any MCP client.
-- **Residential proxy support** — a dependency-free `ProxyPool` plus a
-  first-class DataImpulse provider for rotating/sticky exits.
+  as tools (per-call snapshot control, inline screenshots, tabs, `fetch`) for
+  any MCP client.
+- **Residential proxy support** — a `ProxyPool` health state machine (cooldown /
+  backoff / half-open / dead / recovery) plus a first-class DataImpulse provider
+  for rotating/sticky exits.
 - **Human-like behavior helpers** — curved/eased mouse movement and per-key
   typing cadence.
 - **Resilient import** — a missing optional browser dep never breaks
@@ -179,6 +193,13 @@ uv run wraith borrow https://example.com --profile "~/Library/Application Suppor
 
 # harvest — capture a live {Authorization, Cookie, User-Agent} session
 uv run wraith harvest https://example.com --target api.example.com --cookie session -o example.session.json
+
+# fetch   — no-browser TLS-impersonation replay of a harvested session (fast path)
+uv run wraith fetch https://api.example.com/me --session example.session.json --show-body
+
+# selftest — run the stealth leak suite; exit non-zero on a critical leak
+uv run wraith selftest
+uv run wraith selftest --json
 
 # score   — read this identity's reCAPTCHA-v3 reputation (fresh -> ~0.1-0.3)
 uv run wraith score

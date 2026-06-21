@@ -28,7 +28,8 @@ DESIGN:
 from __future__ import annotations
 
 import random
-from typing import Iterable
+import time
+from typing import Callable, Iterable
 
 __all__ = ["ProxyPool", "normalize_proxy"]
 
@@ -84,17 +85,33 @@ class ProxyPool:
         strategy: ``"round_robin"`` (default) cycles through the proxies in
             order; ``"random"`` returns a uniformly random *live* proxy.
 
-    Bad proxies (marked via :meth:`mark_bad`) are skipped by both strategies and
-    excluded from :meth:`remaining`, ``len()`` and truthiness, but are remembered
-    so they are never handed out again this run.
+    Failing proxies (reported via :meth:`mark_bad`) enter a **cooldown** with
+    exponential backoff and are skipped by both strategies (and excluded from
+    :meth:`remaining` / ``len()`` / truthiness) until the cooldown expires, when
+    they are retried "half-open". A success (:meth:`mark_good`) clears the
+    cooldown; ``max_failures`` consecutive failures — or ``mark_bad(fatal=True)``
+    — retire a proxy permanently. The clock is injectable (``now=``) for tests.
     """
 
-    def __init__(self, proxies: Iterable[str], *, strategy: str = "round_robin") -> None:
+    def __init__(
+        self,
+        proxies: Iterable[str],
+        *,
+        strategy: str = "round_robin",
+        base_cooldown: float = 30.0,
+        max_cooldown: float = 900.0,
+        max_failures: int = 3,
+        now: "Callable[[], float] | None" = None,
+    ) -> None:
         if strategy not in ("round_robin", "random"):
             raise ValueError(
                 f"unknown strategy {strategy!r}; expected 'round_robin' or 'random'"
             )
         self.strategy = strategy
+        self.base_cooldown = float(base_cooldown)
+        self.max_cooldown = float(max_cooldown)
+        self.max_failures = int(max_failures)
+        self._now = now or time.monotonic
 
         # Normalise + de-dupe while preserving first-seen order.
         normalised: list[str] = []
@@ -105,10 +122,29 @@ class ProxyPool:
                 seen.add(p)
                 normalised.append(p)
         self._proxies: list[str] = normalised
-        self._bad: set[str] = set()
+        # Health state machine (per normalised proxy):
+        #   _dead: permanently retired (hard block, or N consecutive failures)
+        #   _fails: consecutive failure count (reset on mark_good)
+        #   _cooldown_until: monotonic deadline; a proxy in cooldown is skipped
+        #     until the clock passes it, then it goes "half-open" (available to
+        #     retry). A success (mark_good) clears it; another failure backs off.
+        self._dead: set[str] = set()
+        self._fails: dict[str, int] = {}
+        self._cooldown_until: dict[str, float] = {}
         # Index of the proxy returned by the most recent current()/next().
         # -1 means "nothing handed out yet" so the first next() returns index 0.
         self._idx: int = -1
+
+    def _available(self, proxy: str) -> bool:
+        """True if ``proxy`` can be handed out now (live or half-open)."""
+        if proxy in self._dead:
+            return False
+        until = self._cooldown_until.get(proxy)
+        return until is None or self._now() >= until
+
+    def _backoff(self, failures: int) -> float:
+        """Exponential backoff (seconds) for the Nth consecutive failure."""
+        return min(self.max_cooldown, self.base_cooldown * (2 ** max(0, failures - 1)))
 
     # ------------------------------------------------------------------ #
     # Rotation
@@ -125,12 +161,12 @@ class ProxyPool:
         # If we have a valid pointer to a still-live proxy, reuse it.
         if 0 <= self._idx < len(self._proxies):
             candidate = self._proxies[self._idx]
-            if candidate not in self._bad:
+            if self._available(candidate):
                 return candidate
         # Otherwise fall back to the first live proxy (no advance / no mutation
         # of _idx — current() is non-destructive).
         for p in self._proxies:
-            if p not in self._bad:
+            if self._available(p):
                 return p
         return None
 
@@ -146,7 +182,7 @@ class ProxyPool:
 
         if self.strategy == "random":
             live = [
-                i for i, p in enumerate(self._proxies) if p not in self._bad
+                i for i, p in enumerate(self._proxies) if self._available(p)
             ]
             self._idx = random.choice(live)
             return self._proxies[self._idx]
@@ -156,7 +192,7 @@ class ProxyPool:
         n = len(self._proxies)
         for step in range(1, n + 1):
             i = (self._idx + step) % n
-            if self._proxies[i] not in self._bad:
+            if self._available(self._proxies[i]):
                 self._idx = i
                 return self._proxies[i]
         return None  # pragma: no cover - remaining() guards this
@@ -164,24 +200,76 @@ class ProxyPool:
     # ------------------------------------------------------------------ #
     # Health bookkeeping
     # ------------------------------------------------------------------ #
-    def mark_bad(self, proxy: str) -> None:
-        """Mark ``proxy`` as bad so it is never handed out again this run.
-
-        Accepts either the normalised value this pool returned or the raw spec
-        the caller originally passed (it is normalised before matching), so
-        ``mark_bad(pool.next())`` and ``mark_bad("host:port")`` both work. A
-        proxy not in this pool is ignored.
-        """
+    def _key(self, proxy: str) -> str | None:
         try:
             normalised = normalize_proxy(proxy)
         except (TypeError, ValueError):
+            return None
+        return normalised if normalised in self._proxies else None
+
+    def mark_bad(self, proxy: str, *, fatal: bool = False, cooldown: float | None = None) -> None:
+        """Record a failure for ``proxy``.
+
+        Default (``fatal=False``): a transient failure (rate-limit / soft block).
+        The proxy enters a **cooldown** with exponential backoff and is skipped
+        until the cooldown expires (then it's retried "half-open"). After
+        :attr:`max_failures` consecutive failures it is retired permanently.
+
+        ``fatal=True``: a hard block (e.g. HTTP 492) — retire the proxy
+        immediately. ``cooldown=`` overrides the computed backoff (seconds).
+
+        Accepts the normalised value this pool returned or the raw spec
+        originally passed; a proxy not in this pool is ignored.
+        """
+        key = self._key(proxy)
+        if key is None:
             return
-        if normalised in self._proxies:
-            self._bad.add(normalised)
+        if fatal:
+            self._dead.add(key)
+            return
+        fails = self._fails.get(key, 0) + 1
+        self._fails[key] = fails
+        if fails >= self.max_failures:
+            self._dead.add(key)
+            return
+        wait = self._backoff(fails) if cooldown is None else float(cooldown)
+        self._cooldown_until[key] = self._now() + wait
+
+    def mark_good(self, proxy: str) -> None:
+        """Record a success for ``proxy`` — clear its cooldown and failure count.
+
+        Lets a recovered exit IP return to rotation; call after a request through
+        the proxy succeeds (a clean clearance / 200).
+        """
+        key = self._key(proxy)
+        if key is None:
+            return
+        self._fails.pop(key, None)
+        self._cooldown_until.pop(key, None)
+
+    def mark_dead(self, proxy: str) -> None:
+        """Permanently retire ``proxy`` (alias for ``mark_bad(proxy, fatal=True)``)."""
+        self.mark_bad(proxy, fatal=True)
+
+    def state(self, proxy: str) -> str:
+        """Return ``proxy``'s current state: ``live`` | ``cooldown`` | ``dead`` | ``unknown``."""
+        key = self._key(proxy)
+        if key is None:
+            return "unknown"
+        if key in self._dead:
+            return "dead"
+        until = self._cooldown_until.get(key)
+        if until is not None and self._now() < until:
+            return "cooldown"
+        return "live"
 
     def remaining(self) -> int:
-        """Number of live (not-marked-bad) proxies left in the pool."""
-        return len(self._proxies) - len(self._bad)
+        """Number of proxies available **right now** (live or half-open)."""
+        return sum(1 for p in self._proxies if self._available(p))
+
+    def dead_count(self) -> int:
+        """Number of permanently-retired proxies."""
+        return len(self._dead)
 
     # ------------------------------------------------------------------ #
     # Dunders

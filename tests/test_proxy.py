@@ -158,3 +158,65 @@ def test_random_strategy_skips_bad():
 def test_unknown_strategy_raises():
     with pytest.raises(ValueError):
         ProxyPool(["a:1"], strategy="bogus")
+
+
+# --------------------------------------------------------------------------- #
+# ProxyPool — health state machine (cooldown / backoff / dead / recovery)
+# --------------------------------------------------------------------------- #
+
+def test_cooldown_then_half_open_recovery():
+    t = {"v": 1000.0}
+    pool = ProxyPool(["a:1", "b:2"], now=lambda: t["v"], base_cooldown=30, max_failures=3)
+    pool.mark_bad("a:1")
+    assert pool.state("a:1") == "cooldown"
+    assert pool.remaining() == 1  # only b:2 available now
+    t["v"] += 31  # past the cooldown -> half-open -> available again
+    assert pool.state("a:1") == "live"
+    assert pool.remaining() == 2
+
+
+def test_exponential_backoff_and_dead_after_max():
+    t = {"v": 0.0}
+    pool = ProxyPool(["a:1"], now=lambda: t["v"], base_cooldown=10, max_failures=3)
+    pool.mark_bad("a:1")  # fail 1 -> cooldown 10s
+    assert pool.state("a:1") == "cooldown"
+    t["v"] = 9.9
+    assert pool.state("a:1") == "cooldown"
+    t["v"] = 10.0
+    assert pool.state("a:1") == "live"  # half-open
+    pool.mark_bad("a:1")  # fail 2 -> cooldown 20s (10 * 2)
+    t["v"] = 10.0 + 19.9
+    assert pool.state("a:1") == "cooldown"
+    t["v"] = 10.0 + 20.0
+    assert pool.state("a:1") == "live"
+    pool.mark_bad("a:1")  # fail 3 == max -> dead
+    assert pool.state("a:1") == "dead"
+    assert pool.dead_count() == 1
+    assert pool.remaining() == 0
+
+
+def test_fatal_retires_immediately():
+    pool = ProxyPool(["a:1", "b:2"])
+    pool.mark_bad("a:1", fatal=True)
+    assert pool.state("a:1") == "dead"
+    assert pool.remaining() == 1
+    assert pool.dead_count() == 1
+
+
+def test_mark_good_recovers_from_cooldown():
+    t = {"v": 0.0}
+    pool = ProxyPool(["a:1"], now=lambda: t["v"], base_cooldown=100)
+    pool.mark_bad("a:1")
+    assert pool.state("a:1") == "cooldown"
+    pool.mark_good("a:1")
+    assert pool.state("a:1") == "live"
+    assert pool.remaining() == 1
+
+
+def test_cooldown_override_and_normalized_match():
+    t = {"v": 0.0}
+    pool = ProxyPool(["a:1"], now=lambda: t["v"])
+    pool.mark_bad("http://a:1", cooldown=5)  # normalized form matches
+    assert pool.state("a:1") == "cooldown"
+    t["v"] = 5.0
+    assert pool.state("a:1") == "live"

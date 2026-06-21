@@ -208,6 +208,7 @@ _reexport(
         "harvest_token",
         "inject_token",
         "score",
+        "Challenge",
         "SolverService",
         "CapSolver",
         "TwoCaptcha",

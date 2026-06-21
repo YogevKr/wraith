@@ -54,12 +54,14 @@ from __future__ import annotations
 
 import abc
 import time
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Optional
 
 __all__ = [
     "harvest_token",
     "inject_token",
     "score",
+    "Challenge",
     "SolverService",
     "CapSolver",
     "TwoCaptcha",
@@ -257,6 +259,48 @@ def score(target: Any) -> float:
 # External solver farms (bring-your-own-key; last resort — read module docstring)
 # ---------------------------------------------------------------------------
 
+# Map a detect.py WAAP/CAPTCHA vendor string to a solver challenge kind.
+_VENDOR_TO_KIND: dict[str, str] = {
+    "recaptcha": "recaptcha_v3",
+    "recaptcha_v3": "recaptcha_v3",
+    "recaptcha_v2": "recaptcha_v2",
+    "hcaptcha": "hcaptcha",
+    "cloudflare": "turnstile",
+    "turnstile": "turnstile",
+    "datadome": "datadome",
+    "aws-waf": "awswaf",
+    "awswaf": "awswaf",
+    "funcaptcha": "funcaptcha",
+    "arkose": "funcaptcha",
+    "geetest": "geetest",
+}
+
+
+@dataclass
+class Challenge:
+    """A vendor-agnostic descriptor of a CAPTCHA/anti-bot challenge to solve.
+
+    Lets :func:`wraith.detect.identify_waap` / :func:`recaptcha_params` feed a
+    solver in one dispatch: build a ``Challenge`` from what was detected, then
+    call :meth:`SolverService.solve_challenge`, which maps ``kind`` to the right
+    farm task type (Turnstile / hCaptcha / reCAPTCHA v2+v3 / FunCaptcha / AWS
+    WAF / …) instead of the reCAPTCHA-only :meth:`SolverService.solve`.
+    """
+
+    kind: str
+    sitekey: str
+    url: str
+    action: str = "submit"
+    data: Optional[str] = None          # Turnstile cData
+    enterprise: bool = False
+    min_score: float = 0.5
+
+    @classmethod
+    def from_vendor(cls, vendor: str, sitekey: str, url: str, **kw: Any) -> "Challenge":
+        """Build a Challenge from a detected vendor string (see ``_VENDOR_TO_KIND``)."""
+        kind = _VENDOR_TO_KIND.get(str(vendor).strip().lower(), "recaptcha_v3")
+        return cls(kind=kind, sitekey=sitekey, url=url, **kw)
+
 
 class SolverService(abc.ABC):
     """Abstract base for third-party CAPTCHA solver farms.
@@ -299,6 +343,60 @@ class SolverService(abc.ABC):
         """
         raise NotImplementedError
 
+    def _task_for(self, challenge: "Challenge") -> "tuple[dict, str]":
+        """Return ``(createTask task dict, solution-field name)`` for a challenge.
+
+        Implemented per provider (farm task-type names differ). Raise
+        ``ValueError`` for an unsupported :class:`Challenge` kind.
+        """
+        raise NotImplementedError
+
+    def solve_challenge(self, challenge: "Challenge") -> str:
+        """Solve ANY supported challenge kind via this farm's createTask/poll API.
+
+        Generalizes :meth:`solve` (reCAPTCHA-only) across Turnstile / hCaptcha /
+        reCAPTCHA v2+v3 / FunCaptcha / AWS WAF by dispatching through
+        :meth:`_task_for`. Pair the returned token with
+        :func:`wraith.recaptcha.inject_token` to feed it back into the page.
+        """
+        import httpx
+
+        task, field = self._task_for(challenge)
+        payload = {"clientKey": self.api_key, "task": task}
+        with httpx.Client(timeout=self.timeout) as client:
+            created = client.post(f"{self.BASE_URL}/createTask", json=payload)
+            created.raise_for_status()
+            created = created.json()
+            if created.get("errorId"):
+                raise RuntimeError(
+                    f"{type(self).__name__} createTask failed: "
+                    f"{created.get('errorDescription') or created}"
+                )
+            task_id = created.get("taskId")
+            if not task_id:
+                raise RuntimeError(f"{type(self).__name__} returned no taskId: {created}")
+            deadline = time.time() + self.timeout
+            while time.time() < deadline:
+                r = client.post(
+                    f"{self.BASE_URL}/getTaskResult",
+                    json={"clientKey": self.api_key, "taskId": task_id},
+                )
+                r.raise_for_status()
+                data = r.json()
+                if data.get("errorId"):
+                    raise RuntimeError(
+                        f"{type(self).__name__} getTaskResult failed: "
+                        f"{data.get('errorDescription') or data}"
+                    )
+                if data.get("status") == "ready":
+                    sol = data.get("solution") or {}
+                    token = sol.get(field) or sol.get("gRecaptchaResponse") or sol.get("token")
+                    if not token:
+                        raise RuntimeError(f"{type(self).__name__} ready but no token: {data}")
+                    return token
+                time.sleep(2.0)
+        raise RuntimeError(f"{type(self).__name__} timed out waiting for task result")
+
 
 class CapSolver(SolverService):
     """CapSolver (``api.capsolver.com``) integration skeleton.
@@ -311,6 +409,32 @@ class CapSolver(SolverService):
     """
 
     BASE_URL = "https://api.capsolver.com"
+
+    # challenge kind -> (CapSolver task type, solution field holding the token)
+    _TASK_TYPES = {
+        "recaptcha_v3": ("ReCaptchaV3TaskProxyLess", "gRecaptchaResponse"),
+        "recaptcha_v2": ("ReCaptchaV2TaskProxyLess", "gRecaptchaResponse"),
+        "turnstile": ("AntiTurnstileTaskProxyLess", "token"),
+        "hcaptcha": ("HCaptchaTaskProxyLess", "gRecaptchaResponse"),
+        "funcaptcha": ("FunCaptchaTaskProxyLess", "token"),
+        "awswaf": ("AntiAwsWafTaskProxyLess", "cookie"),
+    }
+
+    def _task_for(self, challenge: "Challenge") -> "tuple[dict, str]":
+        if challenge.kind not in self._TASK_TYPES:
+            raise ValueError(f"CapSolver: unsupported challenge kind {challenge.kind!r}")
+        ttype, field = self._TASK_TYPES[challenge.kind]
+        task: dict = {"type": ttype, "websiteURL": challenge.url, "websiteKey": challenge.sitekey}
+        if challenge.kind == "recaptcha_v3":
+            task["pageAction"] = challenge.action
+            task["minScore"] = challenge.min_score
+        if challenge.kind == "turnstile":
+            meta = {k: v for k, v in (("action", challenge.action), ("cdata", challenge.data)) if v}
+            if meta:
+                task["metadata"] = meta
+        if challenge.enterprise and challenge.kind in ("recaptcha_v3", "recaptcha_v2"):
+            task["isEnterprise"] = True
+        return task, field
 
     def solve(
         self,
@@ -387,6 +511,31 @@ class TwoCaptcha(SolverService):
     """
 
     BASE_URL = "https://api.2captcha.com"
+
+    # challenge kind -> (2Captcha task type, solution field holding the token)
+    _TASK_TYPES = {
+        "recaptcha_v3": ("RecaptchaV3TaskProxyless", "gRecaptchaResponse"),
+        "recaptcha_v2": ("RecaptchaV2TaskProxyless", "gRecaptchaResponse"),
+        "turnstile": ("TurnstileTaskProxyless", "token"),
+        "hcaptcha": ("HCaptchaTaskProxyless", "gRecaptchaResponse"),
+        "funcaptcha": ("FunCaptchaTaskProxyless", "token"),
+    }
+
+    def _task_for(self, challenge: "Challenge") -> "tuple[dict, str]":
+        if challenge.kind not in self._TASK_TYPES:
+            raise ValueError(f"2Captcha: unsupported challenge kind {challenge.kind!r}")
+        ttype, field = self._TASK_TYPES[challenge.kind]
+        task: dict = {"type": ttype, "websiteURL": challenge.url, "websiteKey": challenge.sitekey}
+        if challenge.kind == "recaptcha_v3":
+            task["pageAction"] = challenge.action
+            task["minScore"] = challenge.min_score
+        if challenge.kind == "turnstile":
+            task["action"] = challenge.action
+            if challenge.data:
+                task["data"] = challenge.data
+        if challenge.enterprise and challenge.kind in ("recaptcha_v3", "recaptcha_v2"):
+            task["enterprise"] = 1
+        return task, field
 
     def solve(
         self,

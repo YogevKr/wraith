@@ -58,6 +58,7 @@ from typing import Any
 
 __all__ = [
     "harvest_token",
+    "inject_token",
     "score",
     "SolverService",
     "CapSolver",
@@ -171,6 +172,61 @@ def harvest_token(
             f"(sitekey={sitekey!r}, action={action!r})"
         )
     return token
+
+
+# ---------------------------------------------------------------------------
+# Token injection (consume a solver/farm token)
+# ---------------------------------------------------------------------------
+
+# Default hidden response fields by widget. A solver returns a token; the page
+# only consumes it once it lands in the right field and an input/change fires.
+_RESPONSE_FIELDS = (
+    "g-recaptcha-response",   # reCAPTCHA v2/v3
+    "h-captcha-response",     # hCaptcha
+    "cf-turnstile-response",  # Cloudflare Turnstile
+    "fc-token",               # FunCaptcha / Arkose
+)
+
+_INJECT_JS = """
+(args) => {
+  const token = args.token;
+  const names = args.field ? [args.field] : args.fields;
+  const hit = [];
+  for (const name of names) {
+    const els = Array.from(document.getElementsByName(name));
+    const byId = document.getElementById(name);
+    if (byId && !els.includes(byId)) els.push(byId);
+    for (const el of els) {
+      try {
+        el.value = token;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        hit.push(name);
+      } catch (e) { /* ignore a single bad field */ }
+    }
+  }
+  return hit;
+}
+"""
+
+
+def inject_token(page: Any, token: str, *, field: str | None = None) -> list[str]:
+    """Write a solved CAPTCHA token into the page's hidden response field(s).
+
+    Makes a token obtained from a farm/solver (:class:`CapSolver`,
+    :class:`TwoCaptcha`, …) actually *usable*: it sets the matching hidden
+    response field — ``cf-turnstile-response`` / ``h-captcha-response`` /
+    ``g-recaptcha-response`` / ``fc-token`` (whichever exist on the page, or an
+    explicit ``field``) — and fires ``input``/``change`` so the page picks it up
+    on submit. The sibling of :func:`harvest_token` (which mints a token from the
+    page's own widget); use this when the token came from off-box.
+
+    :returns: the list of field names actually written (empty if none matched).
+    """
+    return list(
+        page.evaluate(_INJECT_JS, {"token": token, "field": field, "fields": list(_RESPONSE_FIELDS)})
+        or []
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -1011,16 +1011,35 @@ def clear_challenge(
                 if name in wanted and _cookie_is_valid(detect, name, value):
                     return active
 
+            # Read the rendered page once per iteration (reused below).
+            try:
+                content = page.content()
+            except Exception:
+                content = ""
+
+            # (a2) Hard block? Fail fast — don't burn the whole timeout on a
+            # page that will never clear (rotate identity + proxy instead).
+            if detect is not None and content:
+                _is_blocked = getattr(detect, "is_blocked", None)
+                if callable(_is_blocked):
+                    try:
+                        title = page.title()
+                    except Exception:
+                        title = ""
+                    try:
+                        block_reason = _is_blocked(content, title)
+                    except Exception:
+                        block_reason = None
+                    if block_reason:
+                        raise WaapHardBlockError(
+                            f"{url}: hard block detected ({block_reason}). "
+                            "Rotate identity + proxy; do not retry this IP."
+                        )
+
             # (b) settled on a clean 200 with real content?
             now = _time.monotonic()
             status_ok = main_status is None or 200 <= int(main_status) < 300
-            has_content = False
-            if status_ok:
-                try:
-                    content = page.content()
-                    has_content = bool(content) and len(content) > 200
-                except Exception:
-                    has_content = False
+            has_content = status_ok and bool(content) and len(content) > 200
             if status_ok and has_content:
                 if clean_since is None:
                     clean_since = now

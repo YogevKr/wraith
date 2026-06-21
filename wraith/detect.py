@@ -66,6 +66,7 @@ __all__ = [
     "cookie_is_valid",
     "ResponseSignal",
     "classify_response",
+    "is_blocked",
 ]
 
 # Public test endpoints used by the JS-rendered probes.
@@ -1451,3 +1452,33 @@ def classify_response(
     if 200 <= status < 400:
         return ResponseSignal("ok", None, f"HTTP {status}")
     return ResponseSignal("ok", None, f"HTTP {status}")
+
+
+# Conservative, high-precision markers of an unrecoverable HARD block page
+# (deliberately NOT matching interactive/JS challenges like "just a moment",
+# which may still clear — a false positive would wrongly abort a clearable wall).
+_HARD_BLOCK_MARKERS: tuple[tuple[str, str], ...] = (
+    ("error 1020", "Cloudflare block (error 1020)"),
+    ("sorry, you have been blocked", "WAF block ('you have been blocked')"),
+    ("you have been blocked", "WAF block ('you have been blocked')"),
+    ("this request was blocked", "request blocked"),
+    ("request blocked. we can", "AWS WAF request blocked"),
+    ("access to this page has been denied", "PerimeterX/HUMAN access denied"),
+)
+
+
+def is_blocked(html: str, title: str = "") -> str | None:
+    """Return a reason if a *rendered* page is a HARD (unrecoverable) block.
+
+    Hard block = a permanent deny page (Cloudflare ``error 1020``, AWS WAF
+    "request blocked", "you have been blocked", PerimeterX access-denied) — as
+    opposed to an interactive/JS challenge that may still clear. Lets
+    :func:`wraith.engine.clear_challenge` fail fast (rotate identity + proxy)
+    instead of burning the full timeout on a page that will never clear. Returns
+    ``None`` when the page is not a recognised hard block.
+    """
+    hay = (str(title) + "  " + (str(html or "")[:8000])).lower()
+    for marker, reason in _HARD_BLOCK_MARKERS:
+        if marker in hay:
+            return reason
+    return None

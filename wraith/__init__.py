@@ -126,6 +126,7 @@ _reexport(
         "fingerprint",
         "cookie_is_valid",
         "classify_response",
+        "is_blocked",
         "ResponseSignal",
         "CLEARANCE_COOKIES",
         "RECAPTCHA_V3_TEST_URL",
@@ -204,6 +205,7 @@ _reexport(
     "recaptcha",
     [
         "harvest_token",
+        "inject_token",
         "score",
         "SolverService",
         "CapSolver",

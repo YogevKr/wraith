@@ -313,7 +313,6 @@ def test_borrowed_prepare_injects_full_jar(monkeypatch):
     third-party secure+SameSite=None delivery, and the rest left natural.
     """
     from wraith import identity
-    from wraith import recaptcha_v3
 
     jar = [
         identity.Cookie(name="SAPISID", value="1", domain=".google.com", path="/",
@@ -361,7 +360,6 @@ def test_borrowed_prepare_injects_full_jar(monkeypatch):
 def test_borrowed_prepare_skips_profile_without_reputation(monkeypatch):
     """A google.com jar with no reputation cookies = not logged in -> skip it."""
     from wraith import identity
-    from wraith import recaptcha_v3
 
     jar = [
         identity.Cookie(name="OGPC", value="1", domain=".google.com", path="/"),

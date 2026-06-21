@@ -34,6 +34,11 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
 from mcp.server.fastmcp import FastMCP
 
+try:  # Image content block (vision); optional across mcp SDK versions.
+    from mcp.server.fastmcp import Image
+except Exception:  # pragma: no cover - older/newer SDK without the helper
+    Image = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .agent import AgentBrowser
 
@@ -136,16 +141,33 @@ def _ctx_from_browser(browser: "AgentBrowser") -> Any:
 # --------------------------------------------------------------------------- #
 # Tools (async wrappers -> sync browser work on the worker thread)
 # --------------------------------------------------------------------------- #
+def _render(snap: Any, include_snapshot: bool = True) -> str:
+    """Full indexed snapshot, or a compact summary when the caller doesn't need it.
+
+    Action tools default to returning the full snapshot, but pass
+    ``include_snapshot=false`` to save tokens — you then get the URL, what
+    changed, and the element count (call ``snapshot()`` for the indexed list).
+    """
+    if include_snapshot:
+        return snap.to_text()
+    head = f"URL: {snap.url}"
+    changed = getattr(snap, "changed", None)
+    if changed:
+        head += f" | {changed}"
+    return head + f" | {len(snap.elements)} interactive elements (call snapshot() for the indexed list)"
+
+
 @app.tool()
-async def navigate(url: str) -> str:
+async def navigate(url: str, include_snapshot: bool = True) -> str:
     """Open a URL and return an indexed snapshot of the page's interactive
     elements.
 
     Automatically passes WAAP/anti-bot challenges and dismisses common
     cookie/consent banners. Each line is ``[index]<tag role=...>text</tag>``;
-    use the index with `click` / `type_text`.
+    use the index with `click` / `type_text`. Pass ``include_snapshot=false`` for
+    a compact summary (saves tokens; call `snapshot()` when you need the list).
     """
-    return await _run(lambda: _get_browser().navigate(url).to_text())
+    return await _run(lambda: _render(_get_browser().navigate(url), include_snapshot))
 
 
 @app.tool()
@@ -156,23 +178,60 @@ async def snapshot() -> str:
 
 
 @app.tool()
-async def click(index: int) -> str:
-    """Click the element with the given index (from the latest snapshot) and
-    return the resulting snapshot."""
-    return await _run(lambda: _get_browser().click(index).to_text())
+async def click(index: int, include_snapshot: bool = True) -> str:
+    """Click the element with the given index (from the latest snapshot).
+
+    Returns the resulting snapshot (or a compact change summary when
+    ``include_snapshot=false``). The result's ``Changed:`` line reports what the
+    click did (url change / new elements / nothing)."""
+    return await _run(lambda: _render(_get_browser().click(index), include_snapshot))
 
 
 @app.tool()
-async def type_text(index: int, text: str, enter: bool = False) -> str:
+async def type_text(index: int, text: str, enter: bool = False, include_snapshot: bool = True) -> str:
     """Type ``text`` into the input with the given index (clears it first; if
-    ``enter`` is true, presses Enter to submit). Returns the resulting snapshot."""
-    return await _run(lambda: _get_browser().type(index, text, enter=enter).to_text())
+    ``enter`` is true, presses Enter to submit). Returns the resulting snapshot
+    (or a compact summary when ``include_snapshot=false``)."""
+    return await _run(
+        lambda: _render(_get_browser().type(index, text, enter=enter), include_snapshot)
+    )
 
 
 @app.tool()
-async def scroll(direction: str = "down") -> str:
-    """Scroll the page (``"down"`` or ``"up"``) and return a fresh snapshot."""
-    return await _run(lambda: _get_browser().scroll(direction=direction).to_text())
+async def scroll(direction: str = "down", include_snapshot: bool = True) -> str:
+    """Scroll the page (``"down"`` or ``"up"``) and return a fresh snapshot
+    (or a compact summary when ``include_snapshot=false``)."""
+    return await _run(lambda: _render(_get_browser().scroll(direction=direction), include_snapshot))
+
+
+@app.tool()
+async def browser_tabs(action: str = "list", index: int = 0, url: str = "") -> str:
+    """Manage tabs. ``action``: ``list`` (default), ``select`` (by ``index``),
+    ``new`` (optionally open ``url``), or ``close`` (by ``index``). Returns the
+    tab list, or the new active tab's snapshot for ``select``/``new``."""
+    def _go() -> str:
+        br = _get_browser()
+        act = action.lower()
+        if act == "select":
+            return br.select_tab(index).to_text()
+        if act == "new":
+            return br.new_tab(url or None).to_text()
+        if act == "close":
+            tabs = br.close_tab(index)
+        else:
+            tabs = br.tabs()
+        return "\n".join(
+            f"[{t['index']}]{'*' if t['active'] else ' '} {t['title']}  {t['url']}" for t in tabs
+        ) or "(no tabs)"
+
+    return await _run(_go)
+
+
+@app.tool()
+async def save_state(path: str) -> str:
+    """Export the current session (cookies + localStorage) to a Playwright
+    storageState JSON at ``path`` — a portable, reusable authenticated session."""
+    return await _run(lambda: f"saved storageState -> {_get_browser().save_storage_state(path)}")
 
 
 @app.tool()
@@ -183,15 +242,21 @@ async def read() -> str:
 
 
 @app.tool()
-async def screenshot() -> str:
-    """Capture a screenshot of the current page; save it to a temp PNG and return
-    the absolute path."""
+async def screenshot() -> Any:
+    """Capture a screenshot of the current page.
+
+    Returns an inline PNG image (so a multimodal model can see the page and
+    disambiguate by the same element indices). On an SDK without image content
+    support, falls back to saving a temp PNG and returning its path."""
+    png = await _run(lambda: _get_browser().screenshot())
+    if Image is not None:
+        return Image(data=png, format="png")
     import os
     import tempfile
 
     fd, path = tempfile.mkstemp(prefix="wraith-shot-", suffix=".png")
-    os.close(fd)
-    await _run(lambda: _get_browser().screenshot(path=path))
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(png)
     return path
 
 

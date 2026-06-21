@@ -179,13 +179,81 @@ class AgentBrowser:
 
     @property
     def page(self) -> Any:
-        """The primary sync Playwright :class:`Page` of the underlying session."""
+        """The *active* sync Playwright :class:`Page`.
+
+        Defaults to the session's primary page; follows :meth:`select_tab` /
+        :meth:`new_tab` so perception and actions target the active tab.
+        """
+        ap = getattr(self, "_active_page", None)
+        if ap is not None:
+            try:
+                if not ap.is_closed():
+                    return ap
+            except Exception:
+                pass
+            self._active_page = None
         return self.session.page
 
     @property
     def context(self) -> Any:
         """The underlying :class:`BrowserContext`."""
         return self.session.context
+
+    # ------------------------------------------------------------------ #
+    # Tabs / pages
+    # ------------------------------------------------------------------ #
+    def tabs(self) -> list[dict]:
+        """List open tabs as ``[{index, url, title, active}]``."""
+        active = self.page
+        out: list[dict] = []
+        for i, p in enumerate(self.context.pages):
+            try:
+                url = p.url
+            except Exception:
+                url = ""
+            try:
+                title = p.title()
+            except Exception:
+                title = ""
+            out.append({"index": i, "url": url, "title": title, "active": p is active})
+        return out
+
+    def select_tab(self, index: int) -> Snapshot:
+        """Make tab ``index`` active and return its snapshot."""
+        pages = self.context.pages
+        self._active_page = pages[int(index)]
+        try:
+            self._active_page.bring_to_front()
+        except Exception:
+            pass
+        return self.snapshot()
+
+    def new_tab(self, url: Optional[str] = None) -> Snapshot:
+        """Open a new tab (optionally navigating to ``url``), make it active."""
+        page = self.context.new_page()
+        self._active_page = page
+        if url:
+            page.goto(url)
+            self._wait_for_settle()
+        return self.snapshot()
+
+    def close_tab(self, index: int) -> list[dict]:
+        """Close tab ``index``; if it was active, fall back to the primary page."""
+        pages = self.context.pages
+        target = pages[int(index)]
+        if getattr(self, "_active_page", None) is target:
+            self._active_page = None
+        with contextlib.suppress(Exception):
+            target.close()
+        return self.tabs()
+
+    def save_storage_state(self, path: str) -> str:
+        """Export the context's cookies + localStorage to a Playwright
+        ``storageState`` JSON file — a portable, reusable authenticated session
+        (the durable form of an identity-borrowed / challenge-cleared context).
+        """
+        self.context.storage_state(path=path)
+        return path
 
     # ------------------------------------------------------------------ #
     # Perception

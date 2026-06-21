@@ -64,6 +64,8 @@ __all__ = [
     "SIGNATURES",
     "CLEARANCE_COOKIES",
     "cookie_is_valid",
+    "ResponseSignal",
+    "classify_response",
 ]
 
 # Public test endpoints used by the JS-rendered probes.
@@ -1368,3 +1370,84 @@ def _playwright_response_cookies(resp: Any) -> dict:
         return {c["name"]: c.get("value", "") for c in jar if "name" in c}
     except Exception:
         return {}
+
+
+# --------------------------------------------------------------------------- #
+# Response classification for the no-browser fast path (wraith.fastpath)
+# --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True)
+class ResponseSignal:
+    """Verdict on a raw (no-browser) HTTP response.
+
+    ``state`` is one of: ``ok``, ``challenge`` (a JS/interactive WAAP wall —
+    escalate to the real browser via :func:`wraith.engine.clear_challenge`),
+    ``blocked`` (hard deny — rotate identity+proxy, don't retry),
+    ``rate_limited`` (back off / rotate IP), ``auth_required`` (re-auth /
+    re-harvest), or ``server_error``.
+    """
+
+    state: str
+    vendor: str | None = None
+    reason: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.state == "ok"
+
+
+def classify_response(
+    status: int,
+    headers: Mapping[str, Any] | None = None,
+    body: str = "",
+) -> ResponseSignal:
+    """Classify a fast-path HTTP response so callers know whether to escalate.
+
+    Pure (no I/O): maps ``(status, headers, body)`` to a :class:`ResponseSignal`
+    using the same vendor knowledge as :func:`identify_waap`. Lets the fast path
+    decide between "use the cheap result", "escalate to the browser to clear a
+    challenge", or "rotate and don't retry".
+    """
+    h = {str(k).lower(): str(v) for k, v in dict(headers or {}).items()}
+    server = h.get("server", "").lower()
+    set_cookie = h.get("set-cookie", "").lower()
+    text = (body or "")[:6000].lower()
+
+    # Reblaze/Link11 non-standard tiers (seen on El Al et al.)
+    if status in (247, 248):
+        return ResponseSignal("challenge", "reblaze", f"Link11 challenge (HTTP {status})")
+    if status in (474, 481):
+        return ResponseSignal("rate_limited", "reblaze", f"Link11 IP rate-limit (HTTP {status})")
+    if status == 492:
+        return ResponseSignal("blocked", "reblaze", "Link11 hard block (HTTP 492)")
+
+    if status == 429:
+        return ResponseSignal("rate_limited", None, "HTTP 429")
+
+    # Cloudflare
+    if "cf-ray" in h or "cloudflare" in server or "__cf" in set_cookie or "cf_clearance" in set_cookie:
+        if status in (403, 503) and any(m in text for m in (
+            "just a moment", "challenge-platform", "cf-chl", "turnstile", "cf-please-wait",
+        )):
+            return ResponseSignal("challenge", "cloudflare", "Cloudflare interstitial")
+        if "error 1020" in text or "you have been blocked" in text or "sorry, you have been blocked" in text:
+            return ResponseSignal("blocked", "cloudflare", "Cloudflare block (1020)")
+
+    # DataDome
+    if "datadome" in set_cookie or "x-datadome" in h or "datadome" in text:
+        if status in (403, 401) or "captcha-delivery" in text:
+            return ResponseSignal("challenge", "datadome", "DataDome challenge")
+
+    # Akamai / others by body markers
+    if status == 403 and ("akamaighost" in server or "reference&#32;#" in text or "access denied" in text):
+        return ResponseSignal("blocked", "akamai" if "akamai" in server else None, "403 access denied")
+
+    if status in (401,) or (status == 403 and "www-authenticate" in h):
+        return ResponseSignal("auth_required", None, f"HTTP {status}")
+    if status == 403:
+        return ResponseSignal("blocked", None, "HTTP 403")
+    if 500 <= status < 600:
+        return ResponseSignal("server_error", None, f"HTTP {status}")
+    if 200 <= status < 400:
+        return ResponseSignal("ok", None, f"HTTP {status}")
+    return ResponseSignal("ok", None, f"HTTP {status}")

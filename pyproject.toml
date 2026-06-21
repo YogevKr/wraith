@@ -48,10 +48,12 @@ Issues = "https://github.com/YogevKr/wraith/issues"
 [project.optional-dependencies]
 # Browser binaries (camoufox Firefox, patchright Chromium) are runtime installs,
 # not pip deps:  `camoufox fetch`  and  `patchright install chromium`.
-dev = ["pytest", "ruff"]
+# The no-browser TLS-impersonation fast path (wraith.fastpath) needs curl_cffi.
+fastpath = ["curl_cffi>=0.7"]
+dev = ["pytest", "ruff", "curl_cffi>=0.7"]
 
 [dependency-groups]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "curl_cffi>=0.7"]
 
 [project.scripts]
 wraith = "wraith.cli:main"

@@ -98,6 +98,7 @@ _reexport(
         "extract_google_reputation",
         "to_playwright_cookies",
         "inject_cookies",
+        "to_cookiejar",
         "GOOGLE_REPUTATION_COOKIES",
         "ChromeEncryptionError",
     ],
@@ -124,9 +125,26 @@ _reexport(
         "identify_waap",
         "fingerprint",
         "cookie_is_valid",
+        "classify_response",
+        "ResponseSignal",
         "CLEARANCE_COOKIES",
         "RECAPTCHA_V3_TEST_URL",
         "BOT_DETECTOR_URL",
+    ],
+)
+
+# Fast path: no-browser TLS-impersonation replay of a borrowed/harvested session
+# (optional — needs curl_cffi; gracefully omitted if absent).
+_reexport(
+    "fastpath",
+    [
+        "fetch",
+        "replay",
+        "from_context",
+        "cookies_from_context",
+        "classify",
+        "ua_to_impersonate",
+        "FastPathUnavailableError",
     ],
 )
 

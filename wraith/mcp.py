@@ -322,6 +322,51 @@ async def ensure_high_score(url: str, profile: Optional[str] = None) -> str:
     return await _run(_go)
 
 
+@app.tool()
+async def fetch(
+    url: str,
+    session_file: str = "",
+    method: str = "GET",
+    impersonate: str = "",
+) -> str:
+    """No-browser TLS-impersonation request — the cheap fast path.
+
+    Replays a captured session against ``url`` with a real-browser TLS+HTTP2
+    fingerprint and NO browser launch. ``session_file`` is a JSON file with
+    ``{headers:{Authorization,Cookie,User-Agent}}`` (as written by
+    ``wraith harvest`` / the borrow flow). Use this to replay an
+    already-authenticated/cleared session cheaply; escalate to ``navigate`` only
+    when the returned classification is ``challenge``. Returns the status,
+    classification, and a body preview.
+    """
+    import asyncio
+    import json as _json
+
+    from . import fastpath
+
+    headers = None
+    if session_file:
+        with open(session_file) as fh:
+            data = _json.load(fh)
+        headers = data.get("headers") or data
+
+    def _go() -> str:
+        resp = fastpath.fetch(url, method=method, headers=headers, impersonate=impersonate or None)
+        sig = fastpath.classify(resp)
+        head = f"{resp.status_code}  {sig.state}"
+        if sig.vendor:
+            head += f" [{sig.vendor}]"
+        if sig.reason:
+            head += f"  — {sig.reason}"
+        body = (getattr(resp, "text", "") or "")[:1500]
+        return head + "\n\n" + body
+
+    try:
+        return await asyncio.to_thread(_go)
+    except fastpath.FastPathUnavailableError as exc:
+        return str(exc)
+
+
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #

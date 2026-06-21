@@ -53,6 +53,7 @@ __all__ = [
     "extract_google_reputation",
     "to_playwright_cookies",
     "inject_cookies",
+    "to_cookiejar",
     "ChromeEncryptionError",
     "GOOGLE_REPUTATION_COOKIES",
 ]
@@ -548,3 +549,48 @@ def inject_cookies(
             cookie["sameSite"] = "None"
     context.add_cookies(payload)
     return len(payload)
+
+
+def to_cookiejar(cookies: Iterable[Any]) -> Any:
+    """Build a stdlib :class:`http.cookiejar.CookieJar` from borrowed cookies.
+
+    Accepts either :class:`Cookie` dataclass objects (from identity borrowing)
+    or Playwright/CDP cookie dicts (``name``/``value``/``domain``/``path``/
+    ``secure``/``httpOnly``/``expires`` — the shape ``context.cookies()`` and
+    :func:`to_playwright_cookies` produce). The returned jar drives the
+    no-browser fast path (:mod:`wraith.fastpath`) and any ``requests`` / ``httpx``
+    / ``curl_cffi`` client, so a borrowed or harvested session can issue
+    authenticated requests with **no browser** — the cheap "replay" half of
+    Wraith's capture-once / replay-many model.
+    """
+    import http.cookiejar as _cj
+
+    jar = _cj.CookieJar()
+    for c in cookies:
+        if isinstance(c, Cookie):
+            name, value, domain = c.name, c.value, c.domain or ""
+            path = c.path or "/"
+            secure, http_only, raw_exp = bool(c.secure), bool(c.http_only), c.expires
+        else:  # Playwright / CDP dict
+            name = c.get("name", "")
+            value = c.get("value", "")
+            domain = c.get("domain", "") or ""
+            path = c.get("path", "/") or "/"
+            secure = bool(c.get("secure", False))
+            http_only = bool(c.get("httpOnly", c.get("http_only", False)))
+            raw_exp = c.get("expires")
+        if not name:
+            continue
+        try:
+            expires = int(raw_exp) if raw_exp is not None and float(raw_exp) > 0 else None
+        except (TypeError, ValueError):
+            expires = None
+        initial_dot = domain.startswith(".")
+        jar.set_cookie(_cj.Cookie(
+            version=0, name=name, value=value, port=None, port_specified=False,
+            domain=domain, domain_specified=bool(domain), domain_initial_dot=initial_dot,
+            path=path, path_specified=True, secure=secure, expires=expires,
+            discard=expires is None, comment=None, comment_url=None,
+            rest={"HttpOnly": ""} if http_only else {}, rfc2109=False,
+        ))
+    return jar

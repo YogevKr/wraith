@@ -497,6 +497,41 @@ def _hold_open() -> None:
         print("", file=sys.stderr)
 
 
+def cmd_fetch(args: argparse.Namespace) -> int:
+    """No-browser TLS-impersonation request, replaying a borrowed/harvested session."""
+    import json
+
+    from . import fastpath
+
+    headers = None
+    if args.session:
+        with open(args.session) as fh:
+            data = json.load(fh)
+        headers = data.get("headers") or data
+    try:
+        resp = fastpath.fetch(
+            args.url,
+            method=args.method,
+            headers=headers,
+            impersonate=args.impersonate,
+            proxy=_resolve_proxy(args),
+            timeout=args.timeout,
+        )
+    except fastpath.FastPathUnavailableError as exc:
+        print(str(exc))
+        return 1
+    sig = fastpath.classify(resp)
+    line = f"{resp.status_code}  {sig.state}"
+    if sig.vendor:
+        line += f" [{sig.vendor}]"
+    if sig.reason:
+        line += f"  — {sig.reason}"
+    print(line)
+    if args.show_body:
+        print(resp.text[: args.max_bytes])
+    return 0 if sig.ok else 2
+
+
 # --------------------------------------------------------------------------
 # parser
 # --------------------------------------------------------------------------
@@ -735,6 +770,33 @@ def build_parser() -> argparse.ArgumentParser:
     _add_proxy_flags(p_v3)
     _add_engine_flags(p_v3)
     p_v3.set_defaults(func=cmd_v3)
+
+    # fetch (no-browser TLS-impersonation fast path)
+    p_fetch = sub.add_parser(
+        "fetch",
+        help="no-browser TLS-impersonation request, replaying a borrowed/harvested session",
+        description="Replay a captured session (--session) against a URL with a real-browser "
+        "TLS+HTTP2 fingerprint and no browser — the cheap half of capture-once/replay-many. "
+        "Needs curl_cffi (pip install 'wraith[fastpath]').",
+    )
+    p_fetch.add_argument("url", help="URL to fetch")
+    p_fetch.add_argument(
+        "--session",
+        default=None,
+        help="session JSON file with {headers:{Authorization,Cookie,User-Agent}} "
+        "(as written by `wraith harvest`)",
+    )
+    p_fetch.add_argument("--method", default="GET", help="HTTP method (default GET)")
+    p_fetch.add_argument(
+        "--impersonate",
+        default=None,
+        help="curl_cffi preset (default: inferred from the session UA, else firefox)",
+    )
+    p_fetch.add_argument("--timeout", type=float, default=30.0, help="request timeout seconds")
+    p_fetch.add_argument("--show-body", action="store_true", help="print the response body")
+    p_fetch.add_argument("--max-bytes", type=int, default=2000, help="max body bytes to print")
+    _add_proxy_flags(p_fetch)
+    p_fetch.set_defaults(func=cmd_fetch)
 
     # mcp
     p_mcp = sub.add_parser(

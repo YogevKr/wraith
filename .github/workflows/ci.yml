@@ -22,16 +22,16 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
       - name: Sync dependencies
-        # The 158 tests are offline / import-level: no browser binary needed,
+        # The tests are offline and import-level. No browser binary is needed,
         # so we deliberately skip `camoufox fetch` / `patchright install`.
         run: uv sync --extra dev
 

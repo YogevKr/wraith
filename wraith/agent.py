@@ -53,9 +53,22 @@ Reusing an existing stealth session (identity already borrowed, etc.)::
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Optional
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Mapping, Optional
 
 from . import engine as _engine
+from .secrets import (
+    SecretCapability,
+    SecretCapabilityError,
+    SecretMaterial,
+    SecretPolicyError,
+    SecretProvider,
+    SecretProviderError,
+    SecretRequestContext,
+    canonical_origin,
+    get_secret_provider,
+)
 from .snapshot import Snapshot, take_snapshot
 
 __all__ = ["AgentBrowser", "agent_browser"]
@@ -81,6 +94,15 @@ _CONSENT_SELECTORS = (
 )
 
 
+@dataclass
+class _SecretSessionState:
+    """Secret policy state shared by all wrappers for one browser context."""
+
+    uses: dict[str, int] = field(default_factory=dict)
+    limits: dict[str, int] = field(default_factory=dict)
+    tainted: bool = False
+
+
 class AgentBrowser:
     """An agent-facing wrapper around a stealth :class:`~wraith.engine.Session`.
 
@@ -104,6 +126,7 @@ class AgentBrowser:
         *,
         engine: str = "auto",
         reputation: Optional[Any] = None,
+        secret_providers: Optional[Mapping[str, SecretProvider]] = None,
         **launch_kw: Any,
     ) -> None:
         """Create an agent browser.
@@ -129,6 +152,8 @@ class AgentBrowser:
                 borrowed ``session`` does **not** re-launch it, so for that path
                 the caller is responsible for the un-partition prefs — the
                 reputation source still primes the existing context on navigate.
+            secret_providers: Optional local providers. Local names override
+                providers from :func:`wraith.register_secret_provider`.
             **launch_kw: Extra kwargs forwarded to :func:`wraith.engine.launch`
                 when self-launching (e.g. ``headless``, ``geoip``, ``locale``,
                 ``proxy``, ``profile_dir``).
@@ -138,6 +163,7 @@ class AgentBrowser:
         self._engine: str = engine
         self._launch_kw: dict[str, Any] = dict(launch_kw)
         self.reputation: Optional[Any] = reputation
+        self._secret_providers = dict(secret_providers or {})
         self._closed: bool = False
         self.last_snapshot: Optional[Snapshot] = None
 
@@ -247,11 +273,21 @@ class AgentBrowser:
             target.close()
         return self.tabs()
 
-    def save_storage_state(self, path: str) -> str:
+    def save_storage_state(
+        self,
+        path: str,
+        *,
+        allow_secret_tainted: bool = False,
+    ) -> str:
         """Export the context's cookies + localStorage to a Playwright
         ``storageState`` JSON file — a portable, reusable authenticated session
         (the durable form of an identity-borrowed / challenge-cleared context).
         """
+        if self.secret_tainted and not allow_secret_tainted:
+            raise SecretPolicyError(
+                "Storage export is blocked after a secret fill. "
+                "Pass allow_secret_tainted=True to accept the risk."
+            )
         self.context.storage_state(path=path)
         return path
 
@@ -269,6 +305,12 @@ class AgentBrowser:
             The new :class:`~wraith.snapshot.Snapshot`, also stored on
             :attr:`last_snapshot`.
         """
+        allow_secret_tainted = bool(kw.pop("allow_secret_tainted", False))
+        if kw.get("highlight") and self.secret_tainted and not allow_secret_tainted:
+            raise SecretPolicyError(
+                "Highlighted snapshots are blocked after a secret fill. "
+                "Pass allow_secret_tainted=True to accept the risk."
+            )
         prior = self.last_snapshot
         snap = take_snapshot(self.page, **kw)
         if prior is not None:
@@ -432,6 +474,115 @@ class AgentBrowser:
         self._set_changed(pre, snap)
         return snap
 
+    def fill_secret(
+        self,
+        index: int,
+        capability: SecretCapability | Mapping[str, Any],
+    ) -> Snapshot:
+        """Fill one browser field from an opaque provider capability.
+
+        Wraith checks the current origin, field kind, expiry, and use count.
+        The provider must authenticate the opaque handle before it returns the
+        short-lived value. This method never returns that value.
+        """
+        if isinstance(capability, Mapping):
+            capability = SecretCapability.from_dict(capability)
+        if not isinstance(capability, SecretCapability):
+            raise SecretCapabilityError("capability has an invalid type")
+
+        origin = canonical_origin(self.current_url)
+        if origin not in capability.allowed_origins:
+            raise SecretPolicyError("The current origin is not allowed")
+        if capability.expires_at is not None:
+            now = datetime.now(timezone.utc)
+            if now >= capability.expires_at:
+                raise SecretCapabilityError("The secret capability has expired")
+
+        usage_key = capability.usage_key
+        secret_state = self._secret_state
+        prior_limit = secret_state.limits.get(usage_key)
+        if prior_limit is not None and capability.max_uses > prior_limit:
+            raise SecretCapabilityError("The secret capability use limit increased")
+        use_limit = (
+            capability.max_uses
+            if prior_limit is None
+            else min(prior_limit, capability.max_uses)
+        )
+        secret_state.limits[usage_key] = use_limit
+        uses = secret_state.uses.get(usage_key, 0)
+        if uses >= use_limit:
+            raise SecretCapabilityError("The secret capability is exhausted")
+
+        locator = self._locator(index)
+        try:
+            element = locator.element_handle()
+        except Exception:
+            element = None
+        if element is None:
+            raise SecretPolicyError("The target field is not available")
+        metadata = self._secret_field_metadata(element)
+        if not self._secret_field_matches(capability.field_kind, metadata):
+            raise SecretPolicyError("The target field does not match field_kind")
+
+        context = SecretRequestContext(
+            origin=origin,
+            frame_origin=origin,
+            field_kind=capability.field_kind,
+            field_tag=metadata["tag"],
+            field_type=metadata["type"],
+            autocomplete=metadata["autocomplete"],
+            index=int(index),
+        )
+        provider = self._secret_providers.get(capability.provider)
+        if provider is None:
+            provider = get_secret_provider(capability.provider)
+
+        provider_failed = False
+        material: Any = None
+        try:
+            material = provider.resolve(capability, context)
+        except Exception:
+            provider_failed = True
+        if provider_failed:
+            raise SecretProviderError("The secret provider failed")
+        if not isinstance(material, SecretMaterial):
+            raise SecretProviderError("The secret provider returned invalid material")
+
+        pre = self._page_signature()
+        browser_failed = False
+        try:
+            if canonical_origin(self.current_url) != origin:
+                raise SecretPolicyError("The current origin changed during secret use")
+            if capability.expires_at is not None:
+                now = datetime.now(timezone.utc)
+                if now >= capability.expires_at:
+                    raise SecretCapabilityError("The secret capability expired during use")
+            current_metadata = self._secret_field_metadata(element)
+            if not self._secret_field_matches(capability.field_kind, current_metadata):
+                raise SecretPolicyError("The target field changed during secret use")
+
+            # Reserve the use before the browser can receive any secret bytes.
+            secret_state.uses[usage_key] = uses + 1
+            secret_state.tainted = True
+            with contextlib.suppress(Exception):
+                element.evaluate(
+                    "node => node.setAttribute('data-wraith-secret', 'true')"
+                )
+            element.fill(material.reveal())
+        except (SecretCapabilityError, SecretPolicyError):
+            raise
+        except Exception:
+            browser_failed = True
+        finally:
+            material.clear()
+        if browser_failed:
+            raise SecretProviderError("The browser could not fill the secret")
+
+        self._wait_for_settle()
+        snap = self.snapshot()
+        self._set_changed(pre, snap)
+        return snap
+
     def scroll(self, direction: str = "down", amount: int = 700) -> Snapshot:
         """Scroll the page and re-snapshot.
 
@@ -515,15 +666,26 @@ class AgentBrowser:
                     return el.text
             return ""
 
-    def screenshot(self, path: Optional[str] = None) -> bytes:
+    def screenshot(
+        self,
+        path: Optional[str] = None,
+        *,
+        allow_secret_tainted: bool = False,
+    ) -> bytes:
         """Capture a screenshot of the current page.
 
         Args:
             path: Optional filesystem path to also write the PNG to.
+            allow_secret_tainted: Permit a screenshot after a secret fill.
 
         Returns:
             The PNG image bytes.
         """
+        if self.secret_tainted and not allow_secret_tainted:
+            raise SecretPolicyError(
+                "Screenshots are blocked after a secret fill. "
+                "Pass allow_secret_tainted=True to accept the risk."
+            )
         if path is not None:
             return self.page.screenshot(path=path)
         return self.page.screenshot()
@@ -546,6 +708,11 @@ class AgentBrowser:
             return self.page.title()
         except Exception:
             return ""
+
+    @property
+    def secret_tainted(self) -> bool:
+        """Return true after a secret reaches the browser session."""
+        return self._secret_state.tainted
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -599,6 +766,124 @@ class AgentBrowser:
             if match is not None:
                 return self.page.locator(f'[data-wraith-index="{int(match.index)}"]')
         return loc  # let the caller's action raise a clear error if truly gone
+
+    @property
+    def _secret_state(self) -> _SecretSessionState:
+        """Return policy state stored on the shared browser context."""
+        context = self.context
+        state = getattr(context, "_wraith_secret_state", None)
+        if isinstance(state, _SecretSessionState):
+            return state
+        state = _SecretSessionState()
+        try:
+            setattr(context, "_wraith_secret_state", state)
+        except Exception as exc:
+            raise SecretPolicyError(
+                "The browser context cannot store secret policy state"
+            ) from exc
+        return state
+
+    @staticmethod
+    def _secret_field_metadata(locator: Any) -> dict[str, str]:
+        """Read field semantics without reading its value."""
+        try:
+            raw = locator.evaluate(
+                """element => ({
+                    tag: (element.tagName || '').toLowerCase(),
+                    type: (element.type || element.getAttribute('type') || '').toLowerCase(),
+                    autocomplete: (element.getAttribute('autocomplete') || '').toLowerCase(),
+                    contenteditable: element.isContentEditable === true,
+                    disabled: element.disabled === true,
+                    readonly: element.readOnly === true,
+                })"""
+            )
+        except Exception:
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        return {
+            "tag": str(raw.get("tag") or "").lower(),
+            "type": str(raw.get("type") or "").lower(),
+            "autocomplete": str(raw.get("autocomplete") or "").lower(),
+            "contenteditable": "true" if raw.get("contenteditable") else "false",
+            "disabled": "true" if raw.get("disabled") else "false",
+            "readonly": "true" if raw.get("readonly") else "false",
+        }
+
+    @staticmethod
+    def _secret_field_matches(kind: str, metadata: Mapping[str, str]) -> bool:
+        """Match a declared secret kind to trusted DOM field semantics."""
+        tag = metadata.get("tag", "")
+        input_type = metadata.get("type", "") or "text"
+        autocomplete = set(metadata.get("autocomplete", "").split())
+        autocomplete_by_kind = {
+            "password": {"current-password", "new-password"},
+            "username": {"username"},
+            "email": {"email"},
+            "otp": {"one-time-code"},
+            "card-number": {"cc-number"},
+            "card-expiry": {"cc-exp", "cc-exp-month", "cc-exp-year"},
+            "card-cvc": {"cc-csc"},
+            "text": set(),
+        }
+        known_autocomplete = autocomplete & set().union(*autocomplete_by_kind.values())
+        allowed_autocomplete = autocomplete_by_kind.get(kind, set())
+
+        if tag not in {"input", "textarea"}:
+            return False
+        if metadata.get("disabled") == "true" or metadata.get("readonly") == "true":
+            return False
+        if known_autocomplete and (
+            not allowed_autocomplete
+            or not known_autocomplete.issubset(allowed_autocomplete)
+        ):
+            return False
+        if tag == "textarea":
+            return kind == "text" and not known_autocomplete
+        fillable_input_types = {
+            "color",
+            "date",
+            "time",
+            "datetime-local",
+            "month",
+            "range",
+            "week",
+            "email",
+            "number",
+            "password",
+            "search",
+            "tel",
+            "text",
+            "url",
+        }
+        if input_type not in fillable_input_types:
+            return False
+        if kind == "password":
+            return (
+                input_type == "password"
+                or bool(autocomplete & {"current-password", "new-password"})
+            )
+        if kind == "username":
+            return "username" in autocomplete and input_type in {"text", "email"}
+        if kind == "email":
+            return input_type == "email" or "email" in autocomplete
+        if kind == "otp":
+            return "one-time-code" in autocomplete and input_type in {
+                "text",
+                "tel",
+                "number",
+            }
+        if kind == "card-number":
+            return input_type in {"text", "tel", "number"} and "cc-number" in autocomplete
+        if kind == "card-expiry":
+            return input_type in {"text", "tel", "number", "month"} and bool(
+                autocomplete & {"cc-exp", "cc-exp-month", "cc-exp-year"}
+            )
+        if kind == "card-cvc":
+            return input_type in {"text", "tel", "number", "password"} and "cc-csc" in autocomplete
+        if kind == "text":
+            return input_type == "text" and not known_autocomplete
+        return False
 
     def _ensure_high_score(self) -> Optional[Any]:
         """Best-effort reCAPTCHA-v3 score lift via the reputation source.
@@ -695,6 +980,7 @@ def agent_browser(
     *,
     engine: str = "auto",
     reputation: Optional[Any] = None,
+    secret_providers: Optional[Mapping[str, SecretProvider]] = None,
     **launch_kw: Any,
 ):
     """Context-manager factory for an :class:`AgentBrowser`.
@@ -710,6 +996,7 @@ def agent_browser(
         reputation: Optional :class:`wraith.recaptcha_v3.ReputationSource`;
             forwarded to :class:`AgentBrowser` (un-partition launch prefs +
             ``ensure_high_score`` on navigate).
+        secret_providers: Optional local secret providers by name.
         **launch_kw: Forwarded to :func:`wraith.engine.launch` when
             self-launching.
 
@@ -719,7 +1006,11 @@ def agent_browser(
             print(ab.navigate("https://example.com").to_text())
     """
     ab = AgentBrowser(
-        session=session, engine=engine, reputation=reputation, **launch_kw
+        session=session,
+        engine=engine,
+        reputation=reputation,
+        secret_providers=secret_providers,
+        **launch_kw,
     )
     try:
         yield ab

@@ -74,12 +74,19 @@ class Element:
         self-heal) and genuinely-new elements can be flagged.
         """
         a = self.attributes or {}
+        input_type = str(a.get("type") or "text").lower()
+        option_types = {"checkbox", "radio", "button", "submit", "reset", "image"}
+        redacted_value = self.tag == "textarea" or (
+            self.tag == "input"
+            and input_type not in option_types
+        )
+        safe_text = (self.text or "")[:40]
         key = "|".join(
             f"{k}={a[k]}"
             for k in ("name", "id", "type", "href", "aria-label", "placeholder", "value")
-            if a.get(k)
+            if a.get(k) and not (k == "value" and redacted_value)
         )
-        return f"{self.tag}#{self.role}#{(self.text or '')[:40]}#{key}"
+        return f"{self.tag}#{self.role}#{safe_text}#{key}"
 
     def to_text(self) -> str:
         """Render this element as one browser-use-style line.
@@ -92,8 +99,16 @@ class Element:
             parts.append(f"role={self.role}")
 
         # Surface a few high-signal attributes inline; keep the line short.
+        input_type = str(self.attributes.get("type") or "text").lower()
+        option_types = {"checkbox", "radio", "button", "submit", "reset", "image"}
+        redacted_value = self.tag == "textarea" or (
+            self.tag == "input"
+            and input_type not in option_types
+        )
         for key in ("type", "name", "placeholder", "aria-label", "href",
                     "value", "checked", "title", "alt"):
+            if key == "value" and redacted_value:
+                continue
             val = self.attributes.get(key)
             if val in (None, "", False):
                 continue
@@ -401,7 +416,7 @@ _BUILD_DOM_TREE_JS = r"""
   }
 
   function bestText(el) {
-    // Prefer an explicit accessible name, then visible text, then value/alt.
+    // Prefer an explicit accessible name, then visible text, then safe labels.
     let t = (el.getAttribute('aria-label') || '').trim();
     if (t) return t;
     const labelledby = el.getAttribute('aria-labelledby');
@@ -418,10 +433,14 @@ _BUILD_DOM_TREE_JS = r"""
         return (el.value || '').trim();
       }
     }
+    if (tag === 'input' || tag === 'textarea' || el.isContentEditable === true) {
+      return (el.getAttribute('placeholder') || el.getAttribute('title')
+              || el.getAttribute('alt') || '').trim();
+    }
     t = (el.textContent || '').replace(/\s+/g, ' ').trim();
     if (t) return t;
     t = (el.getAttribute('placeholder') || el.getAttribute('title')
-         || el.getAttribute('alt') || el.value || '').trim();
+         || el.getAttribute('alt') || '').trim();
     return t;
   }
 
@@ -432,8 +451,17 @@ _BUILD_DOM_TREE_JS = r"""
 
   function collectAttrs(el) {
     const out = {};
+    const tag = (el.tagName || '').toLowerCase();
+    const type = (el.type || 'text').toLowerCase();
+    const optionValueTypes = new Set([
+      'checkbox', 'radio', 'button', 'submit', 'reset', 'image'
+    ]);
+    const editable = tag === 'textarea' || el.isContentEditable === true
+      || (tag === 'input' && !optionValueTypes.has(type));
     for (const k of ATTR_KEYS) {
       try {
+        // Editable values can contain secrets. Never return them to the agent.
+        if (k === 'value' && editable) continue;
         if (el.hasAttribute(k)) {
           let v = el.getAttribute(k);
           if (v != null && v !== '') out[k] = (v.length > 200 ? v.slice(0, 200) : v);
@@ -442,6 +470,7 @@ _BUILD_DOM_TREE_JS = r"""
     }
     // Booleans surfaced as real booleans for to_text().
     try { if (el.hasAttribute('disabled')) out['disabled'] = true; } catch (e) {}
+    try { if (el.isContentEditable === true) out['contenteditable'] = true; } catch (e) {}
     try {
       if (el.tagName.toLowerCase() === 'input'
           && (el.type === 'checkbox' || el.type === 'radio')) {

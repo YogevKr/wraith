@@ -52,7 +52,9 @@ app = FastMCP(
         "dismisses cookie banners) and get back an indexed snapshot of interactive "
         "elements. Each line looks like `[12]<button role=button>Search</button>`; "
         "act on an element by its index with `click(index)` or "
-        "`type_text(index, text)`. Use `snapshot()` to re-perceive after a change, "
+        "`type_text(index, text)`. Use `fill_secret(index, capability)` for an "
+        "opaque secret capability from a registered provider. Use `snapshot()` "
+        "to re-perceive after a change, "
         "`scroll()` to reveal more, `read()` for the page as markdown, and "
         "`screenshot()` to capture an image. `detect_waap(url)` fingerprints a "
         "site's bot defenses. `borrow(domain)` injects a warmed, authenticated "
@@ -198,6 +200,29 @@ async def type_text(index: int, text: str, enter: bool = False, include_snapshot
 
 
 @app.tool()
+async def fill_secret(
+    index: int,
+    capability: dict[str, Any],
+    include_snapshot: bool = True,
+) -> str:
+    """Fill a field from an opaque secret capability.
+
+    The capability names a registered provider and an opaque handle. It also
+    binds the fill to exact origins, one field kind, an expiry, and a use limit.
+    The tool never accepts or returns the secret value.
+    """
+    from .secrets import SecretCapability
+
+    parsed = SecretCapability.from_dict(capability)
+    return await _run(
+        lambda: _render(
+            _get_browser().fill_secret(index, parsed),
+            include_snapshot,
+        )
+    )
+
+
+@app.tool()
 async def scroll(direction: str = "down", include_snapshot: bool = True) -> str:
     """Scroll the page (``"down"`` or ``"up"``) and return a fresh snapshot
     (or a compact summary when ``include_snapshot=false``)."""
@@ -247,7 +272,8 @@ async def screenshot() -> Any:
 
     Returns an inline PNG image (so a multimodal model can see the page and
     disambiguate by the same element indices). On an SDK without image content
-    support, falls back to saving a temp PNG and returning its path."""
+    support, falls back to saving a temp PNG and returning its path. Wraith
+    blocks this tool after a secret fill."""
     png = await _run(lambda: _get_browser().screenshot())
     if Image is not None:
         return Image(data=png, format="png")

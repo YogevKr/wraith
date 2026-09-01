@@ -4,6 +4,20 @@ All notable changes to **Wraith** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [0.2.0] - 2026-09-01
+
+### Added
+
+- Added opaque secret capabilities for browser field fills.
+- Added process-local provider registration for library and embedded MCP use.
+- Added exact origin, field kind, expiry, and use-count checks.
+- Added session taint after a successful secret fill.
+- Blocked storage-state export and screenshots from a tainted session by default.
+- Removed editable `value` attributes from agent snapshots.
+- Added `fill_secret` to the MCP browser tools.
+
 ## [0.1.0] - 2026-06-20
 
 Initial public release — an identity-borrowing, MCP-native stealth browser for
@@ -35,4 +49,6 @@ autonomous agents.
 - **Docs**: `DETECTION.md` (vendor taxonomy + coverage matrix), `PLAYBOOK.md`
   (tier strategy, proxy rotation), `AGENTS.md` (agent API + MCP setup).
 
+[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/YogevKr/wraith/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/YogevKr/wraith/releases/tag/v0.1.0

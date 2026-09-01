@@ -36,9 +36,8 @@ jobs:
         run: uv sync --extra dev
 
       - name: Lint (ruff)
-        # ruff is run as an ephemeral tool via uvx so it does not need to be a
-        # project dependency.
-        run: uvx ruff check .
+        # Use the project lockfile so new Ruff releases cannot break CI.
+        run: uv run ruff check .
 
       - name: Test (pytest)
         run: uv run pytest -q

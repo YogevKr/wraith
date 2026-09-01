@@ -30,7 +30,7 @@ namespace and ``__all__``; ``wraith.missing_imports`` records why.
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Names that imported cleanly, assembled into __all__ at the end.
 __all__: list[str] = []
@@ -197,6 +197,24 @@ _reexport(
     [
         "AgentBrowser",
         "agent_browser",
+    ],
+)
+
+# Secrets: opaque, origin-bound capabilities for browser field fills.
+_reexport(
+    "secrets",
+    [
+        "SecretCapability",
+        "SecretCapabilityError",
+        "SecretError",
+        "SecretMaterial",
+        "SecretPolicyError",
+        "SecretProvider",
+        "SecretProviderError",
+        "SecretRequestContext",
+        "get_secret_provider",
+        "register_secret_provider",
+        "unregister_secret_provider",
     ],
 )
 

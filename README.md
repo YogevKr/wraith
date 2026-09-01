@@ -91,6 +91,9 @@ is needed at all: a real Firefox engine clears the challenge natively, and
   **change-observation** (what each action did), **new-element marking**, and
   **signature self-heal** for stale indices; act by index (`click`, `type`,
   `scroll`, `read`) across multiple tabs.
+- **Opaque secret fills** — registered providers resolve secret handles only
+  after Wraith checks the origin, field kind, expiry, and use limit. Snapshot
+  output omits editable `value` attributes.
 - **MCP-native** — a stdio MCP server (`wraith-mcp`) exposing the agent browser
   as tools (per-call snapshot control, inline screenshots, tabs, `fetch`) for
   any MCP client.
@@ -151,6 +154,84 @@ with agent_browser(engine="camoufox", headless=True) as ab:
     ab.click(12)                       # click element [12]
     print(ab.read())                   # current page as markdown
 ```
+
+#### Opaque secret capabilities
+
+Use `fill_secret()` when an agent must fill a secret field. Do not give the
+agent the secret value. Give it an opaque capability from your secret broker.
+
+The capability contains these fields:
+
+| Field | Purpose |
+| --- | --- |
+| `provider` | Selects a registered provider. |
+| `handle` | Identifies provider-owned secret material. Wraith redacts it from representations. |
+| `allowed_origins` | Lists exact HTTP or HTTPS origins. Scheme, host, and non-default port must match. |
+| `field_kind` | Limits the target field to `password`, `username`, `email`, `otp`, `card-number`, `card-expiry`, `card-cvc`, or `text`. |
+| `expires_at` | Sets an optional ISO 8601 expiry with a time zone. |
+| `max_uses` | Sets the browser-side use limit. The default is one. |
+| `capability_id` | Carries an optional provider audit identifier. Wraith always counts uses by provider and handle. |
+
+Secret targets must use main-frame `input` or `textarea` elements. Wraith does
+not accept contenteditable targets because readable page text can expose them.
+Username and OTP fields must declare `autocomplete="username"` or
+`autocomplete="one-time-code"`.
+
+Register the provider before the fill. A provider must return `SecretMaterial`.
+It must authenticate and consume the handle. It must also enforce trusted
+policy at the broker boundary.
+
+```python
+from wraith import SecretMaterial, agent_browser, register_secret_provider
+
+
+class BrokerProvider:
+    def resolve(self, capability, context):
+        # broker.consume() must authenticate the opaque handle.
+        # It must check context.origin and its own policy.
+        value = broker.consume(capability.handle, context=context)
+        return SecretMaterial(value)
+
+
+register_secret_provider("broker", BrokerProvider())
+
+with agent_browser(engine="camoufox", headless=True) as ab:
+    ab.navigate("https://accounts.example.com/login")
+    ab.fill_secret(7, {
+        "provider": "broker",
+        "handle": "opaque-capability-token",
+        "allowed_origins": ["https://accounts.example.com"],
+        "field_kind": "password",
+        "expires_at": "2030-09-01T12:00:00Z",
+        "max_uses": 1,
+    })
+```
+
+You can also pass `secret_providers={"broker": BrokerProvider()}` to
+`agent_browser()`. This keeps the provider on one browser instance.
+
+A successful fill marks the session as secret-tainted. Wraith then blocks
+`save_storage_state()` and `screenshot()` by default. Library callers can set
+`allow_secret_tainted=True` to accept either risk.
+
+For embedded MCP, register the provider in the MCP server process before
+`app.run()`:
+
+```python
+from wraith import register_secret_provider
+from wraith.mcp import app
+
+register_secret_provider("broker", BrokerProvider())
+app.run()
+```
+
+The MCP agent calls `fill_secret(index, capability)`. The tool accepts and
+returns no secret value. The normal `wraith-mcp` command has no provider by
+default. A provider registration in another process does not affect it.
+
+Wraith has no Instinct Vault provider. Direct use needs an Instinct provider or
+broker adapter that Wraith can reach. See [Security Policy](SECURITY.md#opaque-secret-capabilities)
+for trust limits and observed Instinct behavior.
 
 Lower-level: launch a session and borrow a warmed identity from your own profile.
 
@@ -225,7 +306,7 @@ uv run wraith mcp
 ### (c) MCP server
 
 Wraith ships a stdio MCP server (`wraith-mcp`) that exposes the agent browser as
-tools — `navigate`, `snapshot`, `click`, `type_text`, `scroll`, `read`,
+tools — `navigate`, `snapshot`, `click`, `type_text`, `fill_secret`, `scroll`, `read`,
 `screenshot`, `detect_waap`, and `borrow`. Wire it into an MCP client such as
 Claude Code:
 
@@ -248,6 +329,7 @@ Wraith is a set of focused, mostly-independent modules under `wraith/`:
 | [`behavior`](wraith/behavior.py) | Human-like helpers: `human_move()` (curved/eased/jittered mouse), `human_type()` (per-key cadence), `dwell()`. |
 | [`agent`](wraith/agent.py) | The perceive/act-by-index browser wrapper. `AgentBrowser` / `agent_browser()` built on the snapshot layer. |
 | [`snapshot`](wraith/snapshot.py) | Agent perception: `take_snapshot()` builds an indexed, browser-use-style DOM `Snapshot` of interactive `Element`s. |
+| [`secrets`](wraith/secrets.py) | Opaque secret capabilities, provider registration, short-lived secret material, and policy errors. |
 | [`recaptcha`](wraith/recaptcha.py) | v3 token harvesting from a warmed/borrowed session (`harvest_token`, `score`) + solver-service skeletons (`SolverService`, `CapSolver`, `TwoCaptcha`). |
 | [`proxy`](wraith/proxy.py) | Dependency-free `ProxyPool` (round-robin / random) and `normalize_proxy()` for `clear_challenge` rotation. |
 | [`providers`](wraith/providers.py) | First-class residential-proxy integrations. `DataImpulse` builds proxy URLs (`rotating`/`sticky`) and `ProxyPool`s (`pool`) for `launch(proxy=...)` / `clear_challenge(proxy_pool=...)`. |

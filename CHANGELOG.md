@@ -6,6 +6,15 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-02
+
+### Fixed
+
+- Pin `mcp>=1,<2`. `wraith.mcp` uses the v1 FastMCP API, which `mcp` 2.x renamed
+  to `MCPServer`; an unpinned `pip install wraith` pulled 2.x and broke the
+  import. (The lockfile already pinned v1, so CI/uv were unaffected — a plain
+  `pip install` was not.)
+
 ## [0.3.1] - 2026-09-02
 
 ### Added
@@ -110,7 +119,8 @@ autonomous agents.
 - **Docs**: `DETECTION.md` (vendor taxonomy + coverage matrix), `PLAYBOOK.md`
   (tier strategy, proxy rotation), `AGENTS.md` (agent API + MCP setup).
 
-[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/YogevKr/wraith/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/YogevKr/wraith/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/YogevKr/wraith/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/YogevKr/wraith/compare/v0.1.0...v0.2.0

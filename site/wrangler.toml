@@ -1,0 +1,11 @@
+name = "wraith-site"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[[routes]]
+pattern = "wraithbrowser.dev"
+custom_domain = true
+
+[[routes]]
+pattern = "www.wraithbrowser.dev"
+custom_domain = true

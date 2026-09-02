@@ -39,13 +39,17 @@ import os
 import struct
 import time
 from dataclasses import dataclass
+from typing import Any
 
 __all__ = [
     "CODE_PREFIX",
+    "MAX_BLOB_BYTES",
     "DeadDropError",
     "DropAuthError",
     "DropExpired",
     "DropNotFound",
+    "DropTooLarge",
+    "RelayError",
     "SealedDrop",
     "derive",
     "format_code",
@@ -63,6 +67,11 @@ _SECRET_LEN = 16
 _NONCE_LEN = 12
 _BUCKET = 16384  # pad the plaintext up to a multiple of this to blur its size
 _DEFAULT_MAX_AGE = 600  # seconds a drop stays fresh
+# Must match the relay's body cap (deploy/worker.js MAX_BYTES). A sealed blob
+# larger than this is rejected by the relay, so we fail early with a clear error.
+MAX_BLOB_BYTES = 1024 * 1024
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF = 0.5  # seconds, doubled each retry
 
 
 class DeadDropError(RuntimeError):
@@ -79,6 +88,14 @@ class DropExpired(DeadDropError):
 
 class DropNotFound(DeadDropError):
     """The relay has no blob at this slot (never sent, or already picked up)."""
+
+
+class DropTooLarge(DeadDropError):
+    """The sealed blob exceeds the relay's body cap; scope the sync narrower."""
+
+
+class RelayError(DeadDropError):
+    """The relay returned an unexpected status after retries."""
 
 
 # --------------------------------------------------------------------------- #
@@ -238,20 +255,68 @@ def _slot_url(relay_url: str, slot: str) -> str:
     return f"{relay_url.rstrip('/')}/s/{slot}"
 
 
+def _request_with_retries(
+    method: str,
+    url: str,
+    *,
+    content: bytes | None = None,
+    timeout: float,
+    attempts: int = _RETRY_ATTEMPTS,
+) -> Any:
+    """Issue one relay request, retrying transient failures with backoff.
+
+    Retries connection/timeout errors, HTTP 429, and 5xx (transient relay or
+    edge hiccups). A 404 is NOT transient — it is a real "no drop" answer and
+    returns immediately. Honors a ``Retry-After`` header on 429 when present.
+    """
+    import time as _time
+
+    import httpx
+
+    last_exc: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            resp = httpx.request(method, url, content=content, timeout=timeout)
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            last_exc = exc
+            resp = None
+        else:
+            if resp.status_code < 500 and resp.status_code != 429:
+                return resp
+            last_exc = RelayError(f"relay {method} -> HTTP {resp.status_code}")
+        if attempt == attempts - 1:
+            break
+        delay = _RETRY_BACKOFF * (2**attempt)
+        if resp is not None and resp.status_code == 429:
+            retry_after = resp.headers.get("retry-after")
+            if retry_after and retry_after.isdigit():
+                delay = max(delay, float(retry_after))
+        _time.sleep(delay)
+    if last_exc is not None:
+        raise RelayError(f"relay {method} failed after {attempts} attempts: {last_exc}")
+    raise RelayError(f"relay {method} failed after {attempts} attempts")
+
+
 def push(relay_url: str, jar: bytes, *, secret: bytes | None = None, timeout: float = 30.0) -> str:
     """Seal ``jar`` and PUT it to the relay; return the pairing code.
 
     Generates a fresh ephemeral ``secret`` unless one is supplied. The returned
     code carries ``(relay_url, secret)`` — hand it to the receiver out of band.
+    Raises :class:`DropTooLarge` before any network call if the sealed blob
+    exceeds the relay's body cap, and :class:`RelayError` on a persistent relay
+    failure (retried with backoff).
     """
-    import httpx
-
     secret = secret or new_secret()
     slot, _ = derive(secret)
     blob = seal(jar, secret)
-    resp = httpx.put(_slot_url(relay_url, slot), content=blob, timeout=timeout)
+    if len(blob) > MAX_BLOB_BYTES:
+        raise DropTooLarge(
+            f"sealed blob is {len(blob) // 1024} KiB, over the relay's "
+            f"{MAX_BLOB_BYTES // 1024} KiB cap — scope the sync to fewer domains."
+        )
+    resp = _request_with_retries("PUT", _slot_url(relay_url, slot), content=blob, timeout=timeout)
     if resp.status_code not in (200, 201, 204):
-        raise DeadDropError(f"relay PUT failed: HTTP {resp.status_code}")
+        raise RelayError(f"relay PUT rejected the blob: HTTP {resp.status_code}")
     return format_code(relay_url, secret)
 
 
@@ -259,16 +324,15 @@ def pull(code: str, *, timeout: float = 30.0, max_age: int = _DEFAULT_MAX_AGE) -
     """GET and open the drop named by a pairing ``code``; return ``jar`` bytes.
 
     Raises :class:`DropNotFound` when the relay has no blob at the slot (never
-    sent, or already picked up), :class:`DropExpired` on a stale drop, or
-    :class:`DropAuthError` on a bad/tampered blob.
+    sent, or already picked up), :class:`DropExpired` on a stale drop,
+    :class:`DropAuthError` on a bad/tampered blob, or :class:`RelayError` on a
+    persistent relay failure (retried with backoff).
     """
-    import httpx
-
     relay_url, secret = parse_code(code)
     slot, _ = derive(secret)
-    resp = httpx.get(_slot_url(relay_url, slot), timeout=timeout)
+    resp = _request_with_retries("GET", _slot_url(relay_url, slot), timeout=timeout)
     if resp.status_code == 404:
         raise DropNotFound("no drop at this slot (never sent or already picked up)")
     if resp.status_code != 200:
-        raise DeadDropError(f"relay GET failed: HTTP {resp.status_code}")
+        raise RelayError(f"relay GET failed: HTTP {resp.status_code}")
     return open_sealed(resp.content, secret, max_age=max_age)

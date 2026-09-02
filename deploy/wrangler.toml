@@ -24,6 +24,17 @@ compatibility_date = "2025-01-01"
 binding = "DROPS"
 id = "REPLACE_WITH_KV_NAMESPACE_ID"
 
-# Optional hardening you can add in the Cloudflare dashboard:
-#   - A rate-limiting rule on /s/* per client IP (spam / storage-abuse control).
+# Per-IP rate limit (Cloudflare's native Rate Limiting binding — GA, all plans).
+# Caps how fast one address can hit /s/* so nobody can flood random-slot PUTs to
+# burn KV storage or request quota. namespace_id is any unique-per-limiter id;
+# period must be 10 or 60 (seconds). 120 requests / 60s per IP is generous for a
+# human-driven sync yet stops a flood.
+[[unsafe.bindings]]
+name = "DROP_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
+# Optional extra hardening in the Cloudflare dashboard:
 #   - WAF off — there is nothing to inspect; every body is ciphertext.
+#   - A Workers analytics alert on request spikes.

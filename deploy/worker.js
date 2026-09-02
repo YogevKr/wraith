@@ -17,9 +17,14 @@
  * drop a transfer; it cannot read, forge, or replay one. Slots are 128-bit and
  * single-use, so there is no useful endpoint to enumerate.
  *
- * Deploy:  wrangler deploy   (needs a KV namespace bound as DROPS — see
- *          wrangler.toml). Use a throwaway Cloudflare account if you also want
- *          to hide ownership from Cloudflare.
+ * Abuse control: a per-IP rate limit (Cloudflare's native Rate Limiting binding,
+ * DROP_LIMITER in wrangler.toml) caps how fast one address can hit the relay, so
+ * nobody can flood random-slot PUTs to burn KV storage or request quota. Over
+ * the limit returns 429 (it reveals nothing about which slots exist).
+ *
+ * Deploy:  wrangler deploy   (needs a KV namespace bound as DROPS and the
+ *          DROP_LIMITER rate-limit binding — see wrangler.toml). Use a throwaway
+ *          Cloudflare account if you also want to hide ownership from Cloudflare.
  */
 
 const SLOT_RE = /^[0-9a-f]{32}$/; // exactly the hex slot deaddrop.derive() mints
@@ -27,6 +32,7 @@ const MAX_BYTES = 1024 * 1024; // 1 MiB cap — a padded jar is far smaller
 const TTL_SECONDS = 600; // a drop lives at most 10 minutes
 
 const NOT_FOUND = () => new Response(null, { status: 404 });
+const TOO_MANY = () => new Response(null, { status: 429 });
 
 export default {
   async fetch(request, env) {
@@ -36,6 +42,14 @@ export default {
 
     const slot = match[1];
     if (!SLOT_RE.test(slot)) return NOT_FOUND();
+
+    // Per-IP rate limit before any storage work (skips gracefully if the
+    // binding is absent, so the Worker still runs without it configured).
+    if (env.DROP_LIMITER) {
+      const ip = request.headers.get("cf-connecting-ip") || "unknown";
+      const { success } = await env.DROP_LIMITER.limit({ key: ip });
+      if (!success) return TOO_MANY();
+    }
 
     if (request.method === "PUT") {
       const body = new Uint8Array(await request.arrayBuffer());

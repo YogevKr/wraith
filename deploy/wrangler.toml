@@ -1,0 +1,29 @@
+# Wraith dead-drop relay — Cloudflare Worker deployment.
+#
+# One-time setup:
+#   1. npm i -g wrangler && wrangler login   (or use a throwaway account)
+#   2. wrangler kv namespace create DROPS     -> copy the returned id below
+#   3. wrangler deploy                        -> prints https://<name>.<sub>.workers.dev
+#
+# Then pair with that URL:
+#   remote$  wraith profile serve --relay https://<name>.<sub>.workers.dev
+#   laptop$  wraith profile sync  --relay https://<name>.<sub>.workers.dev \
+#                                 --from chrome --domain elal.com
+#
+# The Worker stores only sealed blobs under random single-use slots (TTL 600s).
+# It never sees the ephemeral secret, so it cannot read or forge a transfer.
+
+name = "wraith-drop"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# KV holds each sealed blob for its short TTL. Create the namespace with
+#   wrangler kv namespace create DROPS
+# and paste the printed id here.
+[[kv_namespaces]]
+binding = "DROPS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Optional hardening you can add in the Cloudflare dashboard:
+#   - A rate-limiting rule on /s/* per client IP (spam / storage-abuse control).
+#   - WAF off — there is nothing to inspect; every body is ciphertext.

@@ -38,6 +38,9 @@ dependencies = [
     "httpx",
     "mcp",
     "markdownify",
+    # Chrome cookie decryption (wraith.chrome) + dead-drop AEAD/HKDF
+    # (wraith.deaddrop) for the profile-sync feature.
+    "cryptography>=42",
 ]
 
 [project.urls]

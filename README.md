@@ -259,7 +259,7 @@ affected symbols are omitted and `wraith.missing_imports` records why.
 
 ### (b) CLI — `wraith`
 
-The `wraith` console script has seven subcommands. The default engine is
+The `wraith` console script groups its subcommands below. The default engine is
 `camoufox`; pass `--engine chromium` for the patchright fallback or
 `--engine auto` to let Wraith choose.
 
@@ -294,21 +294,53 @@ uv run wraith detect https://example.com --json
 uv run wraith launch https://example.com
 uv run wraith launch https://example.com --headless --no-wait
 
+# profile — sync a local login to a remote Wraith over an encrypted dead-drop
+uv run wraith profile sync --relay https://<name>.workers.dev --from chrome --domain elal.com
+uv run wraith profile receive <pairing-code> --open https://www.elal.com/   # remote side
+
 # mcp     — run the MCP server over stdio (see below)
 uv run wraith mcp
 ```
 
-> Chrome cookies are AES-encrypted via the OS keychain; Wraith deliberately does
-> **not** decrypt them and raises `ChromeEncryptionError` with guidance. Use a
-> **Firefox or Zen** profile (same engine family as Camoufox, plaintext-readable
-> cookie store) — that's the recommended path — or harvest live.
+> The base `borrow` / `extract_cookies` path reads **Firefox/Zen** profiles
+> (plaintext cookie store, same engine family as Camoufox) and still raises
+> `ChromeEncryptionError` for Chrome, on purpose. To use a **Chrome** login,
+> reach for `wraith profile sync --from chrome` below — it opts into the OS
+> keychain decryptor (`wraith.chrome`) explicitly.
+
+#### Profile sync — a laptop login on a remote Wraith
+
+`wraith profile sync` moves a **domain-scoped** login from your laptop to a
+remote Wraith (a headless box, `tmm`, a cloud VM) over an **anonymous,
+login-free, end-to-end-encrypted dead-drop**. No account, no inbound port, no
+long-lived key — the agent never sees the jar.
+
+```
+LAPTOP                                   RELAY (Cloudflare Worker)        REMOTE (wraith-mcp)
+  wraith profile sync --from chrome ─┐   stores 1 sealed blob per         receive_profile(code)
+    read + decrypt cookies           │   random slot, ~10 min TTL,        ─ pulls + opens in RAM
+    scope to --domain                ├──▶ hands it over exactly once ─────▶ injects into live context
+    seal under an ephemeral secret   │   (sees only ciphertext + IPs)      navigate() as that user
+    print a one-shot pairing code ───┘
+```
+
+- **Source** (`--from`): `chrome`, `firefox`, `zen`, or `login` (open a window,
+  sign in by hand — works on any OS, needs no keychain).
+- **Transport**: one ephemeral secret per transfer derives an unguessable relay
+  slot and a `ChaCha20-Poly1305` key; the blob is size-padded and freshness-gated.
+  Move the pairing code out of band (ssh, password manager, QR). It self-destructs
+  after one pickup. Deploy the relay from [`deploy/`](deploy/) (`wrangler deploy`).
+- **Over Tailscale instead?** Skip the relay: `ssh <host> wraith profile receive <code>`.
+
+A cookie jar is the session past 2FA — keep syncs domain-scoped, and see
+[SECURITY.md](SECURITY.md#profile-sync-dead-drop) for the trust limits.
 
 ### (c) MCP server
 
 Wraith ships a stdio MCP server (`wraith-mcp`) that exposes the agent browser as
 tools — `navigate`, `snapshot`, `click`, `type_text`, `fill_secret`, `scroll`, `read`,
-`screenshot`, `detect_waap`, and `borrow`. Wire it into an MCP client such as
-Claude Code:
+`screenshot`, `detect_waap`, `borrow`, and `receive_profile`. Wire it into an MCP
+client such as Claude Code:
 
 ```bash
 claude mcp add wraith -- uv run --directory /path/to/wraith wraith-mcp
@@ -323,7 +355,10 @@ Wraith is a set of focused, mostly-independent modules under `wraith/`:
 | Module | Responsibility |
 | --- | --- |
 | [`engine`](wraith/engine.py) | Stealth launcher & engine selection. `launch()` / `browser()` return a `Session` (`.page`, `.context`, `.browser`); `clear_challenge()` is the cookie-free WAAP front door. Camoufox primary, patchright Chromium fallback; enforces the `playwright==1.55` pin. |
-| [`identity`](wraith/identity.py) | **Signature feature.** Discover Firefox/Zen/Chrome profiles, `extract_cookies()`, normalize them, and `inject_cookies()` into a context. Firefox/Zen plaintext; Chrome raises `ChromeEncryptionError`. |
+| [`identity`](wraith/identity.py) | **Signature feature.** Discover Firefox/Zen/Chrome profiles, `extract_cookies()`, normalize them, and `inject_cookies()` into a context. Firefox/Zen plaintext; Chrome raises `ChromeEncryptionError` (opt into `chrome` to decrypt). |
+| [`chrome`](wraith/chrome.py) | Opt-in Chrome/Chromium cookie decryptor for `profile sync`: recovers the `os_crypt` key (macOS Keychain, Linux Secret-Service/`peanuts`, Windows DPAPI), decrypts `v10`/`v11` values, strips the Chrome 130+ host hash, refuses app-bound `v20`. |
+| [`deaddrop`](wraith/deaddrop.py) | Anonymous, login-free, end-to-end-encrypted transport. One ephemeral secret per transfer → an unguessable relay slot + `ChaCha20-Poly1305` key; `seal`/`open_sealed`, `push`/`pull`, and a dot-joined base64url pairing `code`. Relay: [`deploy/worker.js`](deploy/worker.js). |
+| [`profile`](wraith/profile.py) | Ties it together: `gather_cookies` (chrome/firefox/zen) or `capture_login_jar` (manual sign-in) → domain-scoped jar → `sync_profile` (push) / `receive_profile` (pull + inject). |
 | [`harvest`](wraith/harvest.py) | Live session capture. `SessionHarvester` latches the first request carrying an `Authorization` header + auth cookie; `harvest_session()` is the high-level helper. |
 | [`detect`](wraith/detect.py) | Diagnostics: `identify_waap()` (vendor fingerprinting), `recaptcha_v3_score()` (reputation read), `bot_detector()` (rebrowser automation tells), `fingerprint()`. |
 | [`behavior`](wraith/behavior.py) | Human-like helpers: `human_move()` (curved/eased/jittered mouse), `human_type()` (per-key cadence), `dwell()`. |

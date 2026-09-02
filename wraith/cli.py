@@ -618,6 +618,73 @@ def _add_proxy_flags(p: argparse.ArgumentParser) -> None:
     )
 
 
+def cmd_profile_sync(args: argparse.Namespace) -> int:
+    """Gather a domain-scoped login and push it to the relay as a pairing code."""
+    profile = _lazy("profile")
+
+    domain = None if args.all else args.domain
+    if not domain and not args.all:
+        raise SystemExit(
+            "wraith: --domain is required (or pass --all to sync the whole "
+            "profile — this uploads every cookie; use with care)."
+        )
+    print(
+        f"wraith: gathering cookies from {args.source!r} for "
+        f"{domain or 'ALL DOMAINS'}",
+        file=sys.stderr,
+    )
+    code, summary = profile.sync_profile(
+        args.relay,
+        source=args.source,
+        domain=domain,
+        profile=args.profile,
+        browser=args.browser,
+        login_url=args.login_url,
+    )
+    total = sum(summary.values())
+    print(f"wraith: sealed {total} cookie(s) across {len(summary)} domain(s):", file=sys.stderr)
+    for dom, n in summary.items():
+        print(f"    {dom:40} {n}", file=sys.stderr)
+    print("\nwraith: pairing code (valid ~10 min, one pickup) — hand it over out of band:\n")
+    print(code)
+    return 0
+
+
+def cmd_profile_receive(args: argparse.Namespace) -> int:
+    """Pull a jar from a pairing code; optionally inject it and open a URL."""
+    profile = _lazy("profile")
+
+    print("wraith: pulling drop from relay...", file=sys.stderr)
+    jar = profile.receive_profile(args.code)
+    summary = profile.jar_summary(jar)
+    total = sum(summary.values())
+    print(f"wraith: received {total} cookie(s) across {len(summary)} domain(s):", file=sys.stderr)
+    for dom, n in summary.items():
+        print(f"    {dom:40} {n}", file=sys.stderr)
+
+    if not args.open:
+        print("wraith: jar received. Pass --open <url> to inject and browse.", file=sys.stderr)
+        return 0
+
+    engine = _lazy("engine")
+    identity = _lazy("identity")
+    with engine.launch(
+        args.engine,
+        headless=args.headless,
+        geoip=not args.no_geoip,
+        proxy=_resolve_proxy(args),
+    ) as session:
+        context = _context_of(session)
+        n = identity.inject_cookies(context, jar["cookies"])
+        print(f"wraith: injected {n} cookie(s)", file=sys.stderr)
+        page = _page_of(session, context)
+        page.goto(args.open, wait_until="domcontentloaded")
+        print(f"wraith: opened {page.url} as the synced identity", file=sys.stderr)
+        if not args.headless:
+            _hold_open()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wraith",
@@ -853,6 +920,69 @@ def build_parser() -> argparse.ArgumentParser:
         "/path/to/wraith wraith mcp`.",
     )
     p_mcp.set_defaults(func=cmd_mcp)
+
+    # profile (sync / receive)
+    p_profile = sub.add_parser(
+        "profile",
+        help="sync a local login to a remote Wraith over an encrypted dead-drop",
+        description="Gather a domain-scoped cookie jar from a local browser "
+        "profile (or a manual sign-in) and move it to a remote Wraith over an "
+        "end-to-end-encrypted, login-free dead-drop relay. The agent never sees "
+        "the jar; the transfer carries one ephemeral secret and self-destructs.",
+    )
+    prof_sub = p_profile.add_subparsers(dest="profile_command", metavar="<action>")
+    prof_sub.required = True
+
+    p_sync = prof_sub.add_parser(
+        "sync", help="gather a login locally and push it to the relay"
+    )
+    p_sync.add_argument("--relay", required=True, help="dead-drop relay base URL")
+    p_sync.add_argument(
+        "--from",
+        dest="source",
+        default="auto",
+        help="source: chrome, firefox, zen, login, or auto (default: auto)",
+    )
+    p_sync.add_argument(
+        "--domain",
+        default=None,
+        help="domain to scope the sync to (and its subdomains)",
+    )
+    p_sync.add_argument(
+        "--all",
+        action="store_true",
+        help="sync EVERY cookie in the profile (uploads all sessions — care)",
+    )
+    p_sync.add_argument(
+        "--profile",
+        default=None,
+        help="explicit source profile-directory path (default: auto-detect)",
+    )
+    p_sync.add_argument(
+        "--browser",
+        default=None,
+        help="Keychain/keyring label override for a Chromium source "
+        "(chrome, brave, chromium, edge)",
+    )
+    p_sync.add_argument(
+        "--login-url",
+        default=None,
+        help="page to open for `--from login` (manual sign-in capture)",
+    )
+    p_sync.set_defaults(func=cmd_profile_sync)
+
+    p_recv = prof_sub.add_parser(
+        "receive", help="pull a jar from a pairing code (remote side)"
+    )
+    p_recv.add_argument("code", help="pairing code printed by `profile sync`")
+    p_recv.add_argument(
+        "--open",
+        default=None,
+        help="inject the jar and open this URL as the synced identity",
+    )
+    _add_proxy_flags(p_recv)
+    _add_engine_flags(p_recv)
+    p_recv.set_defaults(func=cmd_profile_receive)
 
     return parser
 

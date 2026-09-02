@@ -6,6 +6,25 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **Profile sync** — move a domain-scoped login from a laptop to a remote
+  Wraith, the way Browser Use's "sync your local cookies to cloud" works, but
+  end-to-end encrypted with no account and no inbound port.
+  - `wraith.chrome`: opt-in decryptor for Chrome/Chromium cookies across macOS
+    (Keychain), Linux (Secret Service / `peanuts`), and Windows (DPAPI); refuses
+    app-bound `v20` values with guidance to use `--from login`.
+  - `wraith.deaddrop`: an anonymous, login-free transport. One ephemeral secret
+    per transfer derives an unguessable relay slot and a ChaCha20-Poly1305 key;
+    the sealed blob is size-padded, slot-bound, and freshness-gated. A dumb
+    Cloudflare Worker relay (`deploy/worker.js`) stores one ciphertext per slot
+    for ~10 minutes and hands it over exactly once.
+  - `wraith.profile` + `wraith profile sync` / `wraith profile receive` CLI: pick
+    a source (`chrome`/`firefox`/`zen`/`login`), scope to a domain, print a
+    one-shot pairing code.
+  - `receive_profile` MCP tool: the remote pulls the jar and injects it — a
+    cross-machine identity borrow, no password ever seen by the agent.
+
 ## [0.2.0] - 2026-09-01
 
 ### Added

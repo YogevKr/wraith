@@ -30,7 +30,7 @@ namespace and ``__all__``; ``wraith.missing_imports`` records why.
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 # Names that imported cleanly, assembled into __all__ at the end.
 __all__: list[str] = []
@@ -101,6 +101,55 @@ _reexport(
         "to_cookiejar",
         "GOOGLE_REPUTATION_COOKIES",
         "ChromeEncryptionError",
+    ],
+)
+
+# Chrome: opt-in decryptor for encrypted-store (Chrome/Chromium) cookies — the
+# other on-disk identity source (Firefox/Zen are plaintext, read via identity).
+_reexport(
+    "chrome",
+    [
+        "extract_chrome_cookies",
+        "get_chrome_key",
+        "decrypt_chrome_value",
+        "ChromeCookieError",
+    ],
+)
+
+# Deaddrop: the anonymous, login-free, end-to-end-encrypted transport that moves
+# a synced login from a laptop to a remote Wraith via a dumb relay.
+_reexport(
+    "deaddrop",
+    [
+        "new_secret",
+        "derive",
+        "seal",
+        "open_sealed",
+        "format_code",
+        "parse_code",
+        "push",
+        "pull",
+        "DeadDropError",
+        "DropAuthError",
+        "DropExpired",
+        "DropNotFound",
+        "DropTooLarge",
+        "RelayError",
+        "MAX_BLOB_BYTES",
+    ],
+)
+
+# Profile: sync a domain-scoped login (chrome/firefox/zen/login) to a remote
+# Wraith over the dead-drop; the agent never sees the jar.
+_reexport(
+    "profile",
+    [
+        "sync_profile",
+        "receive_profile",
+        "gather_cookies",
+        "capture_login_jar",
+        "jar_from_cookies",
+        "jar_summary",
     ],
 )
 

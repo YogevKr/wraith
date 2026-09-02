@@ -63,7 +63,9 @@ app = FastMCP(
         "`ensure_high_score(url)` borrows a logged-in Google identity's "
         "reputation cookies and opens the URL so a reCAPTCHA-v3 score is minted "
         "high (general across any sitekey) — opt-in; verify acceptance against "
-        "the real protected endpoint."
+        "the real protected endpoint. `receive_profile(code)` pulls a login that "
+        "a laptop synced over an encrypted dead-drop (`wraith profile sync`) and "
+        "injects its cookies — a remote-machine identity borrow, no password seen."
     ),
 )
 
@@ -456,6 +458,51 @@ async def fetch(
         return await asyncio.to_thread(_go)
     except fastpath.FastPathUnavailableError as exc:
         return str(exc)
+
+
+@app.tool()
+async def receive_profile(code: str) -> str:
+    """Pull a synced login from a one-shot pairing ``code`` and inject it.
+
+    A laptop runs ``wraith profile sync`` and hands you the pairing code out of
+    band. This tool pulls the end-to-end-encrypted cookie jar from the dead-drop
+    relay, opens it in memory, and injects the cookies into the live browser
+    context — so subsequent `navigate` calls load as that already-signed-in user.
+    No password ever reaches you: only the session cookies, scoped to the domain
+    the laptop chose. The drop is single-use and self-destructs after pickup.
+    """
+    import asyncio
+
+    from . import profile as profile_mod  # lazy
+
+    try:
+        jar = await asyncio.to_thread(profile_mod.receive_profile, code)
+    except Exception as exc:
+        return f"wraith: could not receive the profile: {type(exc).__name__}: {exc}"
+
+    cookies = jar.get("cookies", [])
+    if not cookies:
+        return "wraith: the drop opened but carried no cookies."
+    summary = profile_mod.jar_summary(jar)
+    domains = ", ".join(f"{d}({n})" for d, n in summary.items())
+
+    def _inject() -> str:
+        browser = _get_browser()
+        ctx = _ctx_from_browser(browser)
+        if ctx is None:
+            return (
+                f"Received {len(cookies)} cookie(s) [{domains}], but no live "
+                "context to inject into — call `navigate` first, then retry."
+            )
+        from .identity import inject_cookies  # lazy
+
+        n = inject_cookies(ctx, cookies)
+        return (
+            f"Injected {n} cookie(s) [{domains}] from the synced profile. The "
+            "browser now navigates as that identity — open the site with `navigate`."
+        )
+
+    return await _run(_inject)
 
 
 # --------------------------------------------------------------------------- #

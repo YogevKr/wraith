@@ -6,6 +6,33 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-02
+
+### Added
+
+- **Profile sync** — move a domain-scoped login from a laptop to a remote
+  Wraith, the way Browser Use's "sync your local cookies to cloud" works, but
+  end-to-end encrypted with no account and no inbound port.
+  - `wraith.chrome`: opt-in decryptor for Chrome/Chromium cookies across macOS
+    (Keychain), Linux (Secret Service / `peanuts`), and Windows (DPAPI); refuses
+    app-bound `v20` values with guidance to use `--from login`.
+  - `wraith.deaddrop`: an anonymous, login-free transport. One ephemeral secret
+    per transfer derives an unguessable relay slot and a ChaCha20-Poly1305 key;
+    the sealed blob is size-padded, slot-bound, and freshness-gated. The relay
+    client retries transient failures (timeouts, 429, 5xx) with backoff and
+    guards the relay's body cap (`DropTooLarge`). A dumb Cloudflare Worker relay
+    (`deploy/worker.js`) stores one ciphertext per slot for ~10 minutes, hands it
+    over exactly once, and rate-limits per IP (`DROP_LIMITER`, 120/60s) to stop
+    storage-abuse floods.
+  - `wraith.profile` + `wraith profile sync` / `wraith profile receive` CLI: pick
+    a source (`chrome`/`firefox`/`zen`/`login`), scope to a domain, print a
+    one-shot pairing code. Clean, actionable errors for spent/expired/oversize
+    drops.
+  - `receive_profile` MCP tool: the remote pulls the jar and injects it — a
+    cross-machine identity borrow, no password ever seen by the agent.
+- Declared `cryptography` as a direct dependency (Chrome decryption + dead-drop
+  AEAD/HKDF); it was only a transitive `pyjwt[crypto]` extra before.
+
 ## [0.2.0] - 2026-09-01
 
 ### Added
@@ -49,6 +76,7 @@ autonomous agents.
 - **Docs**: `DETECTION.md` (vendor taxonomy + coverage matrix), `PLAYBOOK.md`
   (tier strategy, proxy rotation), `AGENTS.md` (agent API + MCP setup).
 
-[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/YogevKr/wraith/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/YogevKr/wraith/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/YogevKr/wraith/releases/tag/v0.1.0

@@ -118,3 +118,51 @@ This result does not make console collection safe after a secret fill.
 Wraith cannot directly use Instinct Vault today. Instinct must supply a provider
 or broker adapter that Wraith can reach. That adapter should return an opaque
 handle to the agent and resolve it only inside the trusted fill path.
+
+## Profile Sync Dead-Drop
+
+`wraith profile sync` moves a cookie jar from a laptop to a remote Wraith over a
+relay. It uses no account and no long-lived key. One ephemeral secret protects
+each transfer.
+
+### What the transfer protects
+
+The sender seals the jar with `ChaCha20-Poly1305`. The key comes from the
+ephemeral secret. The relay slot comes from the same secret and is 128 bits, so
+the relay sees only random single-use ids. The AEAD tag proves the sender held
+the secret, so the transfer needs no separate signature. The blob is padded, so
+its size does not reveal the jar size. The blob carries a timestamp, so a stale
+or replayed drop is rejected.
+
+### What the relay learns
+
+The relay stores one ciphertext per slot for about ten minutes and returns it
+once. It sees ciphertext, a random slot, a padded size, and the two source IP
+addresses. It cannot read, forge, or replay a jar. A compromised relay can only
+delay or drop a transfer.
+
+The relay still sees both IP addresses and the transfer time. Route the laptop
+through WARP or Tor to hide the laptop IP from the relay operator.
+
+### What the secret controls
+
+Whoever holds the pairing code for those ten minutes can read that one transfer.
+Move the code out of band, such as over ssh, a password manager, or a QR code on
+a phone. The code never travels through the relay.
+
+The secret is per transfer and never stored. A leak burns one transfer, not the
+account. Re-run the sync to make a new secret.
+
+### The jar is the session past the second factor
+
+A session cookie is the account after the password and the second factor. The
+destination site cannot tell the agent from the human. So keep every sync scoped
+to one domain with `--domain`. Use `--all` only when you accept uploading every
+session. Re-sync only when the site logs the profile out.
+
+### Cross-site egress
+
+The remote uses its own exit IP, not the relay. A large geographic jump between
+the laptop and the remote can log some sessions out and lower a reCAPTCHA-v3
+reputation score. Pin a sticky residential exit near the account's home region
+with the proxy pool when this matters.

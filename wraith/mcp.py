@@ -14,7 +14,7 @@ Design notes
   session. ``import wraith.mcp`` on its own never touches Playwright/Camoufox.
 * **Threading:** ``AgentBrowser`` uses the *sync* Playwright API (Camoufox),
   which refuses to run inside an asyncio event loop and whose objects are
-  thread-affine. FastMCP runs tools in the event loop, so every browser
+  thread-affine. The MCP server runs tools in the event loop, so every browser
   operation is dispatched to a single dedicated worker thread via a
   ``max_workers=1`` executor (``_run``). The browser is created and used only on
   that thread, which keeps Playwright happy and the session consistent.
@@ -32,19 +32,29 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
-from mcp.server.fastmcp import FastMCP
+# The server class moved in mcp 2.x: FastMCP (mcp.server.fastmcp) was renamed to
+# MCPServer (mcp.server.mcpserver). Its constructor, ``@app.tool()`` decorator,
+# and ``app.run()`` are call-compatible across both majors, so a small import
+# shim lets Wraith run on mcp 1.x AND 2.x.
+try:  # mcp >= 2
+    from mcp.server.mcpserver import MCPServer as _MCPServer
+except ImportError:  # pragma: no cover - mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _MCPServer
 
-try:  # Image content block (vision); optional across mcp SDK versions.
-    from mcp.server.fastmcp import Image
-except Exception:  # pragma: no cover - older/newer SDK without the helper
-    Image = None  # type: ignore[assignment]
+try:  # Image content block (vision); its module moved in mcp 2.x
+    from mcp.server.mcpserver import Image
+except Exception:  # pragma: no cover
+    try:
+        from mcp.server.fastmcp import Image
+    except Exception:  # older/newer SDK without the helper
+        Image = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .agent import AgentBrowser
 
 T = TypeVar("T")
 
-app = FastMCP(
+app = _MCPServer(
     "wraith",
     instructions=(
         "Wraith is a stealth + identity-borrowing browser for autonomous agents. "

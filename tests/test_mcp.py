@@ -1,7 +1,7 @@
 """Regression guards for the MCP server's threading model.
 
 Dogfooding revealed that the browser tools, if defined as plain `def`, run
-sync Playwright (Camoufox) inside FastMCP's asyncio loop and crash with
+sync Playwright (Camoufox) inside the MCP server's asyncio loop and crash with
 "Sync API inside the asyncio loop". They MUST be async and dispatch the
 browser work to the single worker-thread executor. These offline tests lock
 that contract in.

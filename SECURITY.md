@@ -141,6 +141,19 @@ once. It sees ciphertext, a random slot, a padded size, and the two source IP
 addresses. It cannot read, forge, or replay a jar. A compromised relay can only
 delay or drop a transfer.
 
+Each slot is its own Durable Object, whose storage runs serialized. Read and
+delete happen in one atomic step, so two racing pickups of a leaked code cannot
+both read the blob. A store is idempotent for an identical retry, and a
+consuming read is never retried automatically.
+
+### Revoke
+
+Holding the secret also lets the holder burn the drop: `wraith profile revoke`
+deletes the sealed blob at the relay before pickup, for a sender who mis-sent a
+drop or whose code leaked. This grants no new power. Anyone with the secret can
+already destroy a drop by reading it, because a read deletes on the relay. Burn
+only makes the destroy explicit and skips decryption.
+
 The relay still sees both IP addresses and the transfer time. Route the laptop
 through WARP or Tor to hide the laptop IP from the relay operator.
 

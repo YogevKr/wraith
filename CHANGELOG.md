@@ -6,6 +6,40 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-02
+
+### Added
+
+- **Revoke a drop** — `wraith profile revoke <code>` (and `deaddrop.burn`) delete
+  a sealed blob at the relay without reading it. Whoever holds the secret can
+  burn a drop they mis-sent or whose code leaked. It grants no new power (a GET
+  already destroys on read); it just makes the cancel explicit.
+- `wraith profile receive --out <file>` saves the pulled jar as Playwright
+  storageState JSON. `receive` now requires an action (`--open` or `--out`) and
+  refuses **before** the network call, so a one-shot drop is never consumed with
+  nowhere to put the jar.
+
+### Changed
+
+- The relay is now a **SQLite-backed Durable Object** (one per slot) instead of
+  KV, so read-and-delete is atomic — two racing pickups of a leaked code can no
+  longer both read the blob. Deploys on the Workers Free plan; no KV namespace.
+- PUT is idempotent (a retry re-sending the identical sealed bytes succeeds
+  instead of a first-writer-wins collision); a consuming GET is no longer
+  auto-retried (a retry after a lost response would lose the jar).
+
+### Fixed
+
+- `find_chrome_profile()` now detects the modern `Default/Network/Cookies`
+  layout, so Chrome auto-detection works without `--profile`.
+- Chrome cookie decryption resolves `Local State` from the real profile
+  directory under the `Network/` layout (Windows decryption no longer fails).
+- An all-app-bound (`v20`) Chrome store now surfaces the `--from login` guidance
+  (new `AppBoundCookieError`) instead of a misleading "no cookies" result.
+- `profile sync` reports Chrome keychain / app-bound failures as clean CLI
+  errors instead of a traceback (`ChromeCookieError` derives from
+  `NotImplementedError`, which the handler now catches).
+
 ## [0.3.0] - 2026-09-02
 
 ### Added
@@ -76,7 +110,8 @@ autonomous agents.
 - **Docs**: `DETECTION.md` (vendor taxonomy + coverage matrix), `PLAYBOOK.md`
   (tier strategy, proxy rotation), `AGENTS.md` (agent API + MCP setup).
 
-[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/YogevKr/wraith/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/YogevKr/wraith/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/YogevKr/wraith/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/YogevKr/wraith/releases/tag/v0.1.0

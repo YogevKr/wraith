@@ -6,11 +6,34 @@ them, including the Chrome 130+ host-hash prefix and the v20 refusal.
 """
 
 import hashlib
+import sqlite3
 
 import pytest
 
 from wraith import chrome
 from wraith.identity import ChromeEncryptionError
+
+
+def _make_cookies_db(path, rows):
+    """Write a minimal Chrome ``Cookies`` sqlite with the given rows.
+
+    Each row: (host_key, name, encrypted_value bytes). value is left empty so
+    decryption drives the result.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, "
+        "encrypted_value BLOB, path TEXT, is_secure INT, is_httponly INT, "
+        "samesite INT, expires_utc INT)"
+    )
+    for host, name, enc in rows:
+        conn.execute(
+            "INSERT INTO cookies VALUES (?,?,?,?,?,?,?,?,?)",
+            (host, name, "", enc, "/", 1, 0, 0, 0),
+        )
+    conn.commit()
+    conn.close()
 
 
 def _aes_cbc_v10(plaintext: bytes, key: bytes) -> bytes:
@@ -90,3 +113,58 @@ def test_browser_name_from_path():
     assert chrome._browser_name_from_path("/x/Google/Chrome/Default") == "chrome"
     assert chrome._browser_name_from_path("/x/BraveSoftware/Brave-Browser/Default") == "brave"
     assert chrome._browser_name_from_path("/x/Chromium/Default") == "chromium"
+
+
+def test_network_layout_resolves_profile_dir_for_local_state(tmp_path, monkeypatch):
+    # Chrome 96+ keeps the DB at <Profile>/Network/Cookies. get_chrome_key must
+    # receive the PROFILE dir (…/Default), not …/Default/Network, so the Windows
+    # Local State lookup (profile_dir.parent) lands on …/User Data/Local State.
+    profile = tmp_path / "User Data" / "Default"
+    _make_cookies_db(profile / "Network" / "Cookies", [("x.com", "sid", b"v10raw")])
+    seen = {}
+
+    def fake_key(profile_dir, browser):
+        seen["dir"] = profile_dir
+        return b"\x00" * 16
+
+    monkeypatch.setattr(chrome, "get_chrome_key", fake_key)
+    monkeypatch.setattr(chrome, "decrypt_chrome_value", lambda *a, **k: "decoded")
+    out = chrome.extract_chrome_cookies(profile)
+    assert seen["dir"] == profile  # the Default dir, NOT Default/Network
+    assert out[0].value == "decoded"
+
+
+def test_all_app_bound_store_raises_guidance(tmp_path, monkeypatch):
+    # An all-v20 store must surface the --from login guidance, not an empty list.
+    profile = tmp_path / "User Data" / "Default"
+    _make_cookies_db(
+        profile / "Cookies",
+        [("x.com", "a", b"v20" + b"\x00" * 40), ("x.com", "b", b"v20" + b"\x00" * 40)],
+    )
+    monkeypatch.setattr(chrome, "get_chrome_key", lambda *a, **k: b"\x00" * 16)
+    with pytest.raises(chrome.AppBoundCookieError) as exc:
+        chrome.extract_chrome_cookies(profile)
+    assert "--from login" in str(exc.value)
+
+
+def test_app_bound_is_a_chrome_encryption_error():
+    # Back-compat: callers catching the base type still catch app-bound.
+    assert issubclass(chrome.AppBoundCookieError, ChromeEncryptionError)
+
+
+def test_find_chrome_profile_detects_both_cookie_layouts(tmp_path, monkeypatch):
+    from wraith import identity
+
+    monkeypatch.setattr(identity, "_app_support_roots", lambda: [tmp_path])
+
+    # Modern layout: Default/Network/Cookies -> auto-detect must find it.
+    net = tmp_path / "Google" / "Chrome" / "Default" / "Network"
+    net.mkdir(parents=True)
+    (net / "Cookies").write_bytes(b"x")
+    assert identity.find_chrome_profile() == tmp_path / "Google" / "Chrome" / "Default"
+
+    # Legacy layout: Default/Cookies directly.
+    old = tmp_path / "Chromium" / "Default"
+    old.mkdir(parents=True)
+    (old / "Cookies").write_bytes(b"x")
+    assert identity.find_chrome_profile() is not None

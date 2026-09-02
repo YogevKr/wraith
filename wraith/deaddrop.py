@@ -51,6 +51,7 @@ __all__ = [
     "DropTooLarge",
     "RelayError",
     "SealedDrop",
+    "burn",
     "derive",
     "format_code",
     "new_secret",
@@ -330,9 +331,35 @@ def pull(code: str, *, timeout: float = 30.0, max_age: int = _DEFAULT_MAX_AGE) -
     """
     relay_url, secret = parse_code(code)
     slot, _ = derive(secret)
-    resp = _request_with_retries("GET", _slot_url(relay_url, slot), timeout=timeout)
+    # GET consumes the drop (atomic read-and-delete), so it must NOT be retried:
+    # a retry after a lost 200 would see 404 and lose the jar. A single attempt
+    # means a transient failure leaves the blob intact for a manual re-run.
+    resp = _request_with_retries("GET", _slot_url(relay_url, slot), timeout=timeout, attempts=1)
     if resp.status_code == 404:
         raise DropNotFound("no drop at this slot (never sent or already picked up)")
     if resp.status_code != 200:
         raise RelayError(f"relay GET failed: HTTP {resp.status_code}")
     return open_sealed(resp.content, secret, max_age=max_age)
+
+
+def burn(code: str, *, timeout: float = 30.0) -> bool:
+    """Delete (revoke) the drop named by a pairing ``code`` without reading it.
+
+    Holding the secret means holding the slot, so the holder can burn the sealed
+    blob at the relay — a cancel/revoke for a sender who mis-sent a drop or whose
+    code leaked. This grants no power an attacker did not already have: anyone
+    with the secret can already destroy a drop by pulling it (GET deletes on
+    read). ``burn`` just makes the destroy explicit and skips decryption.
+
+    Returns ``True`` when a blob was deleted. Raises :class:`DropNotFound` when
+    the slot is already empty (picked up, expired, burned, or never sent), or
+    :class:`RelayError` on a persistent relay failure (retried with backoff).
+    """
+    relay_url, secret = parse_code(code)
+    slot, _ = derive(secret)
+    resp = _request_with_retries("DELETE", _slot_url(relay_url, slot), timeout=timeout)
+    if resp.status_code == 404:
+        raise DropNotFound("no drop at this slot to burn (already gone or never sent)")
+    if resp.status_code not in (200, 204):
+        raise RelayError(f"relay DELETE failed: HTTP {resp.status_code}")
+    return True

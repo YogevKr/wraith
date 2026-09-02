@@ -633,14 +633,17 @@ def cmd_profile_sync(args: argparse.Namespace) -> int:
         f"{domain or 'ALL DOMAINS'}",
         file=sys.stderr,
     )
-    code, summary = profile.sync_profile(
-        args.relay,
-        source=args.source,
-        domain=domain,
-        profile=args.profile,
-        browser=args.browser,
-        login_url=args.login_url,
-    )
+    try:
+        code, summary = profile.sync_profile(
+            args.relay,
+            source=args.source,
+            domain=domain,
+            profile=args.profile,
+            browser=args.browser,
+            login_url=args.login_url,
+        )
+    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+        raise SystemExit(f"wraith: {exc}") from exc
     total = sum(summary.values())
     print(f"wraith: sealed {total} cookie(s) across {len(summary)} domain(s):", file=sys.stderr)
     for dom, n in summary.items():
@@ -654,8 +657,19 @@ def cmd_profile_receive(args: argparse.Namespace) -> int:
     """Pull a jar from a pairing code; optionally inject it and open a URL."""
     profile = _lazy("profile")
 
+    deaddrop = _lazy("deaddrop")
     print("wraith: pulling drop from relay...", file=sys.stderr)
-    jar = profile.receive_profile(args.code)
+    try:
+        jar = profile.receive_profile(args.code)
+    except deaddrop.DropNotFound:
+        raise SystemExit(
+            "wraith: no drop at that code — it was already picked up, expired "
+            "(~10 min), or never sent. Re-run `profile sync` for a fresh code."
+        ) from None
+    except deaddrop.DropExpired as exc:
+        raise SystemExit(f"wraith: the drop is stale ({exc}). Re-run `profile sync`.") from None
+    except deaddrop.DeadDropError as exc:
+        raise SystemExit(f"wraith: could not receive the drop: {exc}") from exc
     summary = profile.jar_summary(jar)
     total = sum(summary.values())
     print(f"wraith: received {total} cookie(s) across {len(summary)} domain(s):", file=sys.stderr)

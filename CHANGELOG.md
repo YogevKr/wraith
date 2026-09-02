@@ -6,6 +6,17 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-02
+
+### Changed
+
+- Support **mcp 2.x**. The SDK renamed `FastMCP` (`mcp.server.fastmcp`) to
+  `MCPServer` (`mcp.server.mcpserver`); `wraith.mcp` now runs on both mcp 1.x and
+  2.x through a small import shim (the constructor, `@app.tool()`, and
+  `app.run()` are call-compatible). The dependency pin widened from `<2` to
+  `<3`, and the lock now resolves mcp 2.1.1 (pulling its new transitive deps:
+  `httpx2`, `mcp-types`, `opentelemetry-api`, `truststore`).
+
 ## [0.3.2] - 2026-09-02
 
 ### Fixed
@@ -119,7 +130,8 @@ autonomous agents.
 - **Docs**: `DETECTION.md` (vendor taxonomy + coverage matrix), `PLAYBOOK.md`
   (tier strategy, proxy rotation), `AGENTS.md` (agent API + MCP setup).
 
-[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/YogevKr/wraith/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/YogevKr/wraith/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/YogevKr/wraith/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/YogevKr/wraith/compare/v0.2.0...v0.3.0

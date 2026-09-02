@@ -376,7 +376,7 @@ Wraith is a set of focused, mostly-independent modules under `wraith/`:
 | [`recaptcha`](wraith/recaptcha.py) | v3 token harvesting from a warmed/borrowed session (`harvest_token`, `score`) + solver-service skeletons (`SolverService`, `CapSolver`, `TwoCaptcha`). |
 | [`proxy`](wraith/proxy.py) | Dependency-free `ProxyPool` (round-robin / random) and `normalize_proxy()` for `clear_challenge` rotation. |
 | [`providers`](wraith/providers.py) | First-class residential-proxy integrations. `DataImpulse` builds proxy URLs (`rotating`/`sticky`) and `ProxyPool`s (`pool`) for `launch(proxy=...)` / `clear_challenge(proxy_pool=...)`. |
-| [`mcp`](wraith/mcp.py) | The `wraith-mcp` FastMCP stdio server exposing the agent browser as MCP tools. |
+| [`mcp`](wraith/mcp.py) | The `wraith-mcp` stdio server exposing the agent browser as MCP tools (runs on the `mcp` SDK 1.x FastMCP or 2.x MCPServer via a shim). |
 | [`cli`](wraith/cli.py) | The `wraith` command. Lazily imports each component so `--help` works on a partial install. |
 
 Runnable, heavily-commented examples live in [`examples/`](examples/):

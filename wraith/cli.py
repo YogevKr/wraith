@@ -642,7 +642,10 @@ def cmd_profile_sync(args: argparse.Namespace) -> int:
             browser=args.browser,
             login_url=args.login_url,
         )
-    except (FileNotFoundError, RuntimeError, ValueError) as exc:
+    except (FileNotFoundError, RuntimeError, ValueError, NotImplementedError) as exc:
+        # NotImplementedError covers ChromeEncryptionError / ChromeCookieError /
+        # AppBoundCookieError (a keychain miss or app-bound store), which would
+        # otherwise escape as a traceback.
         raise SystemExit(f"wraith: {exc}") from exc
     total = sum(summary.values())
     print(f"wraith: sealed {total} cookie(s) across {len(summary)} domain(s):", file=sys.stderr)
@@ -654,17 +657,27 @@ def cmd_profile_sync(args: argparse.Namespace) -> int:
 
 
 def cmd_profile_receive(args: argparse.Namespace) -> int:
-    """Pull a jar from a pairing code; optionally inject it and open a URL."""
+    """Pull a one-shot jar and consume it into an action (inject+open, or save)."""
     profile = _lazy("profile")
-
     deaddrop = _lazy("deaddrop")
+
+    # The drop is single-use: pulling it deletes it at the relay. Refuse to
+    # consume it with nowhere to put the jar, BEFORE the network call, so a
+    # missing action never silently burns the transfer.
+    if not args.open and not args.out:
+        raise SystemExit(
+            "wraith: `receive` consumes the one-shot drop, so it needs an action "
+            "— pass --open <url> to inject and browse, or --out <file> to save "
+            "the jar (Playwright storageState JSON)."
+        )
+
     print("wraith: pulling drop from relay...", file=sys.stderr)
     try:
         jar = profile.receive_profile(args.code)
     except deaddrop.DropNotFound:
         raise SystemExit(
             "wraith: no drop at that code — it was already picked up, expired "
-            "(~10 min), or never sent. Re-run `profile sync` for a fresh code."
+            "(~10 min), burned, or never sent. Re-run `profile sync` for a fresh code."
         ) from None
     except deaddrop.DropExpired as exc:
         raise SystemExit(f"wraith: the drop is stale ({exc}). Re-run `profile sync`.") from None
@@ -676,8 +689,14 @@ def cmd_profile_receive(args: argparse.Namespace) -> int:
     for dom, n in summary.items():
         print(f"    {dom:40} {n}", file=sys.stderr)
 
+    if args.out:
+        import json
+        from pathlib import Path
+
+        Path(args.out).write_text(json.dumps(jar), encoding="utf-8")
+        print(f"wraith: saved jar (storageState) -> {args.out}", file=sys.stderr)
+
     if not args.open:
-        print("wraith: jar received. Pass --open <url> to inject and browse.", file=sys.stderr)
         return 0
 
     engine = _lazy("engine")
@@ -696,6 +715,23 @@ def cmd_profile_receive(args: argparse.Namespace) -> int:
         print(f"wraith: opened {page.url} as the synced identity", file=sys.stderr)
         if not args.headless:
             _hold_open()
+    return 0
+
+
+def cmd_profile_revoke(args: argparse.Namespace) -> int:
+    """Burn (delete) a drop at the relay using its pairing code."""
+    deaddrop = _lazy("deaddrop")
+    print("wraith: burning drop at relay...", file=sys.stderr)
+    try:
+        deaddrop.burn(args.code)
+    except deaddrop.DropNotFound:
+        raise SystemExit(
+            "wraith: nothing to burn — the drop was already picked up, expired, "
+            "burned, or never sent."
+        ) from None
+    except deaddrop.DeadDropError as exc:
+        raise SystemExit(f"wraith: could not burn the drop: {exc}") from exc
+    print("wraith: drop burned — the pairing code is now dead.", file=sys.stderr)
     return 0
 
 
@@ -986,7 +1022,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.set_defaults(func=cmd_profile_sync)
 
     p_recv = prof_sub.add_parser(
-        "receive", help="pull a jar from a pairing code (remote side)"
+        "receive",
+        help="pull a one-shot jar from a pairing code and inject or save it",
     )
     p_recv.add_argument("code", help="pairing code printed by `profile sync`")
     p_recv.add_argument(
@@ -994,9 +1031,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="inject the jar and open this URL as the synced identity",
     )
+    p_recv.add_argument(
+        "--out",
+        default=None,
+        help="save the jar to this file as Playwright storageState JSON",
+    )
     _add_proxy_flags(p_recv)
     _add_engine_flags(p_recv)
     p_recv.set_defaults(func=cmd_profile_receive)
+
+    p_revoke = prof_sub.add_parser(
+        "revoke",
+        help="burn (delete) a drop at the relay using its pairing code",
+    )
+    p_revoke.add_argument("code", help="pairing code of the drop to burn")
+    p_revoke.set_defaults(func=cmd_profile_revoke)
 
     return parser
 

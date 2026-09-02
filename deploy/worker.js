@@ -4,14 +4,25 @@
  * It stores ONE end-to-end-encrypted blob per random slot for a few minutes and
  * hands it over exactly once. It has no accounts, no login, no listing, and no
  * knowledge of what it carries: every payload is sealed by the sender under an
- * ephemeral secret the relay never sees (see wraith/deaddrop.py). The relay's
- * only jobs are to accept a PUT, return it once on GET, and forget it.
+ * ephemeral secret the relay never sees (see wraith/deaddrop.py).
  *
- *   PUT /s/<slot>   body = sealed blob (<= 1 MiB). Stored with a short TTL.
- *   GET /s/<slot>   returns the blob once (200), then deletes it. 404 otherwise.
+ *   PUT    /s/<slot>   store a sealed blob (<= 1 MiB). Idempotent: re-PUTting
+ *                      the identical bytes (a retry after a lost response)
+ *                      succeeds instead of colliding.
+ *   GET    /s/<slot>   return the blob once (200) and delete it in the SAME
+ *                      atomic step, then 404 forever.
+ *   DELETE /s/<slot>   burn the blob without reading it (204), so whoever holds
+ *                      the secret can revoke a drop they mis-sent or whose code
+ *                      leaked. Grants no new power — a GET already destroys it.
  *
  * Everything else — wrong method, bad slot, missing blob — returns an identical
  * 404 with no body, so the relay leaks nothing about what exists.
+ *
+ * Each slot maps to its own Durable Object, whose storage operations are
+ * serialized per object. That makes read-and-delete ATOMIC: two racing pickups
+ * of a leaked code cannot both read the blob (Cloudflare KV could not guarantee
+ * this). The DO is SQLite-backed, so it runs on the Workers Free plan. A TTL
+ * alarm wipes an unclaimed drop after ~10 minutes.
  *
  * Security lives at the two ends, not here. A compromised relay can delay or
  * drop a transfer; it cannot read, forge, or replay one. Slots are 128-bit and
@@ -19,20 +30,76 @@
  *
  * Abuse control: a per-IP rate limit (Cloudflare's native Rate Limiting binding,
  * DROP_LIMITER in wrangler.toml) caps how fast one address can hit the relay, so
- * nobody can flood random-slot PUTs to burn KV storage or request quota. Over
- * the limit returns 429 (it reveals nothing about which slots exist).
+ * nobody can flood random-slot PUTs to burn storage or request quota. Over the
+ * limit returns 429 (it reveals nothing about which slots exist).
  *
- * Deploy:  wrangler deploy   (needs a KV namespace bound as DROPS and the
- *          DROP_LIMITER rate-limit binding — see wrangler.toml). Use a throwaway
- *          Cloudflare account if you also want to hide ownership from Cloudflare.
+ * Deploy:  wrangler deploy   (needs the DROPBOX Durable Object + DROP_LIMITER
+ *          rate-limit bindings — see wrangler.toml; no KV namespace required).
  */
 
 const SLOT_RE = /^[0-9a-f]{32}$/; // exactly the hex slot deaddrop.derive() mints
 const MAX_BYTES = 1024 * 1024; // 1 MiB cap — a padded jar is far smaller
-const TTL_SECONDS = 600; // a drop lives at most 10 minutes
+const TTL_MS = 600_000; // a drop lives at most 10 minutes
 
 const NOT_FOUND = () => new Response(null, { status: 404 });
+const NO_CONTENT = () => new Response(null, { status: 204 });
 const TOO_MANY = () => new Response(null, { status: 429 });
+
+function bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+/** One slot's atomic mailbox. Storage ops are serialized within the object. */
+export class DropBox {
+  constructor(state) {
+    this.state = state;
+  }
+
+  async fetch(request) {
+    const method = request.method;
+
+    if (method === "PUT") {
+      const body = new Uint8Array(await request.arrayBuffer());
+      if (body.byteLength === 0 || body.byteLength > MAX_BYTES) return NOT_FOUND();
+      const existing = await this.state.storage.get("blob");
+      if (existing) {
+        // A retry after a lost 204 re-sends the identical bytes: accept it
+        // (idempotent). A genuinely different body is a slot collision -> 404.
+        return bytesEqual(existing, body) ? NO_CONTENT() : NOT_FOUND();
+      }
+      await this.state.storage.put("blob", body);
+      await this.state.storage.setAlarm(Date.now() + TTL_MS);
+      return NO_CONTENT();
+    }
+
+    if (method === "GET") {
+      const blob = await this.state.storage.get("blob");
+      if (!blob) return NOT_FOUND();
+      // Atomic single pickup: delete before returning, in the same object turn.
+      await this.state.storage.delete("blob");
+      return new Response(blob, {
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+      });
+    }
+
+    if (method === "DELETE") {
+      const blob = await this.state.storage.get("blob");
+      await this.state.storage.delete("blob");
+      return blob ? NO_CONTENT() : NOT_FOUND();
+    }
+
+    return NOT_FOUND();
+  }
+
+  /** TTL expiry: wipe an unclaimed drop. */
+  async alarm() {
+    await this.state.storage.deleteAll();
+  }
+}
 
 export default {
   async fetch(request, env) {
@@ -51,27 +118,8 @@ export default {
       if (!success) return TOO_MANY();
     }
 
-    if (request.method === "PUT") {
-      const body = new Uint8Array(await request.arrayBuffer());
-      if (body.byteLength === 0 || body.byteLength > MAX_BYTES) return NOT_FOUND();
-      // Never overwrite a live slot: first writer wins for the TTL window.
-      const existing = await env.DROPS.get(slot, { type: "arrayBuffer" });
-      if (existing) return NOT_FOUND();
-      await env.DROPS.put(slot, body, { expirationTtl: TTL_SECONDS });
-      return new Response(null, { status: 204 });
-    }
-
-    if (request.method === "GET") {
-      const blob = await env.DROPS.get(slot, { type: "arrayBuffer" });
-      if (!blob) return NOT_FOUND();
-      // Single pickup: delete before returning so a leaked slot is spent once.
-      await env.DROPS.delete(slot);
-      return new Response(blob, {
-        status: 200,
-        headers: { "content-type": "application/octet-stream" },
-      });
-    }
-
-    return NOT_FOUND();
+    // Route to the slot's own Durable Object for an atomic mailbox.
+    const id = env.DROPBOX.idFromName(slot);
+    return env.DROPBOX.get(id).fetch(request);
   },
 };

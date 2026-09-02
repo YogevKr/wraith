@@ -42,6 +42,7 @@ from typing import Any
 from .identity import ChromeEncryptionError, Cookie, _domain_matches
 
 __all__ = [
+    "AppBoundCookieError",
     "ChromeCookieError",
     "decrypt_chrome_value",
     "extract_chrome_cookies",
@@ -54,6 +55,16 @@ class ChromeCookieError(ChromeEncryptionError):
 
     Subclasses :class:`~wraith.identity.ChromeEncryptionError` so callers that
     already catch the base "this store is encrypted" error keep working.
+    """
+
+
+class AppBoundCookieError(ChromeCookieError):
+    """A cookie uses app-bound ('v20') encryption, unreadable from user space.
+
+    Raised for the Chrome 127+ (Windows) app-bound cipher. Carrying its own type
+    lets the extractor tell "this store needs `--from login`" apart from a merely
+    corrupt cookie, so it can surface the right guidance instead of a misleading
+    empty result.
     """
 
 
@@ -247,7 +258,7 @@ def decrypt_chrome_value(
     prefix = encrypted_value[:3]
 
     if prefix == b"v20":
-        raise ChromeCookieError(
+        raise AppBoundCookieError(
             "App-bound ('v20') cookie encryption (Chrome 127+ on Windows) cannot "
             "be read from a user process — it needs SYSTEM. Use `--from login` to "
             "capture the session with a manual sign-in instead."
@@ -332,18 +343,26 @@ def extract_chrome_cookies(
     """
     profile_path = Path(profile_path)
     if profile_path.is_dir():
-        db_path = profile_path / "Cookies"
+        profile_dir = profile_path
+        db_path = profile_dir / "Cookies"
         if not db_path.is_file():
-            db_path = profile_path / "Network" / "Cookies"  # Chrome 96+ layout
+            db_path = profile_dir / "Network" / "Cookies"  # Chrome 96+ layout
         if not db_path.is_file():
             raise FileNotFoundError(f"No Cookies DB under {profile_path}")
     elif profile_path.is_file():
         db_path = profile_path
+        # The profile dir is the DB's parent, except under the Chrome 96+
+        # ``…/<Profile>/Network/Cookies`` layout, where it is the grandparent.
+        # get_chrome_key derives Local State from the profile dir's parent, so
+        # this must be the real profile dir (…/User Data/Default), not Network/.
+        profile_dir = (
+            db_path.parent.parent if db_path.parent.name == "Network" else db_path.parent
+        )
     else:
         raise FileNotFoundError(f"Profile path does not exist: {profile_path}")
 
     label = browser or _browser_name_from_path(profile_path)
-    key = get_chrome_key(db_path.parent, label)
+    key = get_chrome_key(profile_dir, label)
 
     tmp_dir, tmp_db = _copy_db_to_temp(db_path)
     try:
@@ -360,6 +379,7 @@ def extract_chrome_cookies(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     cookies: list[Cookie] = []
+    app_bound_skipped = 0
     for r in rows:
         host = r["host_key"] or ""
         if not _domain_matches(host, domain_filter):
@@ -371,8 +391,13 @@ def extract_chrome_cookies(
                 host,
                 plaintext_value=r["value"] or "",
             )
+        except AppBoundCookieError:
+            # App-bound ('v20') values are unreadable from user space; remember
+            # we hit one so we can surface the right guidance below.
+            app_bound_skipped += 1
+            continue
         except ChromeCookieError:
-            # One app-bound / unreadable value must not sink the whole export.
+            # A single genuinely-corrupt value must not sink the whole export.
             continue
         cookies.append(
             Cookie(
@@ -386,5 +411,14 @@ def extract_chrome_cookies(
                 expires=_chrome_expiry_seconds(r["expires_utc"]),
                 source=str(db_path),
             )
+        )
+
+    # An all-app-bound store would otherwise return [] and read as "not signed
+    # in". Surface the real cause and the fix instead of a misleading empty set.
+    if not cookies and app_bound_skipped:
+        raise AppBoundCookieError(
+            f"All {app_bound_skipped} matching cookie(s) use app-bound ('v20') "
+            "encryption (Chrome 127+ on Windows), unreadable from a user process. "
+            "Use `--from login` to capture the session with a manual sign-in."
         )
     return cookies

@@ -296,7 +296,9 @@ uv run wraith launch https://example.com --headless --no-wait
 
 # profile — sync a local login to a remote Wraith over an encrypted dead-drop
 uv run wraith profile sync --relay https://<name>.workers.dev --from chrome --domain elal.com
-uv run wraith profile receive <pairing-code> --open https://www.elal.com/   # remote side
+uv run wraith profile receive <pairing-code> --open https://www.elal.com/   # remote: inject + browse
+uv run wraith profile receive <pairing-code> --out session.json             # remote: save the jar
+uv run wraith profile revoke  <pairing-code>                                # burn a mis-sent drop
 
 # mcp     — run the MCP server over stdio (see below)
 uv run wraith mcp
@@ -328,8 +330,12 @@ LAPTOP                                   RELAY (Cloudflare Worker)        REMOTE
   sign in by hand — works on any OS, needs no keychain).
 - **Transport**: one ephemeral secret per transfer derives an unguessable relay
   slot and a `ChaCha20-Poly1305` key; the blob is size-padded and freshness-gated.
-  Move the pairing code out of band (ssh, password manager, QR). It self-destructs
-  after one pickup. Deploy the relay from [`deploy/`](deploy/) (`wrangler deploy`).
+  Move the pairing code out of band (ssh, password manager, QR). The relay is a
+  SQLite-backed Durable Object (atomic single pickup, Free-plan) deployed from
+  [`deploy/`](deploy/) with `wrangler deploy` — no KV namespace.
+- **Revoke**: holding the secret also lets you burn a drop —
+  `wraith profile revoke <code>` deletes it at the relay if you mis-sent it or
+  the code leaked.
 - **Over Tailscale instead?** Skip the relay: `ssh <host> wraith profile receive <code>`.
 
 A cookie jar is the session past 2FA — keep syncs domain-scoped, and see

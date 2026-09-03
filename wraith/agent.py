@@ -58,7 +58,7 @@ from typing import Any, Optional
 from . import engine as _engine
 from .snapshot import Snapshot, take_snapshot
 
-__all__ = ["AgentBrowser", "agent_browser"]
+__all__ = ["AgentBrowser", "agent_browser", "ClearFailedError"]
 
 
 # Buttons we click to dismiss cookie / consent / "I understand" interstitials.
@@ -79,6 +79,18 @@ _CONSENT_SELECTORS = (
     "[data-testid='cookie-accept']",
     "[data-cookiebanner='accept_button']",
 )
+
+
+class ClearFailedError(RuntimeError):
+    """:meth:`AgentBrowser.type` could not verify a field was actually cleared.
+
+    Raised instead of silently typing on top of unknown existing content. See
+    :meth:`AgentBrowser.type` for the full explanation: some editors (notably
+    CodeMirror, whose visible content lives in a JS-owned document model
+    behind a hidden ``<textarea>``) let ``locator.fill("")`` complete with no
+    exception while leaving the real document untouched, so "no exception" is
+    not sufficient signal that a field is actually empty.
+    """
 
 
 class AgentBrowser:
@@ -392,23 +404,54 @@ class AgentBrowser:
         when available, falling back to ``locator.fill``. Optionally clears the
         field first and/or presses Enter afterward.
 
+        Clearing (``clear=True``, the default) is **verified, not assumed**.
+        ``locator.fill("")`` is tried first — fast, and correct for ordinary
+        ``<input>``/``<textarea>`` fields — then the field's value is read back
+        to confirm it actually emptied. This matters because some editors keep
+        their real document in a JS-owned model that is decoupled from the
+        interacted DOM node's raw value (CodeMirror's classic "hidden textarea"
+        input-capture pattern is the concrete case this was found against;
+        Monaco and other virtualized editors are architecturally similar):
+        ``fill("")`` sets the hidden node's DOM value and fires a generic
+        ``input`` event, but the editor doesn't treat that as "the user cleared
+        the document", so nothing raises and nothing actually clears. If the
+        read-back shows the field is still non-empty, we fall back to a
+        keyboard-driven clear — focus, then ``ControlOrMeta+a`` followed by
+        ``Backspace``/``Delete`` — whose genuine key events any editor's own
+        input handling processes correctly, the way a human clearing the field
+        would. We deliberately use ``locator.focus()`` + ``locator.press()``
+        here rather than ``locator.click()``: on a CodeMirror-style page the
+        rendered overlay can intercept pointer events at the element's
+        coordinates and make ``click()`` time out, while ``focus()``/``press()``
+        don't require that pointer hit-test. The field is verified empty again
+        after the fallback; if it *still* isn't, we raise
+        :class:`ClearFailedError` rather than silently typing on top of unknown
+        existing content — silently typing into a non-empty field is exactly
+        how a CodeMirror JSON editor can end up with new text prepended in
+        front of an untouched original document instead of replacing it.
+
         Args:
             index: The integer index from the current snapshot.
             text: The text to enter.
             clear: Clear any existing value before typing (default ``True``).
+                See above for the verified clear/fallback/raise behavior.
             enter: Press Enter after typing (default ``False``) — useful for
                 submitting search boxes.
 
         Returns:
             A fresh :class:`~wraith.snapshot.Snapshot` taken after the action
             settles.
+
+        Raises:
+            ClearFailedError: ``clear=True`` and the field could not be
+                verified empty after both the ``fill("")`` and keyboard-driven
+                clear attempts (or its content could not be read back at all).
         """
         pre = self._page_signature()
         locator = self._locator(index)
 
         if clear:
-            with contextlib.suppress(Exception):
-                locator.fill("")
+            self._clear_verified(locator)
 
         typed = False
         # Prefer human-paced typing for reputation-sensitive fields; degrade to
@@ -599,6 +642,75 @@ class AgentBrowser:
             if match is not None:
                 return self.page.locator(f'[data-wraith-index="{int(match.index)}"]')
         return loc  # let the caller's action raise a clear error if truly gone
+
+    def _read_field_value(self, locator: Any) -> Optional[str]:
+        """Best-effort read of ``locator``'s current text, for clear-verification.
+
+        ``input_value()`` is authoritative for ``<input>``/``<textarea>``/
+        ``<select>`` — including a hidden ``<textarea>`` a virtualized editor
+        like CodeMirror renders over, which is still a real textarea node — so
+        it's tried first. It raises on element kinds it doesn't apply to (e.g.
+        a ``contenteditable`` div), so we fall back to the rendered text.
+        Neither path requires the pointer-actionability checks ``click()``
+        does, so this is safe to call even when an overlay would make a click
+        time out.
+        """
+        with contextlib.suppress(Exception):
+            return locator.input_value()
+        with contextlib.suppress(Exception):
+            return locator.inner_text()
+        with contextlib.suppress(Exception):
+            return locator.text_content()
+        return None
+
+    def _is_effectively_empty(self, locator: Any) -> Optional[bool]:
+        """Whether ``locator`` currently reads as empty; ``None`` if unknown."""
+        value = self._read_field_value(locator)
+        if value is None:
+            return None
+        return value.strip() == ""
+
+    def _clear_verified(self, locator: Any) -> None:
+        """Clear ``locator``'s content and verify it actually emptied.
+
+        See :meth:`type` for the full rationale. Two attempts, each checked
+        against a read-back rather than trusting "no exception":
+
+        1. ``locator.fill("")`` — fast path, correct for plain form fields.
+        2. A keyboard-driven select-all + delete (``focus()`` then
+           ``ControlOrMeta+a``, ``Backspace``, ``Delete``) — real key events
+           that a JS-owned document model (CodeMirror and similar) processes
+           correctly. Uses ``focus()``, not ``click()``, since a virtualized
+           editor's overlay can intercept pointer events and make ``click()``
+           time out even though the underlying node is perfectly focusable.
+
+        Raises:
+            ClearFailedError: the field still reads non-empty (or unreadable)
+                after both attempts.
+        """
+        with contextlib.suppress(Exception):
+            locator.fill("")
+        if self._is_effectively_empty(locator):
+            return
+
+        with contextlib.suppress(Exception):
+            locator.focus()
+        with contextlib.suppress(Exception):
+            locator.press("ControlOrMeta+a")
+        with contextlib.suppress(Exception):
+            locator.press("Backspace")
+        with contextlib.suppress(Exception):
+            locator.press("Delete")
+
+        if self._is_effectively_empty(locator):
+            return
+
+        raise ClearFailedError(
+            "could not verify the field was cleared before typing — "
+            "fill('') and a keyboard select-all+delete both left it "
+            "non-empty (or its content could not be read back); refusing to "
+            "type on top of unknown existing content"
+        )
 
     def _ensure_high_score(self) -> Optional[Any]:
         """Best-effort reCAPTCHA-v3 score lift via the reputation source.

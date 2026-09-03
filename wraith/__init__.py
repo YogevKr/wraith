@@ -207,17 +207,32 @@ _reexport(
     [
         "ProxyPool",
         "normalize_proxy",
+        "to_playwright_proxy",
     ],
 )
 
-# Providers: first-class residential-proxy provider integrations (DataImpulse).
-# These build proxy URL strings / ProxyPools that feed engine.launch(proxy=...)
-# and clear_challenge(proxy_pool=...).
+# Credentials: value / command / env / *_CMD env / secrets-file resolution shared
+# by the proxy providers and the CAPTCHA solver adapters.
+_reexport(
+    "credentials",
+    [
+        "resolve_secret",
+        "run_secret_command",
+        "SecretCommandError",
+    ],
+)
+
+# Providers: first-class residential-proxy provider integrations (DataImpulse,
+# anyIP). These build proxy URL strings / ProxyPools that feed
+# engine.launch(proxy=...) and clear_challenge(proxy_pool=...).
 _reexport(
     "providers",
     [
+        "AnyIP",
+        "AnyIPAuthError",
         "DataImpulse",
         "DataImpulseAuthError",
+        "resolve_proxy_spec",
     ],
 )
 
@@ -248,6 +263,7 @@ _reexport(
     [
         "AgentBrowser",
         "agent_browser",
+        "ClearFailedError",
     ],
 )
 

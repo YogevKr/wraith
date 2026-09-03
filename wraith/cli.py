@@ -68,35 +68,57 @@ def _lazy(module: str):
 # proxy resolution
 # --------------------------------------------------------------------------
 
-# Special --proxy value that resolves to a live DataImpulse residential exit.
-_DATAIMPULSE_PROXY = "dataimpulse"
+_PROXY_ARG_NAMES = (
+    "proxy", "dataimpulse", "anyip", "proxy_country", "proxy_network",
+    "proxy_username_cmd", "proxy_password_cmd",
+)
+
+
+def _proxy_flags_given(args: argparse.Namespace) -> bool:
+    """True if the user passed any of the shared proxy flags."""
+    return any(getattr(args, name, None) for name in _PROXY_ARG_NAMES)
 
 
 def _resolve_proxy(args: argparse.Namespace) -> Optional[str]:
-    """Turn the ``--proxy`` / ``--dataimpulse`` flags into a proxy URL or None.
+    """Turn the ``--proxy`` / ``--dataimpulse`` / ``--anyip`` flags into a proxy URL.
 
-    A literal ``--proxy dataimpulse`` (or the ``--dataimpulse`` shortcut) builds
-    a rotating DataImpulse residential exit via :class:`wraith.providers.DataImpulse`,
-    honoring ``--proxy-country``. Any other ``--proxy`` value is passed through
-    verbatim. Credential errors surface as a clean CLI message + non-zero exit.
+    Thin CLI skin over :func:`wraith.providers.resolve_proxy_spec`: a literal
+    ``--proxy dataimpulse`` / ``--proxy anyip`` (or the ``--dataimpulse`` /
+    ``--anyip`` shortcuts) builds a **rotating** residential exit honoring
+    ``--proxy-country`` (both) and ``--proxy-network`` (anyIP only).
+    Credentials come from the provider's env vars / ``*_CMD`` commands /
+    ``~/.secrets``, or from ``--proxy-username-cmd`` / ``--proxy-password-cmd``
+    shell commands that print them. Any other ``--proxy`` value is passed
+    through verbatim. Credential / targeting errors surface as a clean CLI
+    message + non-zero exit.
     """
-    use_di = getattr(args, "dataimpulse", False)
-    raw = getattr(args, "proxy", None)
-    if not use_di and (raw is None or raw.strip().lower() != _DATAIMPULSE_PROXY):
-        return raw
-
     providers = _lazy("providers")
+    network = getattr(args, "proxy_network", None)
     country = getattr(args, "proxy_country", None)
     try:
-        di = providers.DataImpulse(country=country)
-        url = di.rotating(country=country)
-    except providers.DataImpulseAuthError as exc:
+        url, label = providers.resolve_proxy_spec(
+            getattr(args, "proxy", None),
+            dataimpulse=bool(getattr(args, "dataimpulse", False)),
+            anyip=bool(getattr(args, "anyip", False)),
+            country=country,
+            network=network,
+            username_cmd=getattr(args, "proxy_username_cmd", None),
+            password_cmd=getattr(args, "proxy_password_cmd", None),
+        )
+    except (
+        providers.DataImpulseAuthError,
+        providers.AnyIPAuthError,
+        providers.SecretCommandError,
+        ValueError,
+    ) as exc:
         raise SystemExit(f"wraith: {exc}")
-    print(
-        "wraith: using DataImpulse residential proxy"
-        + (f" (country={country})" if country else " (rotating)"),
-        file=sys.stderr,
-    )
+    if label is None:
+        return url
+    if label == "DataImpulse" and network:
+        print("wraith: --proxy-network is anyIP-only; ignored for DataImpulse", file=sys.stderr)
+    detail = [f"country={country}" if country else "", f"network={network}" if label == "anyIP" and network else ""]
+    detail_s = ", ".join(d for d in detail if d) or "rotating"
+    print(f"wraith: using {label} residential proxy ({detail_s})", file=sys.stderr)
     return url
 
 
@@ -466,8 +488,15 @@ def cmd_v3(args: argparse.Namespace) -> int:
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
-    """Run the Wraith MCP server (stdio transport) for agent integration."""
+    """Run the Wraith MCP server (stdio transport) for agent integration.
+
+    The shared proxy flags configure the server's browser launch; when none is
+    given the server falls back to ``WRAITH_PROXY`` / ``WRAITH_PROXY_COUNTRY``
+    / ``WRAITH_PROXY_NETWORK`` from the environment (see ``wraith.mcp``).
+    """
     mcp = _lazy("mcp")
+    if _proxy_flags_given(args):
+        mcp.configure(proxy=_resolve_proxy(args))
     print("wraith: starting MCP server (stdio)", file=sys.stderr)
     mcp.main()
     return 0
@@ -590,31 +619,59 @@ def _add_engine_flags(p: argparse.ArgumentParser) -> None:
 
 
 def _add_proxy_flags(p: argparse.ArgumentParser) -> None:
-    """Add the shared ``--proxy`` / ``--dataimpulse`` / ``--proxy-country`` flags.
+    """Add the shared ``--proxy`` / provider shortcut / targeting flags.
 
-    ``--proxy`` accepts any proxy URL, plus the special literal value
-    ``dataimpulse`` (equivalent to the ``--dataimpulse`` shortcut) that builds a
-    rotating DataImpulse residential exit, steered by ``--proxy-country``.
+    ``--proxy`` accepts any proxy URL, plus the special literals ``dataimpulse``
+    and ``anyip`` (equivalent to the ``--dataimpulse`` / ``--anyip`` shortcuts)
+    that build a rotating residential exit, steered by ``--proxy-country`` and
+    (anyIP only) ``--proxy-network``.
     """
     p.add_argument(
         "--proxy",
         default=None,
-        metavar="URL|dataimpulse",
-        help="proxy server URL, or the literal 'dataimpulse' for a rotating "
-        "DataImpulse residential exit (see --proxy-country)",
+        metavar="URL|dataimpulse|anyip",
+        help="proxy server URL, or the literal 'dataimpulse' / 'anyip' for a "
+        "rotating residential exit from that provider (see --proxy-country)",
     )
     p.add_argument(
         "--dataimpulse",
         action="store_true",
         help="use a rotating DataImpulse residential proxy "
-        "(creds from DATAIMPULSE_USERNAME/PASSWORD env or ~/.secrets); "
-        "shorthand for --proxy dataimpulse",
+        "(creds: DATAIMPULSE_USERNAME/PASSWORD env, their *_CMD command "
+        "variants, ~/.secrets, or --proxy-*-cmd); shorthand for --proxy dataimpulse",
+    )
+    p.add_argument(
+        "--anyip",
+        action="store_true",
+        help="use a rotating anyIP residential/mobile proxy "
+        "(creds: ANYIP_USERNAME/PASSWORD env, their *_CMD command variants, "
+        "~/.secrets, or --proxy-*-cmd); shorthand for --proxy anyip",
+    )
+    p.add_argument(
+        "--proxy-username-cmd",
+        default=None,
+        metavar="CMD",
+        help="shell command whose stdout is the provider username "
+        "(e.g. 'op read op://vault/anyip/username'); beats the environment",
+    )
+    p.add_argument(
+        "--proxy-password-cmd",
+        default=None,
+        metavar="CMD",
+        help="shell command whose stdout is the provider password "
+        "(e.g. 'op read op://vault/anyip/credential'); beats the environment",
     )
     p.add_argument(
         "--proxy-country",
         default=None,
         metavar="CC",
-        help="country code for the DataImpulse exit (lowercase ISO, e.g. 'il')",
+        help="ISO country code for the provider exit (e.g. 'il'; any case)",
+    )
+    p.add_argument(
+        "--proxy-network",
+        default=None,
+        choices=("residential", "mobile"),
+        help="anyIP only: pin the network type (default: anyIP's mixed pool)",
     )
 
 
@@ -967,8 +1024,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the MCP server (stdio) exposing the agent over tools",
         description="Start the Wraith MCP server over stdio. Wire it into an "
         "MCP client, e.g. `claude mcp add wraith -- uv run --directory "
-        "/path/to/wraith wraith mcp`.",
+        "/path/to/wraith wraith mcp`. Proxy flags (or WRAITH_PROXY / "
+        "WRAITH_PROXY_COUNTRY / WRAITH_PROXY_NETWORK env) apply to the "
+        "server's browser.",
     )
+    _add_proxy_flags(p_mcp)
     p_mcp.set_defaults(func=cmd_mcp)
 
     # profile (sync / receive)

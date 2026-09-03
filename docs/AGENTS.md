@@ -281,7 +281,7 @@ The simplest path — register the stdio server with the `claude mcp add` CLI:
 
 ```bash
 # from the wraith repo (so `uv run` resolves the right env):
-claude mcp add wraith -- uv run --directory /Users/yogev/wraith wraith mcp
+claude mcp add wraith -- uv run --directory /path/to/wraith wraith mcp
 ```
 
 Then `claude mcp list` should show `wraith`, and inside a Claude Code session
@@ -307,7 +307,7 @@ Edit the desktop config — on macOS it lives at
   "mcpServers": {
     "wraith": {
       "command": "uv",
-      "args": ["run", "--directory", "/Users/yogev/wraith", "wraith", "mcp"]
+      "args": ["run", "--directory", "/path/to/wraith", "wraith", "mcp"]
     }
   }
 }
@@ -322,6 +322,34 @@ script in your environment and drop the `uv run --directory` args.)
 > consent banners), then perceive/act with `snapshot` + `click`/`type_text`.
 > Use `borrow(domain, profile)` *before* navigating into an authenticated area
 > to inject a warmed identity.
+
+### Routing the MCP browser through a residential proxy
+
+The server's browser takes the same proxy configuration as the CLI. Either
+pass the shared flags to `wraith mcp`, or set environment variables on the
+server entry (flags win; a `WRAITH_PROXY` failure is logged to stderr and the
+browser starts *without* a proxy rather than never starting):
+
+```bash
+# flags on the server command
+claude mcp add wraith -- uv run --directory /path/to/wraith wraith mcp --dataimpulse --proxy-country il
+
+# or env on the server entry (`-e` for claude mcp add; "env" in claude_desktop_config.json)
+claude mcp add wraith -e WRAITH_PROXY=anyip -e WRAITH_PROXY_COUNTRY=us -e WRAITH_PROXY_NETWORK=mobile \
+  -- uv run --directory /path/to/wraith wraith mcp
+```
+
+| variable | value |
+|---|---|
+| `WRAITH_PROXY` | a proxy URL, or the literal `dataimpulse` / `anyip` |
+| `WRAITH_PROXY_COUNTRY` | ISO country code for the provider exit (any case) |
+| `WRAITH_PROXY_NETWORK` | anyIP only: `residential` or `mobile` |
+
+Provider credentials resolve as everywhere else — `DATAIMPULSE_*` / `ANYIP_*`
+env, their `*_CMD` command variants, or `~/.secrets` (see
+[`PLAYBOOK.md` → Secrets from a command](PLAYBOOK.md#secrets-from-a-command)).
+Wrapping the server command in your secret manager (for example
+`op run -- uv run … wraith mcp`) injects the provider env for that one process.
 
 ---
 
@@ -376,7 +404,9 @@ So Wraith doesn't ship one. What it ships (`wraith.recaptcha`):
   so you can read what reputation the current identity actually carries (low =
   switch to identity borrowing; see §5).
 - **`SolverService` / `CapSolver` / `TwoCaptcha`** — bring-your-own-key
-  skeletons for third-party solving services. Be clear-eyed: these are **cold
+  skeletons for third-party solving services (key via `api_key=`,
+  `api_key_cmd=`, or `CAPSOLVER_API_KEY` / `TWOCAPTCHA_API_KEY` and their
+  `_CMD` command variants — see `wraith.credentials`). Be clear-eyed: these are **cold
   farms** and typically mint ~0.10-score tokens — they do **not** make a bot
   look warmed, and using them may cross a site's terms of service. They exist
   for completeness; the real answer for v3 is **harvest from a warmed/borrowed

@@ -57,6 +57,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from .credentials import resolve_secret
+
 __all__ = [
     "harvest_token",
     "inject_token",
@@ -314,12 +316,39 @@ class SolverService(abc.ABC):
 
     All implementations are bring-your-own-key and subject to the ToS caveats in
     the module docstring.
+
+    **Key resolution** (see :mod:`wraith.credentials`): an explicit ``api_key``
+    wins; otherwise ``api_key_cmd`` (a shell command that prints the key),
+    then the environment variable named by the subclass's ``ENV_API_KEY``
+    (``CAPSOLVER_API_KEY`` / ``TWOCAPTCHA_API_KEY``), then its ``_CMD``
+    variant, then ``~/.secrets``. ``ValueError`` if nothing yields a key.
     """
 
-    def __init__(self, api_key: str, *, timeout: float = 120.0) -> None:
-        if not api_key:
-            raise ValueError("api_key is required")
-        self.api_key = api_key
+    #: Env var consulted when no ``api_key`` is passed (``None`` = no env fallback).
+    ENV_API_KEY: Optional[str] = None
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        *,
+        api_key_cmd: Optional[str] = None,
+        timeout: float = 120.0,
+    ) -> None:
+        key = api_key or None
+        if key is None and (api_key_cmd or self.ENV_API_KEY):
+            key = resolve_secret(
+                self.ENV_API_KEY or f"{type(self).__name__.upper()}_API_KEY",
+                command=api_key_cmd,
+            )
+        if not key:
+            hint = (
+                f" (pass api_key=, api_key_cmd=, or set {self.ENV_API_KEY} / "
+                f"{self.ENV_API_KEY}_CMD)"
+                if self.ENV_API_KEY
+                else ""
+            )
+            raise ValueError("api_key is required" + hint)
+        self.api_key = key
         self.timeout = timeout
 
     @abc.abstractmethod
@@ -409,6 +438,7 @@ class CapSolver(SolverService):
     """
 
     BASE_URL = "https://api.capsolver.com"
+    ENV_API_KEY = "CAPSOLVER_API_KEY"
 
     # challenge kind -> (CapSolver task type, solution field holding the token)
     _TASK_TYPES = {
@@ -511,6 +541,7 @@ class TwoCaptcha(SolverService):
     """
 
     BASE_URL = "https://api.2captcha.com"
+    ENV_API_KEY = "TWOCAPTCHA_API_KEY"
 
     # challenge kind -> (2Captcha task type, solution field holding the token)
     _TASK_TYPES = {

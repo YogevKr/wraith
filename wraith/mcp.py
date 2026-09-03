@@ -29,6 +29,8 @@ Run it
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
@@ -85,6 +87,67 @@ app = _MCPServer(
 _EXEC = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wraith-browser")
 _browser: "Optional[AgentBrowser]" = None
 
+# --------------------------------------------------------------------------- #
+# Launch configuration (proxy etc.)
+# --------------------------------------------------------------------------- #
+# Extra kwargs for AgentBrowser(...) -> engine.launch(...). Set explicitly via
+# configure() (the CLI does this from its --proxy/--dataimpulse/--anyip flags);
+# otherwise derived lazily from the environment on first browser launch.
+_LAUNCH_KW: "Optional[dict[str, Any]]" = None
+
+#: Environment knobs honoured when configure() was not called.
+ENV_PROXY = "WRAITH_PROXY"               # URL, or literal "dataimpulse" / "anyip"
+ENV_PROXY_COUNTRY = "WRAITH_PROXY_COUNTRY"
+ENV_PROXY_NETWORK = "WRAITH_PROXY_NETWORK"  # anyIP only: residential | mobile
+
+
+def configure(**launch_kw: Any) -> None:
+    """Set the launch kwargs for the server's browser (e.g. ``proxy=url``).
+
+    Call before the first tool invocation. Keys with a ``None`` value are
+    dropped so ``configure(proxy=None)`` means "no proxy", not "pass None".
+    Replaces any earlier configuration and the env-derived defaults.
+    """
+    global _LAUNCH_KW
+    _LAUNCH_KW = {k: v for k, v in launch_kw.items() if v is not None}
+
+
+def _launch_kw_from_env() -> "dict[str, Any]":
+    """Derive launch kwargs from ``WRAITH_PROXY*`` env vars (see module docs).
+
+    ``WRAITH_PROXY`` may be a proxy URL or the literal ``dataimpulse`` /
+    ``anyip`` — the same spec the CLI's ``--proxy`` takes — steered by
+    ``WRAITH_PROXY_COUNTRY`` and (anyIP) ``WRAITH_PROXY_NETWORK``. Provider
+    credentials resolve as usual (``DATAIMPULSE_*`` / ``ANYIP_*`` env, their
+    ``*_CMD`` command variants, ``~/.secrets``). A resolution failure is
+    reported on stderr and the browser launches **without** a proxy rather
+    than never starting — the MCP client would otherwise see only a dead
+    server.
+    """
+    spec = os.environ.get(ENV_PROXY)
+    if not spec or not spec.strip():
+        return {}
+    from . import providers  # lazy: keeps `import wraith.mcp` light
+
+    try:
+        url, label = providers.resolve_proxy_spec(
+            spec,
+            country=os.environ.get(ENV_PROXY_COUNTRY) or None,
+            network=os.environ.get(ENV_PROXY_NETWORK) or None,
+        )
+    except Exception as exc:  # auth / secret-command / targeting errors
+        print(f"wraith-mcp: {ENV_PROXY} ignored ({exc}); launching without a proxy", file=sys.stderr)
+        return {}
+    if url is None:
+        return {}
+    print(f"wraith-mcp: using {label or 'explicit'} proxy for the browser", file=sys.stderr)
+    return {"proxy": url}
+
+
+def _effective_launch_kw() -> "dict[str, Any]":
+    """The kwargs the next browser launch will use (configure() wins over env)."""
+    return dict(_LAUNCH_KW) if _LAUNCH_KW is not None else _launch_kw_from_env()
+
 
 async def _run(fn: "Callable[[], T]") -> T:
     """Dispatch ``fn`` to the dedicated browser worker thread and await it."""
@@ -118,7 +181,7 @@ def _get_browser(reputation: Optional[Any] = None) -> "AgentBrowser":
     if _browser is None:
         from .agent import AgentBrowser  # lazy: needs the browser stack
 
-        _browser = AgentBrowser(reputation=reputation)
+        _browser = AgentBrowser(reputation=reputation, **_effective_launch_kw())
     return _browser
 
 

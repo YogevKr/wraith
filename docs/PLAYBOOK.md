@@ -185,8 +185,11 @@ gateway and steer the exit IP entirely through the *username*.
 — a `DataImpulseAuthError` is raised lazily only when you actually request a URL:
 
 1. explicit `DataImpulse(username=..., password=...)`;
-2. env `DATAIMPULSE_USERNAME` / `DATAIMPULSE_PASSWORD`;
-3. `~/.secrets` (`KEY=value` lines, tolerates `export ` + quotes).
+2. `username_cmd=` / `password_cmd=` shell commands that print the value;
+3. env `DATAIMPULSE_USERNAME` / `DATAIMPULSE_PASSWORD`;
+4. env `DATAIMPULSE_USERNAME_CMD` / `DATAIMPULSE_PASSWORD_CMD` (commands);
+5. `~/.secrets` (`KEY=value` or `KEY_CMD=command` lines, tolerates `export ` +
+   quotes). See [Secrets from a command](#secrets-from-a-command) below.
 
 **Rotating vs. sticky.** A *base* username (no `sessid`) rotates the exit IP on
 **every request**; add a `sessid` and the IP is **sticky** (~30 min, same IP):
@@ -232,6 +235,110 @@ lifetime — prefer it over rotating when you need a consistent identity across
 several navigations. From the CLI, `--proxy dataimpulse` (or `--dataimpulse`)
 with `--proxy-country il` builds a rotating IL exit for `launch`/`borrow`/
 `harvest`/`agent`.
+
+### anyIP residential + mobile proxies
+
+`wraith.providers.AnyIP` is the same shape for [anyIP](https://anyip.io): one
+gateway (`portal.anyip.io:1080`; HTTP, HTTPS and SOCKS5 share the port), and
+every targeting/session knob is a `,`-separated flag appended to the username.
+Its distinguishing feature for layer 3 is **mobile** exits (`type_mobile`,
+4G/5G carrier IPs) — the highest-reputation pool anyIP has, at the cost of
+latency.
+
+**Credentials** resolve like DataImpulse and never raise at construction —
+`AnyIPAuthError` is lazy:
+
+1. explicit `AnyIP(username=..., password=...)` (`"ab12"` or `"user_ab12"`;
+   **not** the flagged line the dashboard offers to copy — pass targeting as
+   arguments instead);
+2. `username_cmd=` / `password_cmd=` shell commands that print the value;
+3. env `ANYIP_USERNAME` / `ANYIP_PASSWORD`;
+4. env `ANYIP_USERNAME_CMD` / `ANYIP_PASSWORD_CMD` (commands);
+5. `~/.secrets` (`KEY=value` or `KEY_CMD=command` lines). See
+   [Secrets from a command](#secrets-from-a-command) below.
+
+**Rotating vs. sticky.** No `session_` flag → **new IP on every request**; add
+one and the IP is sticky for up to `sesstime_` minutes (default up to 7 days):
+
+```python
+from wraith.providers import AnyIP
+
+ai = AnyIP(country="il", network="mobile")        # creds from env / ~/.secrets
+ai.rotating()                                     # new IL mobile IP per request
+# -> http://user_<id>,type_mobile,country_IL:<pw>@portal.anyip.io:1080
+ai.sticky("profile01", minutes=30)                # one pinned IP for 30 min
+# -> http://user_<id>,type_mobile,country_IL,session_profile01,sesstime_30:<pw>@portal.anyip.io:1080
+ai.sticky("bank", replace=False, same_asn=True)   # sessreplace_false,sessasn_strict
+AnyIP(country="us", region="texas", city="dallas").rotating()   # city pin
+AnyIP(pool_name="europe", protocol="socks5").rotating()         # regional pool, SOCKS5
+```
+
+Flags are emitted in a stable order: `type_`, `country_` (uppercase ISO),
+`region_` / `city_` (lowercase slugs; **city needs region needs country** —
+validated locally so you get a `ValueError` instead of a 407
+`city_region_is_missing`), `asn_`, `pool_`, then the session flags.
+
+**`.pool()` with `clear_challenge`.** `ai.pool(n)` mints `n` distinct sticky
+sessions (`wraith0`..`wraith<n-1>`), optionally time-boxed with `minutes=`:
+
+```python
+from wraith.engine import clear_challenge
+from wraith.providers import AnyIP
+
+sess = clear_challenge(
+    "https://target.example/gated",
+    proxy_pool=AnyIP(country="il").pool(5, network="mobile", minutes=30),
+    geoip=True,
+)
+```
+
+From the CLI, `--proxy anyip` (or `--anyip`) with `--proxy-country il` and
+optionally `--proxy-network mobile` builds a rotating exit for
+`launch`/`borrow`/`harvest`/`agent`/`fetch`/`selftest`/`mcp`. The MCP server
+also reads `WRAITH_PROXY` / `WRAITH_PROXY_COUNTRY` / `WRAITH_PROXY_NETWORK`
+when no flag is given (see [`AGENTS.md`](AGENTS.md#routing-the-mcp-browser-through-a-residential-proxy)).
+
+### Secrets from a command
+
+Every secret Wraith reads — `DATAIMPULSE_*`, `ANYIP_*`, and the solver keys
+`CAPSOLVER_API_KEY` / `TWOCAPTCHA_API_KEY` — can come from a **command**
+instead of an exported value or a plaintext file (`wraith.credentials`). For a
+secret `NAME`, first non-empty tier wins:
+
+| tier | where | example |
+|---|---|---|
+| 1 | explicit value | `AnyIP(password="...")` |
+| 2 | explicit command | `AnyIP(password_cmd="op read op://vault/anyip/credential")`, `CapSolver(api_key_cmd="op read op://vault/capsolver/credential")` |
+| 3 | env `NAME` | `ANYIP_PASSWORD=...` (e.g. injected per-invocation by your secret manager) |
+| 4 | env `NAME_CMD` | `ANYIP_PASSWORD_CMD="op read op://vault/anyip/credential"` |
+| 5 | `~/.secrets` `NAME=` | plaintext — avoid |
+| 6 | `~/.secrets` `NAME_CMD=` | `ANYIP_PASSWORD_CMD=op read op://vault/anyip/credential` — a file of *references*, no values |
+
+Commands run via the shell with stdin closed and a 30 s timeout; only trailing
+newlines are stripped from stdout. A failing / empty / hung command raises
+`SecretCommandError` (naming the command, never its output) instead of
+silently falling through to a lower tier. From the CLI, `--proxy-username-cmd`
+/ `--proxy-password-cmd` are tier 2 for the selected provider:
+
+```bash
+# per-invocation env injection from a secret manager (tier 3):
+ANYIP_USERNAME="$(op read op://vault/anyip/username)" \
+ANYIP_PASSWORD="$(op read op://vault/anyip/credential)" \
+  wraith launch https://target.example --anyip --proxy-country il
+
+# or name the commands, no export anywhere (tier 2 / 4):
+wraith fetch https://ip-api.com/json --anyip \
+  --proxy-username-cmd 'op read op://vault/anyip/username' \
+  --proxy-password-cmd 'op read op://vault/anyip/credential'
+export ANYIP_PASSWORD_CMD='op read op://vault/anyip/credential'   # a reference, not a secret
+```
+
+**Strings in, dict out.** Both providers (and `ProxyPool`) trade in proxy URL
+*strings* — the form httpx / curl_cffi take directly. Camoufox and Playwright
+instead want a `{"server", "username", "password"}` dict, so `engine.launch`
+converts every `proxy=` kwarg via `wraith.proxy.to_playwright_proxy()`; you can
+keep passing strings everywhere. (Provider flag blocks with `,` / `;` / `__` in
+the username survive the conversion untouched.)
 
 ---
 

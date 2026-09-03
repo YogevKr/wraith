@@ -59,6 +59,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
+from .proxy import to_playwright_proxy
+
 # Public engine identifiers.
 Engine = Literal["auto", "camoufox", "chromium"]
 
@@ -554,7 +556,12 @@ def launch(
         **kw: Extra options forwarded to the underlying engine (e.g. ``proxy``,
             ``block_images``, ``window``/``viewport``, ``fingerprint``,
             ``user_agent``, ``channel``). Engine-appropriate keys are routed
-            automatically.
+            automatically. ``proxy`` may be a URL string
+            (``"http://user:pass@host:port"`` — what :class:`wraith.proxy.ProxyPool`
+            and the ``wraith.providers`` classes emit) or an already
+            Playwright-shaped ``{"server", "username", "password"}`` dict; a
+            string is converted via :func:`wraith.proxy.to_playwright_proxy`
+            because Camoufox/Playwright only accept the dict form.
 
     Returns:
         A :class:`Session` with ``.page`` / ``.context`` ready to drive.
@@ -566,6 +573,12 @@ def launch(
         WraithEngineError: other launch failures.
         ValueError: unknown ``engine`` value.
     """
+    # Bridge the string proxy currency (providers / ProxyPool / clear_challenge
+    # rotation) to the ProxySettings dict both engines require. Done once here
+    # so every engine path below sees the same shape.
+    if "proxy" in kw:
+        kw["proxy"] = to_playwright_proxy(kw["proxy"])
+
     if engine == "camoufox":
         return _launch_camoufox(
             headless=headless,

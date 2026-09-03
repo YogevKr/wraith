@@ -220,3 +220,50 @@ def test_cooldown_override_and_normalized_match():
     assert pool.state("a:1") == "cooldown"
     t["v"] = 5.0
     assert pool.state("a:1") == "live"
+
+
+# --------------------------------------------------------------------------- #
+# to_playwright_proxy — the string -> ProxySettings dict bridge
+# --------------------------------------------------------------------------- #
+
+from wraith.proxy import to_playwright_proxy  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("http://u:p@h:1", {"server": "http://h:1", "username": "u", "password": "p"}),
+        ("h:1", {"server": "http://h:1"}),
+        ("socks5://h:1080", {"server": "socks5://h:1080"}),
+        ("http://u@h:1", {"server": "http://h:1", "username": "u"}),
+        # percent-encoded userinfo is decoded for the dict form
+        ("http://u%40x:p%3Aw@h:1", {"server": "http://h:1", "username": "u@x", "password": "p:w"}),
+        # provider flag blocks survive untouched
+        (
+            "http://user_ab12,type_mobile,country_IL:pw@portal.anyip.io:1080",
+            {"server": "http://portal.anyip.io:1080", "username": "user_ab12,type_mobile,country_IL", "password": "pw"},
+        ),
+        (
+            "http://acct__cr.il;sessid.p1:pw@gw.dataimpulse.com:823",
+            {"server": "http://gw.dataimpulse.com:823", "username": "acct__cr.il;sessid.p1", "password": "pw"},
+        ),
+        # IPv6 host keeps its brackets in server
+        ("http://u:p@[::1]:8080", {"server": "http://[::1]:8080", "username": "u", "password": "p"}),
+    ],
+)
+def test_to_playwright_proxy_strings(raw, expected):
+    assert to_playwright_proxy(raw) == expected
+
+
+def test_to_playwright_proxy_none_and_mapping():
+    assert to_playwright_proxy(None) is None
+    d = {"server": "http://h:1", "username": "u", "password": "p"}
+    out = to_playwright_proxy(d)
+    assert out == d and out is not d  # shallow copy, not the same object
+
+
+def test_to_playwright_proxy_rejects_empty_and_hostless():
+    with pytest.raises(ValueError):
+        to_playwright_proxy("")
+    with pytest.raises(ValueError):
+        to_playwright_proxy("http://")

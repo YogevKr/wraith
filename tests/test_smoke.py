@@ -69,6 +69,17 @@ EXPECTED_API = [
     # proxy
     "ProxyPool",
     "normalize_proxy",
+    "to_playwright_proxy",
+    # providers
+    "DataImpulse",
+    "DataImpulseAuthError",
+    "AnyIP",
+    "AnyIPAuthError",
+    "resolve_proxy_spec",
+    # credentials
+    "resolve_secret",
+    "run_secret_command",
+    "SecretCommandError",
     # behavior
     "human_move",
     "human_type",

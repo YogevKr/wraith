@@ -19,19 +19,27 @@ DESIGN:
 
     Deliberately dependency-free and network-free — no Playwright, no httpx, no
     sockets. It is pure bookkeeping over a list of proxy URL strings so it is
-    fully unit-testable offline. Each proxy string is in the form Playwright /
-    httpx accept and that ``engine.launch(proxy=...)`` forwards, e.g.
-    ``"http://user:pass@host:port"``. Bare ``"host:port"`` is accepted too and
-    normalised to an ``http://`` URL.
+    fully unit-testable offline. Each proxy string is a URL of the form
+    ``"http://user:pass@host:port"`` — what httpx / curl_cffi (the fast path)
+    accept directly. Bare ``"host:port"`` is accepted too and normalised to an
+    ``http://`` URL.
+
+    Playwright and Camoufox do **not** accept that string form: their ``proxy``
+    option is a ``{"server", "username", "password"}`` dict. ``engine.launch``
+    runs every ``proxy=`` kwarg through :func:`to_playwright_proxy` so callers
+    (and ``clear_challenge``'s pool rotation) can keep using the one string
+    currency everywhere.
 """
 
 from __future__ import annotations
 
 import random
 import time
-from typing import Callable, Iterable
+from collections.abc import Mapping
+from typing import Any, Callable, Iterable
+from urllib.parse import unquote, urlsplit
 
-__all__ = ["ProxyPool", "normalize_proxy"]
+__all__ = ["ProxyPool", "normalize_proxy", "to_playwright_proxy"]
 
 
 # Schemes a proxy URL may legitimately carry. Anything not matching is treated
@@ -69,6 +77,46 @@ def normalize_proxy(s: str) -> str:
     if "://" in proxy:
         return proxy
     return f"http://{proxy}"
+
+
+def to_playwright_proxy(proxy: "str | Mapping[str, Any] | None") -> "dict[str, Any] | None":
+    """Convert a proxy spec into the ``ProxySettings`` dict Playwright/Camoufox expect.
+
+    Playwright's (and therefore Camoufox's) ``proxy`` launch option is a dict
+    ``{"server": "scheme://host:port", "username": ..., "password": ...}`` —
+    handing it the ``"http://user:pass@host:port"`` *string* that httpx,
+    curl_cffi, :class:`ProxyPool` and the provider classes trade in makes
+    Camoufox fail with ``'str' object has no attribute 'get'``. This is the
+    bridge; ``engine.launch`` applies it to every ``proxy=`` kwarg.
+
+    * ``None`` → ``None``.
+    * A mapping → shallow-copied and returned as-is (already Playwright-shaped).
+    * A string → run through :func:`normalize_proxy` (so bare ``host:port`` is
+      fine), split, and the userinfo percent-decoded. ``server`` keeps the
+      original ``scheme://host:port`` text (IPv6 brackets and all); the
+      ``username``/``password`` keys are present only when the URL carried
+      credentials. Provider usernames with ``,`` / ``;`` / ``__`` flag blocks
+      (anyIP, DataImpulse) pass through untouched.
+
+    Raises ``ValueError`` on an empty spec or a URL without a host.
+    """
+    if proxy is None:
+        return None
+    if isinstance(proxy, Mapping):
+        return dict(proxy)
+    url = normalize_proxy(proxy)
+    parts = urlsplit(url)
+    if not parts.hostname:
+        raise ValueError(f"proxy URL has no host: {proxy!r}")
+    # Everything after the last '@' is the original host[:port] text; keep it
+    # verbatim rather than re-assembling from the lowercased .hostname.
+    hostport = parts.netloc.rpartition("@")[2]
+    out: dict[str, Any] = {"server": f"{parts.scheme}://{hostport}"}
+    if parts.username is not None:
+        out["username"] = unquote(parts.username)
+    if parts.password is not None:
+        out["password"] = unquote(parts.password)
+    return out
 
 
 class ProxyPool:

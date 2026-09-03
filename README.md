@@ -95,8 +95,8 @@ is needed at all: a real Firefox engine clears the challenge natively, and
   as tools (per-call snapshot control, inline screenshots, tabs, `fetch`) for
   any MCP client.
 - **Residential proxy support** — a `ProxyPool` health state machine (cooldown /
-  backoff / half-open / dead / recovery) plus a first-class DataImpulse provider
-  for rotating/sticky exits.
+  backoff / half-open / dead / recovery) plus first-class **DataImpulse** and
+  **anyIP** providers for rotating/sticky residential (and anyIP mobile) exits.
 - **Human-like behavior helpers** — curved/eased mouse movement and per-key
   typing cadence.
 - **Resilient import** — a missing optional browser dep never breaks
@@ -249,8 +249,8 @@ Wraith is a set of focused, mostly-independent modules under `wraith/`:
 | [`agent`](wraith/agent.py) | The perceive/act-by-index browser wrapper. `AgentBrowser` / `agent_browser()` built on the snapshot layer. |
 | [`snapshot`](wraith/snapshot.py) | Agent perception: `take_snapshot()` builds an indexed, browser-use-style DOM `Snapshot` of interactive `Element`s. |
 | [`recaptcha`](wraith/recaptcha.py) | v3 token harvesting from a warmed/borrowed session (`harvest_token`, `score`) + solver-service skeletons (`SolverService`, `CapSolver`, `TwoCaptcha`). |
-| [`proxy`](wraith/proxy.py) | Dependency-free `ProxyPool` (round-robin / random) and `normalize_proxy()` for `clear_challenge` rotation. |
-| [`providers`](wraith/providers.py) | First-class residential-proxy integrations. `DataImpulse` builds proxy URLs (`rotating`/`sticky`) and `ProxyPool`s (`pool`) for `launch(proxy=...)` / `clear_challenge(proxy_pool=...)`. |
+| [`proxy`](wraith/proxy.py) | Dependency-free `ProxyPool` (round-robin / random), `normalize_proxy()`, and `to_playwright_proxy()` (URL string → Playwright/Camoufox proxy dict) for `clear_challenge` rotation. |
+| [`providers`](wraith/providers.py) | First-class residential-proxy integrations. `DataImpulse` and `AnyIP` build proxy URLs (`rotating`/`sticky`) and `ProxyPool`s (`pool`) for `launch(proxy=...)` / `clear_challenge(proxy_pool=...)`. |
 | [`mcp`](wraith/mcp.py) | The `wraith-mcp` FastMCP stdio server exposing the agent browser as MCP tools. |
 | [`cli`](wraith/cli.py) | The `wraith` command. Lazily imports each component so `--help` works on a partial install. |
 
@@ -274,9 +274,9 @@ universal bypass:
    rather than trying to fake it.
 3. **Residential exit rotation.** IP-reputation tiers (Reblaze 474/481
    rate-limit) can't be cleared by waiting or by cookies — they need a different
-   exit IP. `ProxyPool` and the `DataImpulse` provider feed rotating/sticky
-   residential exits into `launch(proxy=...)` and
-   `clear_challenge(proxy_pool=...)`.
+   exit IP. `ProxyPool` and the `DataImpulse` / `AnyIP` providers feed
+   rotating/sticky residential (or anyIP mobile) exits into `launch(proxy=...)`
+   and `clear_challenge(proxy_pool=...)`.
 4. **Not solvable.** Hard blocks (HTTP 492, non-browser / `HeadlessChrome` UA)
    and reCAPTCHA-v3 with no warmed identity are *not* bypassable by Wraith —
    they raise actionable errors rather than pretending. reCAPTCHA-v3 has no

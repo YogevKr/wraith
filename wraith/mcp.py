@@ -14,7 +14,7 @@ Design notes
   session. ``import wraith.mcp`` on its own never touches Playwright/Camoufox.
 * **Threading:** ``AgentBrowser`` uses the *sync* Playwright API (Camoufox),
   which refuses to run inside an asyncio event loop and whose objects are
-  thread-affine. FastMCP runs tools in the event loop, so every browser
+  thread-affine. The MCP server runs tools in the event loop, so every browser
   operation is dispatched to a single dedicated worker thread via a
   ``max_workers=1`` executor (``_run``). The browser is created and used only on
   that thread, which keeps Playwright happy and the session consistent.
@@ -34,19 +34,29 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
-from mcp.server.fastmcp import FastMCP
+# The server class moved in mcp 2.x: FastMCP (mcp.server.fastmcp) was renamed to
+# MCPServer (mcp.server.mcpserver). Its constructor, ``@app.tool()`` decorator,
+# and ``app.run()`` are call-compatible across both majors, so a small import
+# shim lets Wraith run on mcp 1.x AND 2.x.
+try:  # mcp >= 2
+    from mcp.server.mcpserver import MCPServer as _MCPServer
+except ImportError:  # pragma: no cover - mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _MCPServer
 
-try:  # Image content block (vision); optional across mcp SDK versions.
-    from mcp.server.fastmcp import Image
-except Exception:  # pragma: no cover - older/newer SDK without the helper
-    Image = None  # type: ignore[assignment]
+try:  # Image content block (vision); its module moved in mcp 2.x
+    from mcp.server.mcpserver import Image
+except Exception:  # pragma: no cover
+    try:
+        from mcp.server.fastmcp import Image
+    except Exception:  # older/newer SDK without the helper
+        Image = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .agent import AgentBrowser
 
 T = TypeVar("T")
 
-app = FastMCP(
+app = _MCPServer(
     "wraith",
     instructions=(
         "Wraith is a stealth + identity-borrowing browser for autonomous agents. "
@@ -54,7 +64,9 @@ app = FastMCP(
         "dismisses cookie banners) and get back an indexed snapshot of interactive "
         "elements. Each line looks like `[12]<button role=button>Search</button>`; "
         "act on an element by its index with `click(index)` or "
-        "`type_text(index, text)`. Use `snapshot()` to re-perceive after a change, "
+        "`type_text(index, text)`. Use `fill_secret(index, capability)` for an "
+        "opaque secret capability from a registered provider. Use `snapshot()` "
+        "to re-perceive after a change, "
         "`scroll()` to reveal more, `read()` for the page as markdown, and "
         "`screenshot()` to capture an image. `detect_waap(url)` fingerprints a "
         "site's bot defenses. `borrow(domain)` injects a warmed, authenticated "
@@ -63,7 +75,9 @@ app = FastMCP(
         "`ensure_high_score(url)` borrows a logged-in Google identity's "
         "reputation cookies and opens the URL so a reCAPTCHA-v3 score is minted "
         "high (general across any sitekey) — opt-in; verify acceptance against "
-        "the real protected endpoint."
+        "the real protected endpoint. `receive_profile(code)` pulls a login that "
+        "a laptop synced over an encrypted dead-drop (`wraith profile sync`) and "
+        "injects its cookies — a remote-machine identity borrow, no password seen."
     ),
 )
 
@@ -261,6 +275,29 @@ async def type_text(index: int, text: str, enter: bool = False, include_snapshot
 
 
 @app.tool()
+async def fill_secret(
+    index: int,
+    capability: dict[str, Any],
+    include_snapshot: bool = True,
+) -> str:
+    """Fill a field from an opaque secret capability.
+
+    The capability names a registered provider and an opaque handle. It also
+    binds the fill to exact origins, one field kind, an expiry, and a use limit.
+    The tool never accepts or returns the secret value.
+    """
+    from .secrets import SecretCapability
+
+    parsed = SecretCapability.from_dict(capability)
+    return await _run(
+        lambda: _render(
+            _get_browser().fill_secret(index, parsed),
+            include_snapshot,
+        )
+    )
+
+
+@app.tool()
 async def scroll(direction: str = "down", include_snapshot: bool = True) -> str:
     """Scroll the page (``"down"`` or ``"up"``) and return a fresh snapshot
     (or a compact summary when ``include_snapshot=false``)."""
@@ -310,7 +347,8 @@ async def screenshot() -> Any:
 
     Returns an inline PNG image (so a multimodal model can see the page and
     disambiguate by the same element indices). On an SDK without image content
-    support, falls back to saving a temp PNG and returning its path."""
+    support, falls back to saving a temp PNG and returning its path. Wraith
+    blocks this tool after a secret fill."""
     png = await _run(lambda: _get_browser().screenshot())
     if Image is not None:
         return Image(data=png, format="png")
@@ -493,6 +531,51 @@ async def fetch(
         return await asyncio.to_thread(_go)
     except fastpath.FastPathUnavailableError as exc:
         return str(exc)
+
+
+@app.tool()
+async def receive_profile(code: str) -> str:
+    """Pull a synced login from a one-shot pairing ``code`` and inject it.
+
+    A laptop runs ``wraith profile sync`` and hands you the pairing code out of
+    band. This tool pulls the end-to-end-encrypted cookie jar from the dead-drop
+    relay, opens it in memory, and injects the cookies into the live browser
+    context — so subsequent `navigate` calls load as that already-signed-in user.
+    No password ever reaches you: only the session cookies, scoped to the domain
+    the laptop chose. The drop is single-use and self-destructs after pickup.
+    """
+    import asyncio
+
+    from . import profile as profile_mod  # lazy
+
+    try:
+        jar = await asyncio.to_thread(profile_mod.receive_profile, code)
+    except Exception as exc:
+        return f"wraith: could not receive the profile: {type(exc).__name__}: {exc}"
+
+    cookies = jar.get("cookies", [])
+    if not cookies:
+        return "wraith: the drop opened but carried no cookies."
+    summary = profile_mod.jar_summary(jar)
+    domains = ", ".join(f"{d}({n})" for d, n in summary.items())
+
+    def _inject() -> str:
+        browser = _get_browser()
+        ctx = _ctx_from_browser(browser)
+        if ctx is None:
+            return (
+                f"Received {len(cookies)} cookie(s) [{domains}], but no live "
+                "context to inject into — call `navigate` first, then retry."
+            )
+        from .identity import inject_cookies  # lazy
+
+        n = inject_cookies(ctx, cookies)
+        return (
+            f"Injected {n} cookie(s) [{domains}] from the synced profile. The "
+            "browser now navigates as that identity — open the site with `navigate`."
+        )
+
+    return await _run(_inject)
 
 
 # --------------------------------------------------------------------------- #

@@ -293,9 +293,12 @@ def find_chrome_profile(profile: str = "Default") -> Path | None:
         for rel in rel_candidates:
             base = root.joinpath(*rel)
             prof_dir = base / profile
-            if (prof_dir / "Cookies").is_file():
+            # Modern Chrome (96+) keeps the cookie DB under Default/Network/;
+            # older builds keep it directly under Default/. Accept either — the
+            # extractor resolves the exact file, and returning the profile dir
+            # keeps the Local State lookup (its parent) correct.
+            if (prof_dir / "Cookies").is_file() or (prof_dir / "Network" / "Cookies").is_file():
                 return prof_dir
-            # Linux Chrome keeps Cookies under Default/ too but base may differ
     return None
 
 

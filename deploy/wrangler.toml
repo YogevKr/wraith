@@ -1,0 +1,46 @@
+# Wraith dead-drop relay — Cloudflare Worker deployment.
+#
+# One-time setup:
+#   1. npm i -g wrangler && wrangler login   (or a scoped CLOUDFLARE_API_TOKEN
+#      with Workers Scripts:Edit + Workers KV Storage / Durable Objects)
+#   2. wrangler deploy   -> prints https://wraith-drop.<sub>.workers.dev
+#
+# No KV namespace to create: each slot is a SQLite-backed Durable Object, so
+# read-and-delete is atomic (a true single pickup) and runs on the Free plan.
+#
+# Then pair with that URL:
+#   remote$  wraith profile receive <code>          # code carries the relay URL
+#   laptop$  wraith profile sync  --relay https://wraith-drop.<sub>.workers.dev \
+#                                 --from chrome --domain elal.com
+#
+# The relay stores only sealed blobs under random single-use slots (TTL 600s).
+# It never sees the ephemeral secret, so it cannot read or forge a transfer.
+
+name = "wraith-drop"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# Each slot -> its own Durable Object, whose serialized storage makes GET's
+# read-and-delete atomic. SQLite-backed classes are Free-plan eligible.
+[[durable_objects.bindings]]
+name = "DROPBOX"
+class_name = "DropBox"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DropBox"]
+
+# Per-IP rate limit (Cloudflare's native Rate Limiting binding — GA, all plans).
+# Caps how fast one address can hit /s/* so nobody can flood random-slot PUTs to
+# burn storage or request quota. namespace_id is any unique-per-limiter id;
+# period must be 10 or 60 (seconds). 120 requests / 60s per IP is generous for a
+# human-driven sync yet stops a flood.
+[[unsafe.bindings]]
+name = "DROP_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }
+
+# Optional extra hardening in the Cloudflare dashboard:
+#   - WAF off — there is nothing to inspect; every body is ciphertext.
+#   - A Workers analytics alert on request spikes.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wraith"
-version = "0.1.0"
+version = "0.4.0"
 description = "A stealth, identity-borrowing, MCP-native agent browser (Camoufox/Playwright)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,8 +36,13 @@ dependencies = [
     "playwright==1.55.0",
     "patchright",
     "httpx",
-    "mcp",
+    # wraith.mcp works on both mcp 1.x (FastMCP) and 2.x (MCPServer) via an
+    # import shim; <3 guards against an unknown next major.
+    "mcp>=1,<3",
     "markdownify",
+    # Chrome cookie decryption (wraith.chrome) + dead-drop AEAD/HKDF
+    # (wraith.deaddrop) for the profile-sync feature.
+    "cryptography>=42",
 ]
 
 [project.urls]

@@ -129,6 +129,7 @@ def test_agent_browser_importable_and_methods_exist():
         "snapshot",
         "click",
         "type",
+        "fill_secret",
         "scroll",
         "read",
         "get_text",
@@ -137,7 +138,7 @@ def test_agent_browser_importable_and_methods_exist():
     ):
         assert callable(getattr(AgentBrowser, name)), f"AgentBrowser.{name} missing"
     # properties
-    for prop in ("current_url", "current_title"):
+    for prop in ("current_url", "current_title", "secret_tainted"):
         assert isinstance(getattr(AgentBrowser, prop), property), f"{prop} not a property"
     # context manager protocol
     assert hasattr(AgentBrowser, "__enter__")
@@ -177,7 +178,16 @@ def test_agent_browser_borrows_session_without_owning():
 
 @pytest.mark.parametrize(
     "name",
-    ["AgentBrowser", "agent_browser", "take_snapshot", "Snapshot", "Element"],
+    [
+        "AgentBrowser",
+        "agent_browser",
+        "take_snapshot",
+        "Snapshot",
+        "Element",
+        "SecretCapability",
+        "SecretMaterial",
+        "register_secret_provider",
+    ],
 )
 def test_reexported_on_package(name):
     import wraith

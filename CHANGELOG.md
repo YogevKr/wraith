@@ -6,6 +6,14 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-27
+
+### Added
+
+- Added an opt-in Camoufox secret-policy harness for local tests. It uses
+  direct `page.goto`, checks the browser policy, and hashes field values as
+  strings inside Camoufox.
+
 ## [0.4.1] - 2026-09-27
 
 ### Added
@@ -200,7 +208,8 @@ autonomous agents.
 - **Docs**: `DETECTION.md` (vendor taxonomy + coverage matrix), `PLAYBOOK.md`
   (tier strategy, proxy rotation), `AGENTS.md` (agent API + MCP setup).
 
-[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/YogevKr/wraith/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/YogevKr/wraith/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/YogevKr/wraith/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/YogevKr/wraith/compare/v0.3.1...v0.3.2

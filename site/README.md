@@ -3,8 +3,8 @@
 The landing page for Wraith, served by a small Cloudflare Worker that returns a
 single self-contained static HTML document (no external requests, no build).
 
-- `worker.js` — the Worker; the page is inlined as an HTML string. `www.` folds
-  to the apex with a 301.
+- `worker.js` — the Worker; the page and Open Graph preview image are inlined
+  as strings. `www.` folds to the apex with a 301.
 - `wrangler.toml` — binds the apex + `www` as custom domains.
 
 ## Deploy

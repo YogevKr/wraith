@@ -6,6 +6,8 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-27
+
 ### Added
 - **`providers.AnyIP`**: first-class [anyIP](https://anyip.io) residential +
   mobile provider alongside `DataImpulse`. Same contract — `rotating()`,
@@ -65,6 +67,14 @@ All notable changes to **Wraith** are documented here. The format is based on
   field still can't be verified empty after both attempts, `type()` now
   raises the new `ClearFailedError` instead of silently typing on unknown
   existing content.
+
+- **Secret provider file imports**: `wraith.secrets` now loads through a
+  file-based provider shim without requiring a `sys.modules` registration.
+
+### Changed
+
+- **Site link previews**: the landing page now serves a branded Open Graph
+  image and declares Open Graph and Twitter card metadata.
 
 ## [0.4.0] - 2026-09-02
 
@@ -190,7 +200,8 @@ autonomous agents.
 - **Docs**: `DETECTION.md` (vendor taxonomy + coverage matrix), `PLAYBOOK.md`
   (tier strategy, proxy rotation), `AGENTS.md` (agent API + MCP setup).
 
-[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/YogevKr/wraith/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/YogevKr/wraith/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/YogevKr/wraith/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/YogevKr/wraith/compare/v0.3.0...v0.3.1

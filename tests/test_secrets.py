@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -256,6 +258,23 @@ def test_secret_representations_are_redacted():
 
     assert "handle-must-not-appear" not in repr(capability)
     assert "value-must-not-appear" not in repr(material)
+
+
+def test_secrets_module_supports_unregistered_file_import():
+    module_path = Path(__file__).parents[1] / "wraith" / "secrets.py"
+    spec = importlib.util.spec_from_file_location(
+        "wraith_secrets_file_import",
+        module_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+
+    spec.loader.exec_module(module)
+
+    material = module.SecretMaterial("file-import-secret")
+    assert material.reveal() == "file-import-secret"
+    material.clear()
 
 
 def test_editable_element_value_is_redacted_from_snapshot_text():

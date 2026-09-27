@@ -4,8 +4,6 @@ The agent receives a capability, not a secret value. A registered provider
 resolves the opaque handle only after Wraith checks the page origin and field.
 """
 
-from __future__ import annotations
-
 import hashlib
 import ipaddress
 import threading
@@ -14,6 +12,8 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
+# Keep annotations evaluated at import time. Dataclasses inspects sys.modules
+# for postponed annotations, but file-based provider shims may skip registration.
 __all__ = [
     "SecretCapability",
     "SecretCapabilityError",

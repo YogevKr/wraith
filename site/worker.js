@@ -3,6 +3,32 @@
  * A single static HTML document, no external requests. www -> apex redirect.
  */
 
+const OG_IMAGE = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+<defs>
+  <radialGradient id="glow" cx="50%" cy="0%" r="90%">
+    <stop offset="0" stop-color="#18252b"/>
+    <stop offset="1" stop-color="#0a0b0e"/>
+  </radialGradient>
+  <linearGradient id="teal" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#99f6e4"/>
+    <stop offset="1" stop-color="#2dd4bf"/>
+  </linearGradient>
+</defs>
+<rect width="1200" height="630" fill="url(#glow)"/>
+<rect x="42" y="42" width="1116" height="546" rx="28" fill="#111318" stroke="#26343b" stroke-width="3"/>
+<circle cx="146" cy="174" r="68" fill="#0d2224" stroke="#2dd4bf" stroke-width="3"/>
+<path d="M103 177c0-28 19-50 43-50s43 22 43 50v42c0 8-7 14-15 14h-11l-17 20-17-20h-11c-8 0-15-6-15-14z" fill="none" stroke="url(#teal)" stroke-width="8" stroke-linejoin="round"/>
+<circle cx="130" cy="177" r="6" fill="#99f6e4"/>
+<circle cx="162" cy="177" r="6" fill="#99f6e4"/>
+<path d="M128 199c10 8 26 8 36 0" fill="none" stroke="#99f6e4" stroke-width="6" stroke-linecap="round"/>
+<text x="250" y="206" fill="#e7e9ee" font-family="Arial, Helvetica, sans-serif" font-size="88" font-weight="700">Wraith</text>
+<text x="250" y="290" fill="#9aa3b2" font-family="Arial, Helvetica, sans-serif" font-size="34">The identity-borrowing stealth browser</text>
+<text x="250" y="336" fill="#9aa3b2" font-family="Arial, Helvetica, sans-serif" font-size="34">for autonomous agents.</text>
+<rect x="250" y="405" width="378" height="3" fill="#2dd4bf"/>
+<text x="250" y="466" fill="#5eead4" font-family="Menlo, Consolas, monospace" font-size="28">wraithbrowser.dev</text>
+<text x="250" y="520" fill="#66727d" font-family="Arial, Helvetica, sans-serif" font-size="22">MCP-native  ·  MIT licensed  ·  open source</text>
+</svg>`;
+
 const HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -13,6 +39,16 @@ const HTML = `<!doctype html>
 <meta property="og:title" content="Wraith">
 <meta property="og:description" content="The identity-borrowing stealth browser for autonomous agents.">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://wraithbrowser.dev/">
+<meta property="og:image" content="https://wraithbrowser.dev/og-image.svg">
+<meta property="og:image:alt" content="Wraith, the identity-borrowing stealth browser for autonomous agents">
+<meta property="og:image:type" content="image/svg+xml">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Wraith">
+<meta name="twitter:description" content="The identity-borrowing stealth browser for autonomous agents.">
+<meta name="twitter:image" content="https://wraithbrowser.dev/og-image.svg">
 <style>
   :root{
     --bg:#0a0b0e; --panel:#111318; --line:#20242c; --fg:#e7e9ee; --muted:#9aa3b2;
@@ -136,6 +172,14 @@ export default {
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("Method Not Allowed", { status: 405 });
+    }
+    if (url.pathname === "/og-image.svg") {
+      return new Response(OG_IMAGE, {
+        headers: {
+          "content-type": "image/svg+xml; charset=utf-8",
+          "cache-control": "public, max-age=86400",
+        },
+      });
     }
     return new Response(HTML, {
       headers: {

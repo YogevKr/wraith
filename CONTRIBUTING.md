@@ -51,6 +51,18 @@ green** — `uv run pytest -q` should report `158 passed` or more. New behavior
 needs a new test; keep tests offline (use fixtures and duck-typed fakes rather
 than live targets, mirroring the existing `tests/`).
 
+For the opt-in Camoufox secret-policy check, install the browser binary and run:
+
+```bash
+uv run camoufox fetch
+WRAITH_LIVE_TEST=1 uv run pytest tests/test_live_secret_policy.py -q
+```
+
+The check serves a local page and uses direct `page.goto`. It does not call
+`AgentBrowser.navigate`, which waits for WAAP clearance. It hashes the field
+value as a string inside Camoufox, so it does not cross an Xray-wrapped
+`TypedArray`.
+
 ### Linting
 
 ```bash

@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-**Website:** [wraithbrowser.dev](https://wraithbrowser.dev) · the landing page lives in [`site/`](site/).
+**Website:** [wraithbrowser.dev](https://wraithbrowser.dev)
 
 Wraith is a Python toolkit that gives an autonomous agent a real browser that is
 hard to fingerprint and easy to drive. It pairs a hardened Firefox engine

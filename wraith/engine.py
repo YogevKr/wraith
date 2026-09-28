@@ -833,6 +833,7 @@ def clear_challenge(
     clearance_cookies: Optional["list[str] | tuple[str, ...]"] = None,
     settle: float = 1.0,
     proxy_pool: Optional["Any"] = None,
+    press_hold: bool = True,
     **launch_kw: Any,
 ) -> Session:
     """Navigate to ``url`` and return a Session once the WAAP challenge clears.
@@ -896,8 +897,10 @@ def clear_challenge(
             when :func:`wraith.detect.cookie_is_valid` says its *value* is in a
             solved state — most notably a fresh Akamai ``_abck`` containing the
             ``~-1~`` sentinel is **not** cleared (it must reach ``~0~``).
-        settle: Seconds of post-load grace given to a clean 200 before treating
-            it as a cleared / non-WAAP success (lets a late challenge swap in).
+        settle: Seconds of post-load grace before accepting a clean response
+            or a clearance cookie (lets a late challenge swap in). After a
+            HUMAN challenge, require a new successful main-frame response; opaque
+            PX cookie values alone do not prove acceptance.
         proxy_pool: Optional rotating-proxy pool (a duck-typed object exposing
             ``next() -> str | None``, ``mark_bad(str)`` and ``len()`` — e.g.
             :class:`wraith.proxy.ProxyPool`). Only used when this call **owns**
@@ -909,6 +912,9 @@ def clear_challenge(
             ``mark_bad``-ed first). When a session was *passed in* (we don't own
             it) rotation is skipped — a live session's proxy can't be changed —
             and the error is re-raised unchanged.
+        press_hold: Attempt visible HUMAN press-and-hold challenges automatically.
+            Make at most two eight-second holds within ``timeout``. ``False``
+            disables input attempts but still waits for the challenge to clear.
         **launch_kw: Forwarded to :func:`launch` when self-launching (e.g.
             ``proxy``, ``headless``, ``geoip``, ``locale``, ``timezone``).
 
@@ -924,6 +930,7 @@ def clear_challenge(
             ``timeout`` (the message names any detected WAAP vendor as a hint).
     """
     import time as _time  # local: keep module import-light & duck-typed
+    from ._press_hold import PressHoldHandler
 
     # detect is the single source of truth for clearance-cookie names and for
     # whether a cookie *value* is in a solved state. Imported lazily to avoid an
@@ -951,7 +958,7 @@ def clear_challenge(
         # Capture the TOP-LEVEL navigation response status. We attach the
         # listener BEFORE navigating so we never miss the main document
         # response (sub-resource responses are ignored).
-        nav_status: dict[str, Any] = {"status": None}
+        nav_status: dict[str, Any] = {"status": None, "generation": 0}
 
         def _on_response(response: Any) -> None:
             try:
@@ -963,8 +970,11 @@ def clear_challenge(
                     if req is not None and callable(getattr(req, "is_navigation_request", None)) \
                     else None
                 resp_url = getattr(response, "url", None)
+                if is_nav and getattr(req, "frame", None) is not getattr(page, "main_frame", None):
+                    return
                 if is_nav is True or (is_nav is None and resp_url == url):
                     nav_status["status"] = getattr(response, "status", None)
+                    nav_status["generation"] += 1
             except Exception:
                 pass
 
@@ -1013,22 +1023,31 @@ def clear_challenge(
         # (b) a clean 200 with real content (non-WAAP site / already cleared).
         deadline = _time.monotonic() + float(timeout)
         clean_since: Optional[float] = None
+        hold_handler = PressHoldHandler(enabled=press_hold, deadline=deadline)
+        challenge_generation: Optional[int] = None
 
         while True:
-            # (a) a wanted clearance cookie present AND in a solved state?
-            try:
-                jar = context.cookies()
-            except Exception:
-                jar = []
-            for name, value in _cookie_pairs(jar):
-                if name in wanted and _cookie_is_valid(detect, name, value):
-                    return active
-
             # Read the rendered page once per iteration (reused below).
             try:
                 content = page.content()
             except Exception:
                 content = ""
+
+            generation_before_poll = nav_status["generation"]
+            holding = hold_handler.poll(page, content)
+            if holding and challenge_generation is None:
+                challenge_generation = generation_before_poll
+
+            # A stale trust cookie does not prove that a visible challenge cleared.
+            try:
+                jar = context.cookies()
+            except Exception:
+                jar = []
+            cookie_cleared = any(
+                name in wanted and name not in {"_px", "_px2", "_px3"}
+                and _cookie_is_valid(detect, name, value)
+                for name, value in _cookie_pairs(jar)
+            )
 
             # (a2) Hard block? Fail fast — don't burn the whole timeout on a
             # page that will never clear (rotate identity + proxy instead).
@@ -1043,6 +1062,8 @@ def clear_challenge(
                         block_reason = _is_blocked(content, title)
                     except Exception:
                         block_reason = None
+                    if holding and block_reason == "PerimeterX/HUMAN access denied":
+                        block_reason = None
                     if block_reason:
                         raise WaapHardBlockError(
                             f"{url}: hard block detected ({block_reason}). "
@@ -1051,20 +1072,39 @@ def clear_challenge(
 
             # (b) settled on a clean 200 with real content?
             now = _time.monotonic()
-            status_ok = main_status is None or 200 <= int(main_status) < 300
-            has_content = status_ok and bool(content) and len(content) > 200
-            if status_ok and has_content:
+            if nav_status["status"] is not None:
+                main_status = nav_status["status"]
+            status_ok = (
+                not hold_handler.seen if main_status is None
+                else 200 <= int(main_status) < 300
+            )
+            if challenge_generation is not None:
+                # An HTTP 200 challenge response is not proof of acceptance.
+                status_ok = status_ok and nav_status["generation"] > challenge_generation
+            has_content = bool(content) and len(content) > 200
+            cleared = (status_ok and has_content) or (
+                cookie_cleared and not hold_handler.seen
+            )
+            if not holding and cleared:
                 if clean_since is None:
                     clean_since = now
                 elif now - clean_since >= float(settle):
-                    # Stable clean page and no clearance cookie => non-WAAP (or
-                    # already cleared). Nothing to clear; success.
+                    # Give every success path a grace period for late widgets.
+                    # Opaque PX cookies cannot prove server acceptance; after
+                    # a HUMAN challenge we require a successful main response.
                     return active
             else:
                 clean_since = None
 
             if now >= deadline:
                 seen = main_status if main_status is not None else "unknown"
+                if hold_handler.seen:
+                    raise WaapChallengeTimeout(
+                        f"HUMAN press-and-hold challenge did not clear for {url} "
+                        f"within {timeout:.0f}s after {hold_handler.attempts} attempt(s). "
+                        "Complete verification in a headed browser or borrow "
+                        "a verified session, then retry."
+                    )
                 # Vendor-aware hint: name any WAAP we can fingerprint on the page
                 # so the caller knows which defense outlasted the timeout.
                 vendor_hint = ""

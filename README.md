@@ -86,6 +86,9 @@ is needed at all: a real Firefox engine clears the challenge natively, and
 - **Challenge solving** — a vendor-dispatching `Challenge` + `solve_challenge()`
   (Turnstile / hCaptcha / reCAPTCHA v2+v3 / FunCaptcha / AWS-WAF via CapSolver /
   2Captcha) and `inject_token()` to feed a solved token back into the page.
+  `clear_challenge()` also attempts HUMAN **Press & Hold** challenges, including
+  buttons inside frames and open shadow roots. It verifies that the challenge
+  disappears before accepting clearance. Attempts do not guarantee acceptance.
   `clear_challenge` fails fast on a hard block instead of burning the timeout.
 - **Stealth self-test** — `wraith selftest` runs the rebrowser leak suite and
   exits non-zero on a critical automation leak (CI/regression gate).
@@ -355,6 +358,10 @@ claude mcp add wraith -- uv run --directory /path/to/wraith wraith-mcp
 ```
 
 (Equivalently, the server starts via `uv run wraith mcp` or `uv run wraith-mcp`.)
+
+Call `navigate(url)` as usual. It automatically attempts HUMAN/PerimeterX Press & Hold challenges.
+The MCP server instructions and tool description expose this behavior to the agent.
+Navigation reports an error if verification fails. Restart the MCP server after upgrading Wraith.
 
 ## Architecture
 

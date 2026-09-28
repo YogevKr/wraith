@@ -370,6 +370,48 @@ injection — see §6 — just enough entropy to look alive.
 
 ---
 
+### HUMAN / PerimeterX Press & Hold
+
+`clear_challenge()` attempts visible **Press & Hold** challenges automatically.
+`AgentBrowser.navigate()` and MCP `navigate` use the same handler.
+The handler checks the main page, child frames, and open shadow roots.
+When no labelled button exists, it targets the visible `#px-captcha` element.
+This fallback uses the element's current position for plain divs and closed shadow hosts.
+It makes at most two holds, each lasting up to eight seconds within the polling timeout.
+It releases the mouse after each attempt, including when an error interrupts the hold.
+
+A visible challenge prevents clearance, even with HTTP 200 or an existing `_px3` cookie.
+The handler waits for the challenge to disappear and the page to settle.
+After a HUMAN challenge, it also requires a new successful main-frame HTTP response.
+Cookie presence alone cannot prove that HUMAN accepted the browser.
+All clearance paths wait through `settle` so late widgets can appear before the handler reports success.
+It accepts a subsequent main-frame response and ignores child-frame response statuses.
+
+```python
+from wraith import clear_challenge
+
+session = clear_challenge("https://www.iherb.com/", timeout=30)
+try:
+    print(session.page.title())
+finally:
+    session.close()
+```
+
+Pass `press_hold=False` to disable automatic input attempts.
+The handler still detects the challenge and waits for clearance.
+If the button is inaccessible or verification fails, the handler raises `WaapChallengeTimeout`.
+Server acceptance depends on the browser identity and IP reputation.
+Use a headed browser for manual verification or borrow a verified session when automatic attempts fail.
+
+Public implementation evidence:
+
+- [Puppeteer report](https://github.com/berstend/puppeteer-extra/issues/712#issuecomment-1266153871): a user reported success with a six-second mouse hold.
+- [Omnideck report](https://github.com/omnideck-dev/omnideck/issues/229): the visible target can be a plain `#px-captcha` div without button semantics.
+- [Camoufox report](https://github.com/daijro/camoufox/issues/271): request interception triggered detection in the reported environment.
+
+These reports describe other sites and versions. They do not prove current iHerb acceptance.
+Wraith uses browser input and does not intercept the live challenge's network requests.
+
 ## 3. reCAPTCHA v3 — borrow, don't beat (the signature pattern)
 
 reCAPTCHA v3 is a **reputation score**, not a puzzle (see `DETECTION.md §3`). A

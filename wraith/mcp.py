@@ -60,9 +60,11 @@ app = _MCPServer(
     "wraith",
     instructions=(
         "Wraith is a stealth + identity-borrowing browser for autonomous agents. "
-        "Use `navigate(url)` to open a page (it auto-passes WAAP challenges and "
-        "dismisses cookie banners) and get back an indexed snapshot of interactive "
-        "elements. Each line looks like `[12]<button role=button>Search</button>`; "
+        "Use `navigate(url)` to open a page and get an indexed snapshot of interactive elements. "
+        "Navigation attempts WAAP challenges, including HUMAN/PerimeterX Press & Hold, "
+        "and dismisses cookie banners. No separate challenge command is needed. "
+        "If verification fails, navigation reports an error; do not assume clearance. "
+        "Each line looks like `[12]<button role=button>Search</button>`; "
         "act on an element by its index with `click(index)` or "
         "`type_text(index, text)`. Use `fill_secret(index, capability)` for an "
         "opaque secret capability from a registered provider. Use `snapshot()` "
@@ -239,8 +241,10 @@ async def navigate(url: str, include_snapshot: bool = True) -> str:
     """Open a URL and return an indexed snapshot of the page's interactive
     elements.
 
-    Automatically passes WAAP/anti-bot challenges and dismisses common
-    cookie/consent banners. Each line is ``[index]<tag role=...>text</tag>``;
+    Automatically attempts WAAP challenges, including HUMAN/PerimeterX Press & Hold,
+    and dismisses common cookie/consent banners. No separate challenge command is needed.
+    If verification fails, navigation reports an error; do not assume clearance.
+    Each line is ``[index]<tag role=...>text</tag>``;
     use the index with `click` / `type_text`. Pass ``include_snapshot=false`` for
     a compact summary (saves tokens; call `snapshot()` when you need the list).
     """

@@ -50,6 +50,8 @@ from typing import Any, Mapping, Union
 
 import httpx
 
+from ._press_hold import is_press_hold_challenge
+
 log = logging.getLogger("wraith.detect")
 
 __all__ = [
@@ -874,7 +876,7 @@ SIGNATURES: tuple[Signature, ...] = (
     Signature(
         name="PerimeterX/HUMAN",
         tier=2,  # PX/HUMAN behavioral scoring; needs a nudge + warmed session.
-        strategy="behavioral nudge + warmed identity; HUMAN scores continuously",
+        strategy="bounded press-and-hold attempts + warmed identity; HUMAN scores continuously",
         clearance_cookies=("_px", "_px2", "_px3"),
         headers=("x-px",),
         cookies=("_px", "_px2", "_px3", "_pxhd", "_pxvid", "_pxde"),
@@ -1476,6 +1478,9 @@ def classify_response(
 
     if status == 429:
         return ResponseSignal("rate_limited", None, "HTTP 429")
+
+    if is_press_hold_challenge(body):
+        return ResponseSignal("challenge", "perimeterx", "HUMAN press-and-hold challenge")
 
     # Cloudflare
     if "cf-ray" in h or "cloudflare" in server or "__cf" in set_cookie or "cf_clearance" in set_cookie:

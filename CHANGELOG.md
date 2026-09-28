@@ -6,6 +6,27 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-29
+
+### Added
+
+- Automatic HUMAN/PerimeterX Press & Hold attempts through `clear_challenge()`, `AgentBrowser.navigate()`, and MCP `navigate`.
+- Challenge detection across child frames and open shadow roots, with coordinate targeting for visible closed shadow hosts.
+- At most two holds, each lasting up to eight seconds within the polling timeout, with mouse release after each attempt.
+- The `press_hold=False` option disables automatic input while preserving challenge detection.
+- MCP server instructions and navigation descriptions explain automatic challenge handling to agents.
+- Offline regression tests and five opt-in Camoufox browser fixtures.
+
+### Fixed
+
+- Existing cookies and HTTP 200 challenge pages no longer cause false HUMAN clearance.
+- Clearance waits through `settle` for delayed widgets and requires a new successful main-frame response after HUMAN detection.
+- Child-frame responses no longer replace the tracked main-frame HTTP status.
+
+### Verification limits
+
+- Live iHerb loaded without a challenge during testing. Acceptance of its current Press & Hold challenge remains unverified.
+
 ## [0.4.2] - 2026-09-27
 
 ### Added
@@ -208,7 +229,8 @@ autonomous agents.
 - **Docs**: `DETECTION.md` (vendor taxonomy + coverage matrix), `PLAYBOOK.md`
   (tier strategy, proxy rotation), `AGENTS.md` (agent API + MCP setup).
 
-[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/YogevKr/wraith/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/YogevKr/wraith/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/YogevKr/wraith/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/YogevKr/wraith/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/YogevKr/wraith/compare/v0.3.2...v0.4.0

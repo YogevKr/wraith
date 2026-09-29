@@ -662,6 +662,22 @@ _BOT_DETECTOR_SCRAPE_JS = r"""
     if (!status) status = (row.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 200);
     if (!(name in out)) out[name] = status;
   });
+  // 3) Current detector builds render plain table rows without data
+  // attributes. Read the status icon and test name from the first cell.
+  document.querySelectorAll('table tr').forEach((row) => {
+    const cells = Array.from(row.querySelectorAll('th, td'));
+    if (cells.length < 2) return;
+    const first = (cells[0].textContent || '').trim();
+    const match = first.match(/^[^A-Za-z0-9]*([A-Za-z][A-Za-z0-9_-]*)/);
+    if (!match) return;
+    const name = match[1];
+    let status = '';
+    if (first.includes('🔴')) status = 'fail';
+    else if (first.includes('🟢')) status = 'pass';
+    else if (first.includes('🟡') || first.includes('🟠')) status = 'warn';
+    else if (first.includes('⚪')) status = 'unknown';
+    if (status && !(name in out)) out[name] = status;
+  });
   return out;
 }
 """

@@ -6,6 +6,13 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-29
+
+### Fixed
+
+- Self-test now reads the current detector table when the detector JSON field is empty.
+- Added a live end-to-end detector regression test.
+
 ## [0.6.1] - 2026-09-29
 
 ### Fixed

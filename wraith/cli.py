@@ -14,6 +14,7 @@ Subcommands:
 * ``v3``      — GENERAL reCAPTCHA-v3 pass: borrow a logged-in Google identity's
   reputation cookies, open the URL, and report the detected reCAPTCHA params.
 * ``mcp``     — run the MCP server (stdio) exposing the agent over tools.
+* ``clawd-run`` — run a versioned, gated Tailnet and browser flow.
 
 Design notes
 ------------
@@ -792,6 +793,23 @@ def cmd_profile_revoke(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_clawd_run(args: argparse.Namespace) -> int:
+    """Run a versioned Tailnet, exit, canary, and browser flow."""
+    managed = _lazy("managed")
+    try:
+        config = managed.load_config(args.config)
+        results = managed.run_flow(
+            config,
+            apply=args.apply,
+            execute=args.execute,
+        )
+    except managed.ManagedRunError as exc:
+        raise SystemExit(f"wraith: managed flow failed: {exc}") from None
+    for result in results:
+        print(f"{result.name}: {result.status}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wraith",
@@ -1106,6 +1124,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_revoke.add_argument("code", help="pairing code of the drop to burn")
     p_revoke.set_defaults(func=cmd_profile_revoke)
+
+    p_clawd_run = sub.add_parser(
+        "clawd-run",
+        help="run a versioned, gated Tailnet and browser flow",
+        description=(
+            "Run Tailnet setup, verify the expected home exit, run a vault "
+            "canary, and optionally execute the final browser command. "
+            "Without --apply, this prints a plan. --execute is required for "
+            "the final command."
+        ),
+    )
+    p_clawd_run.add_argument("--config", required=True, help="versioned JSON flow configuration")
+    p_clawd_run.add_argument(
+        "--apply",
+        action="store_true",
+        help="run Tailnet, exit, and canary commands",
+    )
+    p_clawd_run.add_argument(
+        "--execute",
+        action="store_true",
+        help="run the final configured command after --apply and the canary",
+    )
+    p_clawd_run.set_defaults(func=cmd_clawd_run)
 
     return parser
 

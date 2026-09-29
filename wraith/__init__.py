@@ -30,7 +30,7 @@ namespace and ``__all__``; ``wraith.missing_imports`` records why.
 
 from __future__ import annotations
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # Names that imported cleanly, assembled into __all__ at the end.
 __all__: list[str] = []
@@ -279,9 +279,13 @@ _reexport(
         "SecretProvider",
         "SecretProviderError",
         "SecretRequestContext",
+        "VaultItemProvider",
         "get_secret_provider",
+        "get_vault_provider",
         "register_secret_provider",
+        "register_vault_provider",
         "unregister_secret_provider",
+        "unregister_vault_provider",
     ],
 )
 

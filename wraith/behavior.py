@@ -101,6 +101,7 @@ def human_type(
     locator: Any,
     text: str,
     *,
+    click: bool = True,
     delay: float = 0.11,
     jitter: float = 0.06,
     mistake_rate: float = 0.0,
@@ -117,7 +118,8 @@ def human_type(
     followed by a Backspace correction, the most human signal of all. Keep it
     low; over-injecting is itself detectable.
     """
-    locator.click()
+    if click:
+        locator.click()
     for ch in text:
         if mistake_rate and random.random() < mistake_rate:
             wrong = random.choice("abcdefghijklmnopqrstuvwxyz")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
@@ -206,23 +207,39 @@ def test_redaction_replaces_values_in_errors_and_text():
 
 def test_managed_flow_is_planned_by_default_without_running_commands():
     config = {
-        "version": "1",
+        "version": "2",
         "tailnet": {"command": ["tailscale", "up"]},
-        "exit": {"command": ["curl", "-fsS", "https://example/exit"], "expected": "1.2.3.4"},
+        "exit": {
+            "command": ["curl", "-fsS", "https://example/exit"],
+            "expected": "1.2.3.4",
+            "identity_command": ["tailscale", "status", "--json"],
+            "identity_expected": "rpi5",
+        },
         "canary": {"command": ["vault-canary"]},
         "run": {"command": ["wraith", "agent", "https://shop.example"]},
     }
     called = []
     results = run_flow(config, runner=lambda *args, **kwargs: called.append(args))
-    assert [result.status for result in results] == ["planned", "planned", "planned", "planned"]
+    assert [result.status for result in results] == [
+        "planned",
+        "planned",
+        "planned",
+        "planned",
+        "planned",
+    ]
     assert called == []
 
 
 def test_managed_flow_requires_apply_for_execute():
     config = {
-        "version": "1",
+        "version": "2",
         "tailnet": {},
-        "exit": {"command": ["exit-check"], "expected": "home"},
+        "exit": {
+            "command": ["exit-check"],
+            "expected": "home",
+            "identity_command": ["tailscale", "status", "--json"],
+            "identity_expected": "rpi5",
+        },
         "canary": {},
         "run": {"command": ["purchase"]},
     }
@@ -242,9 +259,14 @@ def test_managed_timeout_does_not_retain_command_output():
         raise error
 
     config = {
-        "version": "1",
+        "version": "2",
         "tailnet": {},
-        "exit": {"command": ["exit-check"], "expected": "home"},
+        "exit": {
+            "command": ["exit-check"],
+            "expected": "home",
+            "identity_command": ["tailscale", "status", "--json"],
+            "identity_expected": "rpi5",
+        },
         "canary": {"command": ["canary"]},
         "run": {},
     }
@@ -256,17 +278,77 @@ def test_managed_timeout_does_not_retain_command_output():
 
 def test_managed_flow_never_returns_command_output():
     config = {
-        "version": "1",
+        "version": "2",
         "tailnet": {},
-        "exit": {"command": ["exit-check"], "expected": "home"},
+        "exit": {
+            "command": ["exit-check"],
+            "expected": "home",
+            "identity_command": ["tailscale", "status", "--json"],
+            "identity_expected": "rpi5",
+        },
         "canary": {"command": ["canary"]},
         "run": {"command": ["purchase"]},
     }
 
     def runner(command, **_kwargs):
-        output = "home" if command == ["exit-check"] else "plaintext-vault-value"
+        if command == ["exit-check"]:
+            output = "home"
+        elif command == ["tailscale", "status", "--json"]:
+            output = json.dumps({
+                "BackendState": "Running",
+                "ExitNodeStatus": {"Online": True, "HostName": "rpi5"},
+            })
+        else:
+            output = "plaintext-vault-value"
         return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
 
     results = run_flow(config, apply=True, runner=runner)
-    assert [result.name for result in results] == ["exit", "canary", "run"]
+    assert [result.name for result in results] == ["exit", "exit_identity", "canary", "run"]
     assert all("plaintext-vault-value" not in repr(result) for result in results)
+
+
+def test_managed_flow_rejects_missing_identity_check():
+    config = {
+        "version": "2",
+        "tailnet": {},
+        "exit": {"command": ["exit-check"], "expected": "home"},
+        "canary": {"command": ["canary"]},
+        "run": {},
+    }
+    with pytest.raises(ManagedRunError, match="identity_command"):
+        run_flow(config, apply=True)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        {"BackendState": "Stopped", "ExitNodeStatus": {"Online": True, "HostName": "rpi5"}},
+        {"BackendState": "Running", "ExitNodeStatus": {"Online": True, "HostName": "other"}},
+    ],
+)
+def test_managed_flow_requires_healthy_expected_exit_node(identity):
+    config = {
+        "version": "2",
+        "tailnet": {},
+        "exit": {
+            "command": ["exit-check"],
+            "expected": "home",
+            "identity_command": ["tailscale", "status", "--json"],
+            "identity_expected": "rpi5",
+        },
+        "canary": {"command": ["canary"]},
+        "run": {},
+    }
+
+    def runner(command, **_kwargs):
+        if command == ["exit-check"]:
+            return subprocess.CompletedProcess(command, 0, stdout="home", stderr="")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(identity),
+            stderr="network is down",
+        )
+
+    with pytest.raises(ManagedRunError, match="identity or health"):
+        run_flow(config, apply=True, runner=runner)

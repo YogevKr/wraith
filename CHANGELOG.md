@@ -6,6 +6,13 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-29
+
+### Fixed
+
+- Self-test now fails when a detector result is unknown. An exit code of zero no longer means that missing checks passed.
+- Managed Clawd runs now require a healthy, active Tailscale exit node identity. A matching public IP alone is not enough.
+
 ## [0.6.0] - 2026-09-29
 
 ### Added

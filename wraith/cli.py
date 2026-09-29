@@ -353,7 +353,12 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     if result["passed"]:
         print("PASS — no critical automation leaks detected")
     else:
-        print(f"FAIL — critical leaks: {', '.join(result['critical_failures'])}")
+        reasons = []
+        if result["critical_failures"]:
+            reasons.append(f"critical leaks: {', '.join(result['critical_failures'])}")
+        if result.get("unknown"):
+            reasons.append(f"unknown checks: {', '.join(result['unknown'])}")
+        print(f"FAIL — {'; '.join(reasons)}")
     return 0 if result["passed"] else 2
 
 
@@ -1129,8 +1134,9 @@ def build_parser() -> argparse.ArgumentParser:
         "clawd-run",
         help="run a versioned, gated Tailnet and browser flow",
         description=(
-            "Run Tailnet setup, verify the expected home exit, run a vault "
-            "canary, and optionally execute the final browser command. "
+            "Run Tailnet setup, verify the expected home IP and Tailscale "
+            "exit identity, run a vault canary, and optionally execute the "
+            "final browser command. "
             "Without --apply, this prints a plan. --execute is required for "
             "the final command."
         ),

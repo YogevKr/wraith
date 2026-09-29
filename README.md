@@ -119,7 +119,7 @@ Wraith uses [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync                            # core deps (camoufox, playwright==1.55, patchright, httpx, mcp)
-uv run camoufox fetch              # fetch the Camoufox Firefox build (primary engine)
+uv run camoufox fetch official/152.0.4-beta.30  # fetch Wraith's pinned Camoufox build
 uv run patchright install chromium # (optional) fetch patched Chromium for the fallback engine
 ```
 
@@ -127,7 +127,7 @@ Or with pip:
 
 ```bash
 pip install wraith
-camoufox fetch                     # fetch the Camoufox Firefox build
+camoufox fetch official/152.0.4-beta.30  # fetch Wraith's pinned Camoufox build
 patchright install chromium        # (optional) fallback engine
 ```
 
@@ -142,6 +142,17 @@ uv run wraith --help
 > serialization bug). Wraith pins **`playwright == 1.55.x`** and detects a
 > mismatch up front with an actionable error. patchright is independently
 > versioned and unaffected.
+
+Wraith also pins the Camoufox browser build to **`152.0.4-beta.30`**. Camoufox
+`156.0.1-beta.32` removed `navigator.appCodeName`, which the pinned Python
+launcher still generates. Install the exact build with:
+
+```bash
+uv run camoufox fetch official/152.0.4-beta.30
+```
+
+Wraith selects this build even when newer Camoufox releases exist. If it is
+missing, launch fails with the install command instead of fetching a new beta.
 
 ## Quickstart
 

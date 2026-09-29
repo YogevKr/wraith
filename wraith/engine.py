@@ -69,6 +69,13 @@ Engine = Literal["auto", "camoufox", "chromium"]
 # pageError.location.url). We require < 1.60 for the camoufox engine.
 _CAMOUFOX_MAX_PLAYWRIGHT = (1, 60)
 
+# Camoufox 0.4.x and 0.5.x generate navigator.appCodeName. Camoufox 156
+# removed that property from its browser schema, so an unpinned fetch fails
+# during config validation before the browser can start. Keep the package and
+# browser pair on the last compatible schema until the launcher mapping moves.
+_CAMOUFOX_BROWSER_VERSION = "152.0.4-beta.30"
+_CAMOUFOX_BROWSER_FETCH = f"official/{_CAMOUFOX_BROWSER_VERSION}"
+
 # Default args we strip from the Chromium fallback. --enable-automation paints a
 # giant "I am a bot" sign; --enable-unsafe-swiftshader forces a software GL
 # renderer that is a softer-but-real server-side tell.
@@ -287,6 +294,62 @@ def _assert_camoufox_playwright_ok() -> None:
         )
 
 
+def _camoufox_browser_options() -> dict[str, Any]:
+    """Return the repository-pinned Camoufox browser selection."""
+    return {
+        "browser": _CAMOUFOX_BROWSER_VERSION,
+        # Keep the generated Firefox identity aligned with the selected build.
+        "ff_version": 152,
+    }
+
+
+def _camoufox_pinned_executable() -> str:
+    """Return the executable for the pinned browser without auto-fetching."""
+    try:
+        from camoufox.multiversion import find_installed_version
+        from camoufox.pkgman import launch_path
+    except ImportError as exc:  # pragma: no cover - package guard
+        raise EngineUnavailableError(
+            "Wraith requires Camoufox 0.5.6 for pinned browser installs."
+        ) from exc
+
+    browser_path = find_installed_version(_CAMOUFOX_BROWSER_VERSION)
+    if browser_path is None:
+        raise _camoufox_missing_error()
+    try:
+        return launch_path(browser_path)
+    except Exception as exc:
+        raise _camoufox_missing_error() from exc
+
+
+def _camoufox_missing_error() -> EngineUnavailableError:
+    return EngineUnavailableError(
+        f"Camoufox browser {_CAMOUFOX_BROWSER_VERSION} is not installed. "
+        f"Run `camoufox fetch {_CAMOUFOX_BROWSER_FETCH}` first."
+    )
+
+
+def _prepare_camoufox_options(opts: dict[str, Any], extra: dict[str, Any]) -> None:
+    """Add caller options and the repository's browser selection."""
+    opts.update(extra)
+    if "executable_path" not in opts:
+        opts["executable_path"] = _camoufox_pinned_executable()
+    opts.update(_camoufox_browser_options())
+
+
+def _enter_camoufox(cm: Any) -> Any:
+    """Enter Camoufox and turn missing pinned builds into a setup error."""
+    try:
+        return cm.__enter__()
+    except Exception as exc:
+        message = str(exc)
+        if "not installed" in message or (
+            "Browser version" in message and "not found" in message
+        ):
+            raise _camoufox_missing_error() from exc
+        raise
+
+
 # --------------------------------------------------------------------------- #
 # Camoufox (PRIMARY)
 # --------------------------------------------------------------------------- #
@@ -352,8 +415,8 @@ def _launch_camoufox(
     base_prefs = opts.pop(_FIREFOX_PREFS_KEY, None)
     merged_prefs = _merge_firefox_prefs(base_prefs, caller_prefs)
 
-    # Caller passthrough (proxy, block_images, window, fingerprint, ...).
-    opts.update(extra)
+    # Caller options and the pinned browser must reach validation together.
+    _prepare_camoufox_options(opts, extra)
 
     # Only set firefox_user_prefs when there is actually something to set, so we
     # don't hand Camoufox an empty dict when no prefs were requested either side.
@@ -363,7 +426,7 @@ def _launch_camoufox(
     cm = Camoufox(**opts)
     # Camoufox is itself a context manager that owns the Playwright lifetime.
     # Drive it manually so the Session can own teardown.
-    browser_or_ctx = cm.__enter__()
+    browser_or_ctx = _enter_camoufox(cm)
 
     if profile_dir:
         # Persistent context: the returned object IS the BrowserContext.

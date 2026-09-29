@@ -6,6 +6,14 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-09-29
+
+### Fixed
+
+- Pinned Camoufox to Python package `0.5.6` and browser `152.0.4-beta.30`.
+- Wraith no longer fetches a newer browser with an incompatible config schema.
+- Missing pinned browsers now show the exact install command.
+
 ## [0.6.3] - 2026-09-29
 
 ### Fixed

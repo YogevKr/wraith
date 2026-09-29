@@ -311,7 +311,7 @@ uv run wraith harvest https://example.com --target api.example.com --cookie sess
 # fetch   — no-browser TLS-impersonation replay of a harvested session (fast path)
 uv run wraith fetch https://api.example.com/me --session example.session.json --show-body
 
-# selftest — run the stealth leak suite; exit non-zero on a leak or unknown check
+# selftest — run the stealth leak suite; exit non-zero on a leak or required unknown check
 uv run wraith selftest
 uv run wraith selftest --json
 

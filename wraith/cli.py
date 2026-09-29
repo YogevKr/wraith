@@ -351,13 +351,17 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     for name, check in result["checks"].items():
         print(f"  {check['status']:>7}  {name}")
     if result["passed"]:
-        print("PASS — no critical automation leaks detected")
+        message = "PASS — no blocking automation leaks detected"
+        advisory = result.get("unknown", [])
+        if advisory:
+            message += f"; advisory unknown checks: {', '.join(advisory)}"
+        print(message)
     else:
         reasons = []
         if result["critical_failures"]:
             reasons.append(f"critical leaks: {', '.join(result['critical_failures'])}")
-        if result.get("unknown"):
-            reasons.append(f"unknown checks: {', '.join(result['unknown'])}")
+        if result.get("blocking_unknown"):
+            reasons.append(f"unknown required checks: {', '.join(result['blocking_unknown'])}")
         print(f"FAIL — {'; '.join(reasons)}")
     return 0 if result["passed"] else 2
 

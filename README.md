@@ -258,8 +258,13 @@ exposing unusable DOM buttons.
 `wraith clawd-run --config flow.json` validates a versioned flow and prints a
 plan. Add `--apply` to run the Tailnet, exit check, and vault canary commands.
 Add `--execute` only when the final configured browser command is approved.
-Commands use JSON argv arrays. Wraith captures command output and returns status
-only, so vault values do not enter logs.
+Commands use JSON argv arrays. Version 2 flows must include an
+`exit.identity_command` that returns `tailscale status --json` and an
+`exit.identity_expected` value. Wraith requires `BackendState` to be `Running`,
+`ExitNodeStatus.Online` to be true, and the expected device name, DNS name, ID,
+or Tailscale IP to match. A public IP match alone cannot prove the exit device.
+Wraith captures command output and returns status only, so vault values do not
+enter logs.
 
 Lower-level: launch a session and borrow a warmed identity from your own profile.
 
@@ -306,7 +311,7 @@ uv run wraith harvest https://example.com --target api.example.com --cookie sess
 # fetch   — no-browser TLS-impersonation replay of a harvested session (fast path)
 uv run wraith fetch https://api.example.com/me --session example.session.json --show-body
 
-# selftest — run the stealth leak suite; exit non-zero on a critical leak
+# selftest — run the stealth leak suite; exit non-zero on a leak or unknown check
 uv run wraith selftest
 uv run wraith selftest --json
 

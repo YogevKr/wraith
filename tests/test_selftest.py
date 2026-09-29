@@ -42,6 +42,28 @@ def test_selftest_critical_fail(monkeypatch):
     assert "runtimeEnableLeak" in r["failures"]
 
 
+def test_selftest_unknown_is_not_pass(monkeypatch):
+    monkeypatch.setattr(detect, "bot_detector", lambda page: {
+        "runtimeEnableLeak": None,
+        "navigatorWebdriver": None,
+        "viewport": None,
+        "pwInitScripts": None,
+        "dummyFn": None,
+        "sourceUrlLeak": None,
+    })
+    r = detect.selftest(object())
+    assert r["passed"] is False
+    assert r["failures"] == []
+    assert r["unknown"] == [
+        "runtimeEnableLeak",
+        "navigatorWebdriver",
+        "viewport",
+        "pwInitScripts",
+        "dummyFn",
+        "sourceUrlLeak",
+    ]
+
+
 def test_selftest_exported():
     import wraith
     assert hasattr(wraith, "selftest")

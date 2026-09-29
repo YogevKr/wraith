@@ -746,18 +746,20 @@ def selftest(page: Any) -> dict:
     ``navigatorWebdriver`` / ``pwInitScripts`` / ``sourceUrlLeak`` flips
     ``passed`` to ``False``.
 
-    :returns: ``{checks: {name: {status, raw}}, failures: [...],
+    :returns: ``{checks: {name: {status, raw}}, failures: [...], unknown: [...],
         critical_failures: [...], passed: bool}``.
     """
     raw = bot_detector(page)
     checks = {k: {"status": _normalize_status(v), "raw": v} for k, v in raw.items()}
     failures = [k for k, c in checks.items() if c["status"] == "fail"]
+    unknown = [k for k, c in checks.items() if c["status"] == "unknown"]
     critical = [k for k in _SELFTEST_CRITICAL if checks.get(k, {}).get("status") == "fail"]
     return {
         "checks": checks,
         "failures": failures,
+        "unknown": unknown,
         "critical_failures": critical,
-        "passed": not critical,
+        "passed": not critical and not unknown,
     }
 
 

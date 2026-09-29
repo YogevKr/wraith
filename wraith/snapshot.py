@@ -64,6 +64,17 @@ class Element:
     #: Set by AgentBrowser.snapshot() when this element wasn't in the prior
     #: snapshot (browser-use-style new-element marking; shown with a leading *).
     is_new: bool = False
+    x: float | None = None
+    y: float | None = None
+    width: float | None = None
+    height: float | None = None
+
+    @property
+    def center(self) -> tuple[float, float] | None:
+        """Return the visible screen point used for pointer actions."""
+        if None in (self.x, self.y, self.width, self.height):
+            return None
+        return (self.x + self.width / 2, self.y + self.height / 2)
 
     @property
     def signature(self) -> str:
@@ -120,9 +131,12 @@ class Element:
         head = " ".join(parts)
         body = _clip(self.text, 120)
         mark = "* " if self.is_new else ""
+        point = ""
+        if self.center is not None:
+            point = f" @ ({self.center[0]:.0f},{self.center[1]:.0f})"
         if body:
-            return f"{mark}[{self.index}]<{head}>{body}</{self.tag}>"
-        return f"{mark}[{self.index}]<{head}/>"
+            return f"{mark}[{self.index}]{point}<{head}>{body}</{self.tag}>"
+        return f"{mark}[{self.index}]{point}<{head}/>"
 
 
 @dataclass
@@ -269,6 +283,9 @@ def _parse_elements(raw: Any) -> list[Element]:
         attrs = item.get("attributes")
         if not isinstance(attrs, dict):
             attrs = {}
+        bounds = item.get("bounds")
+        if not isinstance(bounds, dict):
+            bounds = {}
         out.append(
             Element(
                 index=index,
@@ -276,9 +293,22 @@ def _parse_elements(raw: Any) -> list[Element]:
                 role=str(item.get("role") or ""),
                 text=str(item.get("text") or "").strip(),
                 attributes=attrs,
+                x=_number(bounds.get("x")),
+                y=_number(bounds.get("y")),
+                width=_number(bounds.get("width")),
+                height=_number(bounds.get("height")),
             )
         )
     return out
+
+
+def _number(value: Any) -> float | None:
+    """Coerce a browser rectangle value without raising on odd pages."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number else None
 
 
 def _clip(s: str, n: int) -> str:
@@ -305,6 +335,32 @@ def _clip(s: str, n: int) -> str:
 # any stale data-wraith-index / highlight overlay from a previous snapshot.
 # --------------------------------------------------------------------------- #
 
+_POINTER_POINT_JS = r"""(el) => {
+    if (!el || !el.isConnected) return null;
+    const doc = el.ownerDocument;
+    const win = doc.defaultView;
+    const style = win.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility !== 'visible' ||
+        style.pointerEvents === 'none' || Number(style.opacity) === 0) return null;
+    const rect = el.getBoundingClientRect();
+    const left = Math.max(0, rect.left), top = Math.max(0, rect.top);
+    const right = Math.min(win.innerWidth, rect.right);
+    const bottom = Math.min(win.innerHeight, rect.bottom);
+    if (right <= left || bottom <= top) return null;
+    const x = (left + right) / 2, y = (top + bottom) / 2;
+    let hit = doc.elementFromPoint(x, y);
+    // Camoufox exposes ShadowRoot.elementFromPoint; reject ambiguous host hits
+    // on engines that do not. Never infer stacking order from z-index values.
+    while (hit && hit.shadowRoot) {
+        if (typeof hit.shadowRoot.elementFromPoint !== 'function') return null;
+        const inner = hit.shadowRoot.elementFromPoint(x, y);
+        if (!inner || inner === hit) break;
+        hit = inner;
+    }
+    if (!hit || (hit !== el && !el.contains(hit))) return null;
+    return {x, y};
+}"""
+
 _BUILD_DOM_TREE_JS = r"""
 (args) => {
   args = args || {};
@@ -318,9 +374,13 @@ _BUILD_DOM_TREE_JS = r"""
 
   // ---- cleanup any state left by a previous snapshot --------------------- //
   try {
-    document.querySelectorAll('[' + INDEX_ATTR + ']').forEach((el) => {
-      el.removeAttribute(INDEX_ATTR);
-    });
+    const roots = [document];
+    while (roots.length) {
+      for (const el of roots.pop().querySelectorAll('*')) {
+        el.removeAttribute(INDEX_ATTR);
+        if (el.shadowRoot) roots.push(el.shadowRoot);
+      }
+    }
   } catch (e) {}
   try {
     const old = document.getElementById(HIGHLIGHT_CONTAINER_ID);
@@ -415,6 +475,8 @@ _BUILD_DOM_TREE_JS = r"""
     return rect.bottom > 0 && rect.right > 0 && rect.top < vh && rect.left < vw;
   }
 
+  const pointerPoint = __POINTER_POINT__;
+
   function bestText(el) {
     // Prefer an explicit accessible name, then visible text, then safe labels.
     let t = (el.getAttribute('aria-label') || '').trim();
@@ -503,6 +565,9 @@ _BUILD_DOM_TREE_JS = r"""
       if (!isInteractive(node)) continue;
       if (!isVisible(node)) continue;
       if (viewportOnly && !inViewport(node)) continue;
+      const rect = node.getBoundingClientRect();
+      const point = pointerPoint(node);
+      if ((viewportOnly || inViewport(node)) && !point) continue;
 
       const index = counter++;
       node.setAttribute(INDEX_ATTR, String(index));
@@ -512,6 +577,12 @@ _BUILD_DOM_TREE_JS = r"""
         role: elementRole(node),
         text: bestText(node),
         attributes: collectAttrs(node),
+        bounds: {
+          x: point ? Math.max(0, rect.left) : rect.left,
+          y: point ? Math.max(0, rect.top) : rect.top,
+          width: point ? Math.min(win.innerWidth, rect.right) - Math.max(0, rect.left) : rect.width,
+          height: point ? Math.min(win.innerHeight, rect.bottom) - Math.max(0, rect.top) : rect.height,
+        },
       });
     } catch (e) { /* skip pathological node */ }
   }
@@ -553,4 +624,4 @@ _BUILD_DOM_TREE_JS = r"""
 
   return results;
 }
-"""
+""".replace("__POINTER_POINT__", _POINTER_POINT_JS)

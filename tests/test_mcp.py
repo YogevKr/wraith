@@ -12,7 +12,7 @@ import inspect
 import wraith.mcp as m
 from wraith.snapshot import Snapshot
 
-BROWSER_TOOLS = ("navigate", "snapshot", "click", "type_text", "fill_secret", "scroll",
+BROWSER_TOOLS = ("navigate", "snapshot", "click", "type_text", "fill_secret", "fill_vault_item", "scroll",
                  "read", "screenshot", "borrow", "receive_profile")
 
 
@@ -95,3 +95,13 @@ def test_receive_profile_reports_pull_failure(monkeypatch):
     result = asyncio.run(m.receive_profile("wraith1.aaa.bbb"))
     assert "could not receive" in result
     assert "no drop at this slot" in result
+
+
+def test_fill_vault_item_returns_only_success(monkeypatch):
+    class FakeBrowser:
+        def fill_vault_item(self, index, item_id, *, field_kind, provider):
+            assert (index, item_id, field_kind, provider) == (3, "item-123", "password", "vault")
+            return True
+
+    monkeypatch.setattr(m, "_get_browser", lambda: FakeBrowser())
+    assert asyncio.run(m.fill_vault_item(3, "item-123", "password")) is True

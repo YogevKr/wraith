@@ -67,8 +67,10 @@ app = _MCPServer(
         "Each line looks like `[12]<button role=button>Search</button>`; "
         "act on an element by its index with `click(index)` or "
         "`type_text(index, text)`. Use `fill_secret(index, capability)` for an "
-        "opaque secret capability from a registered provider. Use `snapshot()` "
-        "to re-perceive after a change, "
+        "opaque secret capability from a registered provider. Use "
+        "`fill_vault_item(index, item_id, field_kind)` for a vault-backed "
+        "opaque fill that returns only success or failure. "
+        "Use `snapshot()` to re-perceive after a change, "
         "`scroll()` to reveal more, `read()` for the page as markdown, and "
         "`screenshot()` to capture an image. `detect_waap(url)` fingerprints a "
         "site's bot defenses. `borrow(domain)` injects a warmed, authenticated "
@@ -297,6 +299,28 @@ async def fill_secret(
         lambda: _render(
             _get_browser().fill_secret(index, parsed),
             include_snapshot,
+        )
+    )
+
+
+@app.tool()
+async def fill_vault_item(
+    index: int,
+    item_id: str,
+    field_kind: str,
+    provider: str = "vault",
+) -> bool:
+    """Fill a visible field from a vault item.
+
+    The registered provider resolves the item inside Wraith. This tool returns
+    only ``true`` or an error without secret text. It never returns a snapshot.
+    """
+    return await _run(
+        lambda: _get_browser().fill_vault_item(
+            index,
+            item_id,
+            field_kind=field_kind,
+            provider=provider,
         )
     )
 

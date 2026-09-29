@@ -6,6 +6,20 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-29
+
+### Added
+
+- Opaque vault-item fills. A registered provider resolves an item inside Wraith, and the MCP tool returns only success.
+- Coordinate-based interactive snapshots. Covered controls stay out of the action list, and clicks use visible points.
+- Redacted browser action errors and a versioned `clawd-run` flow for Tailnet setup, home-exit checks, vault canaries, and the final browser command.
+- Regression tests and documentation for the secure Clawd flow.
+
+### Security
+
+- Vault material is cleared after each fill. Managed command output stays inside Wraith.
+- The release provides a provider interface. It does not include a direct 1Password or `opgate` adapter.
+
 ## [0.5.0] - 2026-09-29
 
 ### Added

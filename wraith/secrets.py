@@ -23,9 +23,13 @@ __all__ = [
     "SecretProvider",
     "SecretProviderError",
     "SecretRequestContext",
+    "VaultItemProvider",
     "get_secret_provider",
+    "get_vault_provider",
     "register_secret_provider",
+    "register_vault_provider",
     "unregister_secret_provider",
+    "unregister_vault_provider",
 ]
 
 SECRET_FIELD_KINDS = frozenset(
@@ -256,8 +260,25 @@ class SecretProvider(Protocol):
         """Validate and consume the handle, then return secret material."""
 
 
+@runtime_checkable
+class VaultItemProvider(Protocol):
+    """Authorize and resolve a vault item into short-lived browser material."""
+
+    def authorize_item(self, item_id: str, origin: str) -> bool:
+        """Return true only when this item is allowed for the page origin."""
+
+    def resolve_item(
+        self,
+        item_id: str,
+        context: SecretRequestContext,
+    ) -> SecretMaterial:
+        """Validate the item and return material without exposing its value."""
+
+
 _PROVIDERS: dict[str, SecretProvider] = {}
 _PROVIDERS_LOCK = threading.RLock()
+_VAULT_PROVIDERS: dict[str, VaultItemProvider] = {}
+_VAULT_PROVIDERS_LOCK = threading.RLock()
 
 
 def register_secret_provider(
@@ -290,4 +311,39 @@ def get_secret_provider(name: str) -> SecretProvider:
         provider = _PROVIDERS.get(name)
     if provider is None:
         raise SecretProviderError(f"Secret provider {name!r} is not registered")
+    return provider
+
+
+def register_vault_provider(
+    name: str,
+    provider: VaultItemProvider,
+    *,
+    replace: bool = False,
+) -> None:
+    """Register a provider for opaque vault-item fills."""
+    key = name.strip()
+    if not key:
+        raise ValueError("Vault provider name is required")
+    if not callable(getattr(provider, "authorize_item", None)):
+        raise TypeError("Vault provider must define authorize_item")
+    if not callable(getattr(provider, "resolve_item", None)):
+        raise TypeError("Vault provider must define resolve_item")
+    with _VAULT_PROVIDERS_LOCK:
+        if key in _VAULT_PROVIDERS and not replace:
+            raise ValueError(f"Vault provider {key!r} is already registered")
+        _VAULT_PROVIDERS[key] = provider
+
+
+def unregister_vault_provider(name: str) -> None:
+    """Remove a registered vault provider."""
+    with _VAULT_PROVIDERS_LOCK:
+        _VAULT_PROVIDERS.pop(name, None)
+
+
+def get_vault_provider(name: str) -> VaultItemProvider:
+    """Return a vault provider without exposing its configuration."""
+    with _VAULT_PROVIDERS_LOCK:
+        provider = _VAULT_PROVIDERS.get(name)
+    if provider is None:
+        raise SecretProviderError("The vault provider is not registered")
     return provider

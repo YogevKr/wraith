@@ -68,8 +68,11 @@ from .secrets import (
     SecretRequestContext,
     canonical_origin,
     get_secret_provider,
+    get_vault_provider,
+    SECRET_FIELD_KINDS,
 )
-from .snapshot import Snapshot, take_snapshot
+from .redaction import redacted_exception
+from .snapshot import Snapshot, take_snapshot, _POINTER_POINT_JS
 
 __all__ = ["AgentBrowser", "agent_browser", "ClearFailedError"]
 
@@ -414,9 +417,8 @@ class AgentBrowser:
     def click(self, index: int) -> Snapshot:
         """Click the element with the given snapshot ``index``.
 
-        Acts via ``page.locator('[data-wraith-index="<index>"]').click()``,
-        which requires the element to still carry the attribute stamped by the
-        most recent snapshot.
+        Pins the indexed element, checks actionability, and clicks its current
+        visible point. Legacy snapshots without coordinates use locator clicks.
 
         Args:
             index: The integer index from the current snapshot.
@@ -426,7 +428,7 @@ class AgentBrowser:
             settles.
         """
         pre = self._page_signature()
-        self._locator(index).click()
+        self._pointer_click(index)
         self._wait_for_settle()
         snap = self.snapshot()
         self._set_changed(pre, snap)
@@ -490,7 +492,15 @@ class AgentBrowser:
                 clear attempts (or its content could not be read back at all).
         """
         pre = self._page_signature()
-        locator = self._locator(index)
+        # The pointer selects the visible target. The locator then sends keys
+        # to the focused control without trusting hidden DOM candidates.
+        locator = None
+        try:
+            locator = self._pointer_focus(index)
+        except Exception:
+            pass
+        if locator is None:
+            raise RuntimeError("The browser could not focus the visible target")
 
         if clear:
             self._clear_verified(locator)
@@ -501,12 +511,18 @@ class AgentBrowser:
         try:
             from .behavior import human_type
 
-            human_type(locator, text)
+            human_type(locator, text, click=False)
             typed = True
         except Exception:
             typed = False
         if not typed:
-            locator.fill(text)
+            fill_error = None
+            try:
+                locator.fill(text)
+            except Exception as exc:
+                fill_error = redacted_exception(exc, (text,))
+            if fill_error is not None:
+                raise fill_error
 
         if enter:
             with contextlib.suppress(Exception):
@@ -516,6 +532,94 @@ class AgentBrowser:
         snap = self.snapshot()
         self._set_changed(pre, snap)
         return snap
+
+    def fill_vault_item(
+        self,
+        index: int,
+        item_id: str,
+        *,
+        field_kind: str,
+        provider: str = "vault",
+    ) -> bool:
+        """Fill one visible field from a vault item and return only a boolean.
+
+        The registered vault provider receives the item ID and trusted field
+        context. Wraith returns no field value or snapshot and emits no fill logs.
+        """
+        if not isinstance(item_id, str) or not item_id.strip():
+            raise SecretCapabilityError("The vault item ID is required")
+        kind = str(field_kind).strip().lower().replace("_", "-")
+        if kind not in SECRET_FIELD_KINDS:
+            raise SecretCapabilityError("The vault field kind is invalid")
+
+        origin = canonical_origin(self.current_url)
+        locator = self._locator(index)
+        try:
+            element = locator.element_handle()
+        except Exception:
+            element = None
+        if element is None:
+            raise SecretPolicyError("The target field is not available")
+        metadata = self._secret_field_metadata(element)
+        if not self._secret_field_matches(kind, metadata):
+            raise SecretPolicyError("The target field does not match field_kind")
+        context = SecretRequestContext(
+            origin=origin,
+            frame_origin=origin,
+            field_kind=kind,
+            field_tag=metadata["tag"],
+            field_type=metadata["type"],
+            autocomplete=metadata["autocomplete"],
+            index=int(index),
+        )
+        vault = get_vault_provider(provider)
+        authorized = False
+        authorization_failed = False
+        try:
+            authorized = vault.authorize_item(item_id.strip(), origin) is True
+        except Exception:
+            authorization_failed = True
+        if authorization_failed:
+            raise SecretProviderError("The vault provider failed")
+        if not authorized:
+            raise SecretPolicyError("The vault item is not allowed for this origin")
+
+        material = None
+        resolution_failed = False
+        try:
+            material = vault.resolve_item(item_id.strip(), context)
+        except Exception:
+            resolution_failed = True
+        if resolution_failed:
+            raise SecretProviderError("The vault provider failed")
+        if not isinstance(material, SecretMaterial):
+            raise SecretProviderError("The vault provider returned invalid material")
+
+        browser_failed = False
+        try:
+            if canonical_origin(self.current_url) != origin:
+                raise SecretPolicyError("The current origin changed during vault use")
+            self._click_pointer_target(element)
+            if canonical_origin(self.current_url) != origin:
+                raise SecretPolicyError("The current origin changed during vault use")
+            current_metadata = self._secret_field_metadata(element)
+            if not self._secret_field_matches(kind, current_metadata):
+                raise SecretPolicyError("The target field changed during vault use")
+            if not element.evaluate(_POINTER_POINT_JS):
+                raise SecretPolicyError("The target field is covered or unavailable")
+            self._secret_state.tainted = True
+            element.evaluate("node => node.setAttribute('data-wraith-secret', 'true')")
+            element.fill(material.reveal())
+        except SecretPolicyError:
+            raise
+        except Exception:
+            browser_failed = True
+        finally:
+            material.clear()
+        if browser_failed:
+            raise SecretProviderError("The browser could not fill the vault item")
+        self._wait_for_settle()
+        return True
 
     def fill_secret(
         self,
@@ -809,6 +913,49 @@ class AgentBrowser:
             if match is not None:
                 return self.page.locator(f'[data-wraith-index="{int(match.index)}"]')
         return loc  # let the caller's action raise a clear error if truly gone
+
+    def _pointer_click(self, index: int) -> None:
+        """Pin the indexed node, then click its current visible point once."""
+        failed = False
+        try:
+            element = self.last_snapshot.by_index(index) if self.last_snapshot else None
+            locator = self._locator(index)
+            if element is None or element.center is None:
+                locator.click()
+            else:
+                self._click_pointer_target(locator.element_handle())
+        except Exception:
+            failed = True
+        if failed:
+            raise RuntimeError("The browser could not click the visible target")
+
+    def _click_pointer_target(self, target: Any) -> None:
+        """Check actionability on a pinned node, then send one pointer click."""
+        if target is None:
+            raise RuntimeError("The visible target is unavailable")
+        target.scroll_into_view_if_needed()
+        # Trial mode checks enabled/stable state without dispatching input.
+        target.click(trial=True, timeout=1500)
+        point = target.evaluate(_POINTER_POINT_JS)
+        if not point:
+            raise RuntimeError("The visible target is covered or unavailable")
+        # Never retry a dispatched click: it may have submitted a purchase.
+        self.page.mouse.click(point["x"], point["y"])
+
+    def _pointer_focus(self, index: int) -> Any:
+        """Return the pinned field after focusing its current visible point."""
+        prior = self.last_snapshot.by_index(index) if self.last_snapshot else None
+        locator = self._locator(index)
+        if prior is not None and prior.center is not None:
+            target = locator.element_handle()
+            self._click_pointer_target(target)
+            return target
+        else:
+            focus = getattr(locator, "focus", None)
+            if callable(focus):
+                focus()
+        # Legacy snapshots also support keyboard-only virtual editor inputs.
+        return locator
 
     def _read_field_value(self, locator: Any) -> Optional[str]:
         """Best-effort read of ``locator``'s current text, for clear-verification.

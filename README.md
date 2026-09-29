@@ -99,6 +99,9 @@ is needed at all: a real Firefox engine clears the challenge natively, and
 - **Opaque secret fills** — registered providers resolve secret handles only
   after Wraith checks the origin, field kind, expiry, and use limit. Snapshot
   output omits editable `value` attributes.
+- **Opaque vault fills** — a registered vault provider receives an item ID and
+  trusted field context. `fill_vault_item` returns only success or failure.
+  Wraith clears the secret buffer before returning and hides provider errors.
 - **MCP-native** — a stdio MCP server (`wraith-mcp`) exposing the agent browser
   as tools (per-call snapshot control, inline screenshots, tabs, `fetch`) for
   any MCP client.
@@ -237,6 +240,26 @@ default. A provider registration in another process does not affect it.
 Wraith has no Instinct Vault provider. Direct use needs an Instinct provider or
 broker adapter that Wraith can reach. See [Security Policy](SECURITY.md#opaque-secret-capabilities)
 for trust limits and observed Instinct behavior.
+
+Vault adapters implement `authorize_item(item_id, origin)` and
+`resolve_item(item_id, context)`, then register with `register_vault_provider()`. The MCP `fill_vault_item` tool accepts an item ID,
+field kind, and provider name. It returns only `true` after the visible target
+accepts the value. It returns no snapshot or secret value.
+
+### Interactive coordinates
+
+Snapshots include only visible viewport elements whose center receives the
+pointer. Each line includes a coordinate such as `@ (640,412)`. `click()` and
+text entry use that point. A modal therefore hides covered controls instead of
+exposing unusable DOM buttons.
+
+### Managed Clawd flow
+
+`wraith clawd-run --config flow.json` validates a versioned flow and prints a
+plan. Add `--apply` to run the Tailnet, exit check, and vault canary commands.
+Add `--execute` only when the final configured browser command is approved.
+Commands use JSON argv arrays. Wraith captures command output and returns status
+only, so vault values do not enter logs.
 
 Lower-level: launch a session and borrow a warmed identity from your own profile.
 

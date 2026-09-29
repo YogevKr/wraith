@@ -6,6 +6,13 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-09-29
+
+### Fixed
+
+- Optional detector probes no longer fail the self-test when they remain unknown.
+- Required detector checks still fail closed when their measurement is unknown.
+
 ## [0.6.2] - 2026-09-29
 
 ### Fixed

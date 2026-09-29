@@ -54,6 +54,12 @@ def test_selftest_unknown_is_not_pass(monkeypatch):
     r = detect.selftest(object())
     assert r["passed"] is False
     assert r["failures"] == []
+    assert r["blocking_unknown"] == [
+        "runtimeEnableLeak",
+        "navigatorWebdriver",
+        "viewport",
+        "pwInitScripts",
+    ]
     assert r["unknown"] == [
         "runtimeEnableLeak",
         "navigatorWebdriver",
@@ -61,6 +67,28 @@ def test_selftest_unknown_is_not_pass(monkeypatch):
         "pwInitScripts",
         "dummyFn",
         "sourceUrlLeak",
+    ]
+
+
+def test_selftest_advisory_unknown_does_not_fail(monkeypatch):
+    monkeypatch.setattr(detect, "bot_detector", lambda page: {
+        "runtimeEnableLeak": "pass",
+        "navigatorWebdriver": "pass",
+        "viewport": "pass",
+        "pwInitScripts": "pass",
+        "dummyFn": "unknown",
+        "sourceUrlLeak": "unknown",
+        "mainWorldExecution": "unknown",
+        "exposeFunctionLeak": "unknown",
+    })
+    r = detect.selftest(object())
+    assert r["passed"] is True
+    assert r["blocking_unknown"] == []
+    assert r["unknown"] == [
+        "dummyFn",
+        "sourceUrlLeak",
+        "mainWorldExecution",
+        "exposeFunctionLeak",
     ]
 
 

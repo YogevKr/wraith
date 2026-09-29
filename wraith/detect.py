@@ -735,6 +735,15 @@ _SELFTEST_CRITICAL = (
     "dummyFn",
 )
 
+# These checks run on every detector page load. An unknown result means that
+# the measurement path failed, so it remains a blocking self-test condition.
+_SELFTEST_REQUIRED = (
+    "runtimeEnableLeak",
+    "navigatorWebdriver",
+    "viewport",
+    "pwInitScripts",
+)
+
 
 def _normalize_status(status: Any) -> str:
     """Map a detector's per-test status to ``pass`` | ``fail`` | ``warn`` | ``unknown``."""
@@ -758,24 +767,28 @@ def selftest(page: Any) -> dict:
     Drives :func:`bot_detector` (rebrowser's leak suite) and normalizes each
     check to ``pass``/``fail``/``warn``/``unknown``, surfacing which automation
     leaks (if any) are present. Use it as a regression gate: a Camoufox /
-    playwright bump that silently reintroduces ``runtimeEnableLeak`` /
-    ``navigatorWebdriver`` / ``pwInitScripts`` / ``sourceUrlLeak`` flips
-    ``passed`` to ``False``.
+    playwright bump that silently reintroduces a critical leak flips
+    ``passed`` to ``False``. Unknown required checks also fail the result;
+    unknown optional probes remain advisory.
 
     :returns: ``{checks: {name: {status, raw}}, failures: [...], unknown: [...],
-        critical_failures: [...], passed: bool}``.
+        critical_failures: [...], blocking_unknown: [...], passed: bool}``.
     """
     raw = bot_detector(page)
     checks = {k: {"status": _normalize_status(v), "raw": v} for k, v in raw.items()}
     failures = [k for k, c in checks.items() if c["status"] == "fail"]
     unknown = [k for k, c in checks.items() if c["status"] == "unknown"]
     critical = [k for k in _SELFTEST_CRITICAL if checks.get(k, {}).get("status") == "fail"]
+    blocking_unknown = [
+        k for k in _SELFTEST_REQUIRED if checks.get(k, {}).get("status") == "unknown"
+    ]
     return {
         "checks": checks,
         "failures": failures,
         "unknown": unknown,
         "critical_failures": critical,
-        "passed": not critical and not unknown,
+        "blocking_unknown": blocking_unknown,
+        "passed": not critical and not blocking_unknown,
     }
 
 

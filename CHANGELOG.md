@@ -6,6 +6,18 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-17
+
+### Added
+
+- Network log: `AgentBrowser.network(contains, resource_type, limit)` lists the
+  last 500 requests of the browser context (method, URL, type, status, content
+  type, failure), and `AgentBrowser.network_response(request_id)` returns a
+  response body. MCP tools `network_requests` and `network_response` (in
+  slices, like `read`). Use them to find a site's JSON API.
+- After a secret fill, response bodies are refused and URLs lose their query
+  strings. The log keeps no request headers or request bodies.
+
 ## [0.11.0] - 2026-10-17
 
 ### Added

@@ -154,6 +154,18 @@ operator names folders: `AgentBrowser(upload_dirs=[...])`,
 - The domain allowlist still applies: the page that receives the file must be
   on an allowed host.
 
+## Network Log
+
+`AgentBrowser.network()` and the MCP `network_requests` tool list the last 500
+requests of the browser context. `network_response` returns a response body.
+
+- The log keeps no request headers and no request bodies.
+- After a secret fill, response bodies are refused (pass
+  `allow_secret_tainted=True` to accept the risk) and URLs come without query
+  strings. A response can echo the secret, and a URL can carry a session token.
+- Before a secret fill, URLs keep their query strings. A page can put a token
+  in a URL that the agent then reads.
+
 ## Profile Sync Dead-Drop
 
 `wraith profile sync` moves a cookie jar from a laptop to a remote Wraith over a

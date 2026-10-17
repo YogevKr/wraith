@@ -61,6 +61,7 @@ from . import engine as _engine
 from .behavior import click_hold_ms, key_hold_ms
 from .identity import export_storage_state
 from .domains import DomainPolicy
+from .netlog import NetworkLog
 from .uploads import UploadPolicy, require_policy
 from .secrets import (
     SecretCapability,
@@ -404,6 +405,8 @@ class AgentBrowser:
         self.domains: Optional[DomainPolicy] = DomainPolicy.parse(allowed_domains)
         self._domains_installed: bool = False
         self.uploads: Optional[UploadPolicy] = UploadPolicy.parse(upload_dirs)
+        self.network_log = NetworkLog()
+        self._network_installed: bool = False
 
         # When we self-launch with a reputation source, the Camoufox engine must
         # un-partition 3rd-party cookies so the borrowed google.com reputation
@@ -442,6 +445,11 @@ class AgentBrowser:
         if self.domains is not None and not self._domains_installed:
             self.domains.install(self._session.context)
             self._domains_installed = True
+        if not self._network_installed:
+            self._network_installed = True
+            # A session object without Playwright events has no network log.
+            with contextlib.suppress(AttributeError):
+                self.network_log.install(self._session.context)
         return self._session
 
     @property
@@ -530,11 +538,7 @@ class AgentBrowser:
         Pass ``for_chromium=True`` when a Chromium tool such as agent-browser
         will load the file (see :func:`wraith.identity.chromium_storage_state`).
         """
-        if self.secret_tainted and not allow_secret_tainted:
-            raise SecretPolicyError(
-                "Storage export is blocked after a secret fill. "
-                "Pass allow_secret_tainted=True to accept the risk."
-            )
+        self._refuse_after_secret("Storage export is", allow_secret_tainted)
         return export_storage_state(self.context, path, for_chromium=for_chromium)
 
     # ------------------------------------------------------------------ #
@@ -552,11 +556,8 @@ class AgentBrowser:
             :attr:`last_snapshot`.
         """
         allow_secret_tainted = bool(kw.pop("allow_secret_tainted", False))
-        if kw.get("highlight") and self.secret_tainted and not allow_secret_tainted:
-            raise SecretPolicyError(
-                "Highlighted snapshots are blocked after a secret fill. "
-                "Pass allow_secret_tainted=True to accept the risk."
-            )
+        if kw.get("highlight"):
+            self._refuse_after_secret("Highlighted snapshots are", allow_secret_tainted)
         self._enforce_location()
         if self.domains is not None:
             kw.setdefault("frame_filter", self.domains.allows)
@@ -1211,14 +1212,39 @@ class AgentBrowser:
             The PNG image bytes.
         """
         self._enforce_location()
-        if self.secret_tainted and not allow_secret_tainted:
-            raise SecretPolicyError(
-                "Screenshots are blocked after a secret fill. "
-                "Pass allow_secret_tainted=True to accept the risk."
-            )
+        self._refuse_after_secret("Screenshots are", allow_secret_tainted)
         if path is not None:
             return self.page.screenshot(path=path, scale=scale)
         return self.page.screenshot(scale=scale)
+
+    def network(
+        self, contains: str = "", resource_type: str = "", limit: int = 50
+    ) -> list[dict]:
+        """The last ``limit`` requests whose URL contains ``contains``.
+
+        ``resource_type`` filters by Playwright's type (``xhr``, ``fetch``,
+        ``document``, ``script``, ``image``...). Each dict has ``id``,
+        ``method``, ``url``, ``type``, ``status``, ``content_type`` and
+        ``failure``; pass the ``id`` to :meth:`network_response`. After a
+        secret fill, URLs come without their query strings.
+        """
+        self.session  # the log starts with the session
+        entries = self.network_log.entries(
+            contains=contains, resource_type=resource_type, limit=limit
+        )
+        return [entry.to_dict(strip_query=self.secret_tainted) for entry in entries]
+
+    def network_response(
+        self, request_id: int, *, allow_secret_tainted: bool = False
+    ) -> str:
+        """The response body of request ``request_id`` from :meth:`network`.
+
+        Text bodies (HTML, JSON, JavaScript, XML) come back decoded; binary
+        bodies as a one-line note. Blocked after a secret fill, because a
+        response can echo the secret or a session token.
+        """
+        self._refuse_after_secret("Response bodies are", allow_secret_tainted)
+        return self.network_log.body(request_id)
 
     # ------------------------------------------------------------------ #
     # Properties
@@ -1243,6 +1269,14 @@ class AgentBrowser:
     def secret_tainted(self) -> bool:
         """Return true after a secret reaches the browser session."""
         return self._secret_state.tainted
+
+    def _refuse_after_secret(self, what: str, allow: bool) -> None:
+        """Raise when output that can expose a filled secret is requested."""
+        if self.secret_tainted and not allow:
+            raise SecretPolicyError(
+                f"{what} blocked after a secret fill. "
+                "Pass allow_secret_tainted=True to accept the risk."
+            )
 
     # ------------------------------------------------------------------ #
     # Lifecycle

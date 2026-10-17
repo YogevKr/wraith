@@ -189,6 +189,8 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | `select_option(index, option)` | choose an option of a `<select>` by value or label; an unknown option raises with the option list | `Snapshot` |
 | `upload_file(index, paths)` | set files on a file input, or click an upload button and fill its file chooser; each file must be inside `upload_dirs` (off by default) | `Snapshot` |
 | `go_back()` / `go_forward()` | move through the tab's history | `Snapshot` |
+| `network(contains="", resource_type="", limit=50)` | the last requests of the context (`id`, `method`, `url`, `type`, `status`, `content_type`, `failure`); no query strings after a secret fill | `list[dict]` |
+| `network_response(request_id)` | the response body as text, or a one-line note for binary data; refused after a secret fill | `str` |
 | `wait_for(text=None, seconds=5)` | wait until `text` is in the main frame's visible text (at most 60 s), else raise `TimeoutError`; without `text`, wait `seconds` | `Snapshot` |
 | `read()` | readable markdown of the page (markdownify on `page.content()`, else `inner_text('body')`) | `str` |
 | `get_text(index=None)` | text of one element, or the whole page | `str` |
@@ -276,6 +278,8 @@ operates on one persistent session.
 | `upload_file` | `upload_file(index: int, paths: list[str])` | new snapshot text; refused outside `--upload-dir` folders |
 | `go_back` / `go_forward` | `go_back()` / `go_forward()` | new snapshot text |
 | `wait_for` | `wait_for(text: str="", seconds: float=5)` | new snapshot text |
+| `network_requests` | `network_requests(contains: str="", resource_type: str="", limit: int=50)` | `#id METHOD status type url` lines |
+| `network_response` | `network_response(request_id: int, start: int=0, max_chars: int=20000)` | one slice of the response body |
 | `read` | `read(start: int=0, max_chars: int=20000)` | one slice of the page as markdown; the last line gives the next `start` |
 | `screenshot` | `screenshot()` | inline PNG at CSS scale (one pixel per `click_at` unit) |
 | `detect_waap` | `detect_waap(url: str)` | list of detected WAAP vendors |

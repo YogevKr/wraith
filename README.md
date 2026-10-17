@@ -458,8 +458,8 @@ A cookie jar is the session past 2FA — keep syncs domain-scoped, and see
 Wraith ships a stdio MCP server (`wraith-mcp`) that exposes the agent browser as
 tools — `navigate`, `snapshot`, `click`, `click_at`, `click_frame`, `type_text`,
 `press_key`, `select_option`, `upload_file`, `go_back`, `go_forward`,
-`wait_for`, `fill_secret`, `scroll`, `read`, `screenshot`, `detect_waap`,
-`borrow`, and `receive_profile`. Wire it into an MCP
+`wait_for`, `network_requests`, `network_response`, `fill_secret`, `scroll`,
+`read`, `screenshot`, `detect_waap`, `borrow`, and `receive_profile`. Wire it into an MCP
 client such as Claude Code:
 
 ```bash
@@ -477,6 +477,12 @@ gives the `read(start=...)` call for the next slice. `upload_file` is off until
 you allow folders: `wraith mcp --upload-dir ~/agent-uploads` (repeatable) or
 `WRAITH_UPLOAD_DIRS`. The server sends stray `print` output to stderr, so a
 library that prints cannot corrupt the stdio protocol.
+
+`network_requests(contains, resource_type)` lists the browser's recent requests
+(`#id METHOD status type url`); `network_response(request_id)` returns a
+response body. Use them to find the JSON API a page calls, then call it with
+`fetch`. After a secret fill, bodies are refused and URLs lose their query
+strings.
 
 ### (d) Hand off a session to agent-browser
 

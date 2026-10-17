@@ -92,7 +92,10 @@ app = _MCPServer(
         "`select_option(index, option)` picks from a <select>; "
         "`upload_file(index, paths)` uploads local files from the folders the "
         "server allows; `go_back()` / `go_forward()` move through history; "
-        "`wait_for(text)` waits until text shows. `detect_waap(url)` fingerprints a "
+        "`wait_for(text)` waits until text shows. "
+        "`network_requests()` lists the page's requests and "
+        "`network_response(request_id)` returns a response body, to find a "
+        "site's JSON API. `detect_waap(url)` fingerprints a "
         "site's bot defenses. `borrow(domain)` injects a warmed, authenticated "
         "identity (cookies) from a real Firefox/Zen profile on this machine so the "
         "browser navigates as that already-logged-in user. "
@@ -561,8 +564,13 @@ async def read(start: int = 0, max_chars: int = _READ_DEFAULT_CHARS) -> str:
     return _read_slice(text, start, max_chars)
 
 
-def _read_slice(text: str, start: int, max_chars: int) -> str:
-    """One marked slice of ``text`` and, for a long page, where it ends."""
+def _read_slice(
+    text: str, start: int, max_chars: int, more: str = "read(start={end})"
+) -> str:
+    """One marked slice of ``text`` and, for long text, where it ends.
+
+    ``more`` is the call that reads on; ``{end}`` becomes the next start.
+    """
     size = min(max(int(max_chars), 1000), _READ_MAX_CHARS)
     begin = min(max(int(start), 0), len(text))
     end = min(begin + size, len(text))
@@ -571,8 +579,37 @@ def _read_slice(text: str, start: int, max_chars: int) -> str:
         return body
     note = f"\n[Characters {begin}-{end} of {len(text)}."
     if end < len(text):
-        note += f" Call read(start={end}) for more."
+        note += f" Call {more.format(end=end)} for more."
     return body + note + "]"
+
+
+@app.tool()
+async def network_requests(
+    contains: str = "", resource_type: str = "", limit: int = 50
+) -> str:
+    """List the browser's recent requests: ``#id METHOD status type url``.
+
+    Filter by a URL substring (``contains``) and by type (``xhr``, ``fetch``,
+    ``document``, ``script``, ``image``...). Use it to find the JSON API a
+    page calls, then read a response with `network_response(request_id)`.
+    Requests the domain allowlist refused show as FAILED."""
+
+    from .netlog import describe
+
+    entries = await _run(lambda: _get_browser().network(contains, resource_type, limit))
+    return _untrusted("\n".join(map(describe, entries)) or "(no matching requests)")
+
+
+@app.tool()
+async def network_response(
+    request_id: int, start: int = 0, max_chars: int = _READ_DEFAULT_CHARS
+) -> str:
+    """Return the response body of request ``request_id`` (from
+    `network_requests`), in slices like `read`. Binary bodies come back as a
+    one-line note. Blocked after a secret fill."""
+    body = await _run(lambda: _get_browser().network_response(request_id))
+    more = f"network_response(request_id={int(request_id)}, start={{end}})"
+    return _read_slice(body, start, max_chars, more=more)
 
 
 @app.tool()

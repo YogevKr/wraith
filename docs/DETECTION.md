@@ -295,7 +295,7 @@ So the toolkit can grade its own stealth before hitting a real target:
   - `runtimeEnableLeak` — CDP `Runtime.enable` leak (patchright suppresses this).
   - `navigatorWebdriver` — `navigator.webdriver === true`.
   - `viewport` — flags the **Playwright default `1280x720`** as a bot signal →
-    use `viewport=None`.
+    use `no_viewport=True` (in Python, `viewport=None` keeps the default).
   - `pwInitScripts` — Playwright init-script residue.
   - `dummyFn` — exposed function leak.
   - `sourceUrlLeak` — injected-script source-URL leak.

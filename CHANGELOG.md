@@ -6,6 +6,20 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-17
+
+### Fixed
+
+- Chromium contexts no longer emulate Playwright's 1280x720 viewport and
+  screen. In Playwright for Python, `viewport=None` is the same as leaving it
+  out, so Wraith's `viewport=None` kept the emulation. Headed Chromium
+  reported a 1280x720 screen inside a 1282x800 window; it now reports the real
+  screen and window. Wraith uses `no_viewport=True`, and the docs say so.
+
+### Added
+
+- The live fingerprint check runs headed Chromium too.
+
 ## [0.12.0] - 2026-10-17
 
 ### Added

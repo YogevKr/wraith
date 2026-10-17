@@ -179,7 +179,7 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 def _viewport_size(page: Any) -> tuple[float, float]:
     """Best-effort viewport size; fall back to a common desktop size.
 
-    Note Wraith runs with viewport=None on the Chromium path (the default
+    Note Wraith runs with no_viewport=True on the Chromium path (the default
     1280x720 viewport is itself a bot tell), so we probe the real window via
     the DOM when possible.
     """

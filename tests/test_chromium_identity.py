@@ -139,7 +139,7 @@ def test_headed_keeps_window_and_user_agent(fake_pw, monkeypatch):
     (launch_kw,) = _calls(log, "launch")
     assert "channel" not in launch_kw
     (ctx,) = _calls(log, "new_context")
-    assert ctx == {"viewport": None}
+    assert ctx == {"no_viewport": True}
 
 
 def test_caller_options_win(fake_pw):

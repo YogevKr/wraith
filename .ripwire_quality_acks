@@ -1,5 +1,6 @@
 # ripwire quality acks v1 — written by --quality-ack; a finding stays suppressed until it worsens past its acked magnitude
 # format: ack <kind> <16-hex-key> <ackNow> [cid=<16-hex-content-id>] [by=<scope that acked it>] <reason to end of line> — one per line, kept SORTED by (kind,key) on every write (merge-friendly)
+ack dead-code:preexisting 5aed49639147ed89 0 cid=dd657acbf30ab68a version bump; test fake click that must never run (proves upload refuses before clicking)
 ack duplication 0143618d7f58fc33 18 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication 15c2850424680bfb 24 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication 1ce2a2e57f33e570 25 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
@@ -64,7 +65,7 @@ ack short-horizon-churn 5cc5bb06e26efb73 11 cid=b7b949048955c46b race fixes: nav
 ack short-horizon-churn 629ef977fc849573 3 cid=c89bf676baadfe09 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 6572f30e9932a654 4 cid=37c0b0fd22026597 stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 65a07f4196ef06c9 3 cid=cebbdba602618616 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
-ack short-horizon-churn 66237ee2e6eeadce 17 cid=68dc8ef823dff206 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets | prior: new public API: drag; version bump; small test fakes
+ack short-horizon-churn 66237ee2e6eeadce 18 cid=5f598ff81e3f224f version bump; test fake click that must never run (proves upload refuses before clicking) | prior: snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack short-horizon-churn 663387691dbed52d 4 cid=18d774624128b83d stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 6909ddc7ad6aff71 2 cid=b91a23de4ee9a3ee snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack short-horizon-churn 6bc9443f2681c693 4 cid=432f893720cdd97e stacked fix: snapshot index map in the isolated world; fakes answer the index lookup | prior: stacked fix: click and key hold times reach the input helpers and their test stubs
@@ -77,7 +78,7 @@ ack short-horizon-churn 8041d2adab8608ec 3 cid=27b37c4439d0c8f4 stacked fix: cli
 ack short-horizon-churn 8145fd4be9c160bd 2 cid=658b1d6470295591 follow-up fix: no_viewport for Chromium contexts; version bump; headed case in live fingerprint test
 ack short-horizon-churn 85ac0208c1882f83 4 cid=511597afe97317a6 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 89e53f399b4b5922 4 cid=81d22f0570649198 stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
-ack short-horizon-churn 8c57d66d83c05660 16 cid=ced08acb73f0ae16 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets | prior: new public API: drag; version bump; small test fakes
+ack short-horizon-churn 8c57d66d83c05660 17 cid=837bfecd09670c47 version bump; test fake click that must never run (proves upload refuses before clicking) | prior: snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack short-horizon-churn 8c58adf72c0ea5d0 10 cid=f780a3a8c3badecb follow-up fix: select_option types the label for trusted events; version bump
 ack short-horizon-churn 8e0b617291abd8cf 3 cid=208a24687c043a9a stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 914f2c0ebfa44719 5 cid=c2c930fcc6cb1b03 race fixes: navigation wait after the action; test fakes for request/commit events; version bump
@@ -86,6 +87,7 @@ ack short-horizon-churn 98ee2fc418cb2026 7 cid=c324edcb59ae9abf stacked fix: sna
 ack short-horizon-churn 9a5967f8bb3f5738 9 cid=7b4d877257cb22ec stacked release: version bump, MCP instructions and paged-read helper per PR
 ack short-horizon-churn 9aa8a49f854cf41e 2 cid=14a2dcb7c21753d6 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack short-horizon-churn 9c67fe694a3f1cf4 4 cid=c21f62ade26dfe9e follow-up fix: no_viewport for Chromium contexts; version bump; headed case in live fingerprint test
+ack short-horizon-churn 9f49222024afa625 6 cid=8e7d4483b8ec3ee7 version bump; test fake click that must never run (proves upload refuses before clicking)
 ack short-horizon-churn a13067fef08ccb35 3 cid=a05142cd8868dfe8 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack short-horizon-churn a2f3bb42396296c9 5 cid=b7ad3190b7c0241e race fixes: navigation wait after the action; test fakes for request/commit events; version bump
 ack short-horizon-churn a5bd311fd1843aaa 5 cid=45a7c6bfb3339b5d race fixes: navigation wait after the action; test fakes for request/commit events; version bump

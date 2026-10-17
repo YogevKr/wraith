@@ -107,6 +107,9 @@ every signal mutually consistent:
 - **`geoip=True`** (Camoufox) — derive timezone + locale from the **exit IP**.
   If you proxy through a German IP, your timezone, locale, and `Accept-Language`
   must all read German. A US locale behind a German IP is a tell.
+- **A stable page language.** With `geoip` and no proxy, Wraith passes this
+  computer's locale to Camoufox; otherwise Camoufox draws a random language
+  for the IP's country on every launch. Pass `locale=` to choose one.
 - **`locale` must match the region** you're presenting (and match
   `navigator.languages`, which Reblaze checks for consistency).
 - **WebGL renderer:** AVOID software renderers in detection-sensitive contexts.

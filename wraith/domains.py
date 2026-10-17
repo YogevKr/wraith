@@ -20,6 +20,8 @@ import re
 from typing import Any, Iterable, Optional
 from urllib.parse import urlsplit
 
+from ._listspec import ListSpec
+
 __all__ = ["DomainNotAllowedError", "DomainPolicy"]
 
 _NETWORK_SCHEMES = frozenset({"http", "https", "ws", "wss"})
@@ -31,8 +33,12 @@ class DomainNotAllowedError(PermissionError):
     """A URL's host is outside the browser's domain allowlist."""
 
 
-class DomainPolicy:
-    """Hosts an agent browser may contact, and the routes that enforce them."""
+class DomainPolicy(ListSpec):
+    """Hosts an agent browser may contact, and the routes that enforce them.
+
+    :meth:`parse` takes ``"a.com,*.b.com"`` or a list, and returns ``None``
+    when it names no host.
+    """
 
     def __init__(self, patterns: Iterable[str]) -> None:
         cleaned = []
@@ -49,16 +55,6 @@ class DomainPolicy:
         #: How many top-level navigations the routes refused, and the last URL.
         self.blocked_navigations = 0
         self.last_blocked: Optional[str] = None
-
-    @classmethod
-    def parse(cls, value: Any) -> Optional["DomainPolicy"]:
-        """Build a policy from ``"a.com,*.b.com"`` or a list; ``None`` when empty."""
-        if value is None or isinstance(value, DomainPolicy):
-            return value
-        items = value.split(",") if isinstance(value, str) else list(value)
-        if not any(str(item).strip() for item in items):
-            return None
-        return cls(items)
 
     def allows(self, url: str) -> bool:
         """Whether the browser may load ``url``."""

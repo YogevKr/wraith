@@ -517,6 +517,8 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         mcp.configure(proxy=_resolve_proxy(args))
     if args.allowed_domains:
         mcp.set_allowed_domains(args.allowed_domains)
+    if args.upload_dir:
+        mcp.set_upload_dirs(args.upload_dir)
     print("wraith: starting MCP server (stdio)", file=sys.stderr)
     mcp.main()
     return 0
@@ -1090,6 +1092,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="comma-separated host allowlist, e.g. 'example.com,*.example.com' "
         "(or WRAITH_ALLOWED_DOMAINS). The browser refuses other hosts.",
+    )
+    p_mcp.add_argument(
+        "--upload-dir",
+        metavar="DIR",
+        action="append",
+        default=None,
+        help="folder the upload_file tool may read from; repeat for more "
+        "(or WRAITH_UPLOAD_DIRS). Without one, uploads are off.",
     )
     p_mcp.set_defaults(func=cmd_mcp)
 

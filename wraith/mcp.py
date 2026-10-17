@@ -29,6 +29,7 @@ Run it
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import secrets
 import sys
@@ -85,8 +86,13 @@ app = _MCPServer(
         "`fill_vault_item(index, item_id, field_kind)` for a vault-backed "
         "opaque fill that returns only success or failure. "
         "Use `snapshot()` to re-perceive after a change, "
-        "`scroll()` to reveal more, `read()` for the page as markdown, and "
-        "`screenshot()` to capture an image. `detect_waap(url)` fingerprints a "
+        "`scroll()` to reveal more, `read()` for the page as markdown (in pages; "
+        "follow its `read(start=...)` hint), and `screenshot()` to capture an image. "
+        "`press_key(key)` sends Escape, Tab, arrow keys or Enter; "
+        "`select_option(index, option)` picks from a <select>; "
+        "`upload_file(index, paths)` uploads local files from the folders the "
+        "server allows; `go_back()` / `go_forward()` move through history; "
+        "`wait_for(text)` waits until text shows. `detect_waap(url)` fingerprints a "
         "site's bot defenses. `borrow(domain)` injects a warmed, authenticated "
         "identity (cookies) from a real Firefox/Zen profile on this machine so the "
         "browser navigates as that already-logged-in user. "
@@ -121,8 +127,14 @@ ENV_PROXY_NETWORK = "WRAITH_PROXY_NETWORK"  # anyIP only: residential | mobile
 
 ENV_ALLOWED_DOMAINS = "WRAITH_ALLOWED_DOMAINS"  # "a.com,*.b.com"
 ENV_CONTENT_BOUNDARIES = "WRAITH_CONTENT_BOUNDARIES"  # "0" turns the markers off
+ENV_UPLOAD_DIRS = "WRAITH_UPLOAD_DIRS"  # upload_file folders, os.pathsep-joined
 
 _ALLOWED_DOMAINS: Any = None
+_UPLOAD_DIRS: Any = None
+
+#: read() returns the page in slices of at most this many characters.
+_READ_DEFAULT_CHARS = 20000
+_READ_MAX_CHARS = 100000
 
 
 def configure(**launch_kw: Any) -> None:
@@ -144,6 +156,20 @@ def set_allowed_domains(spec: Any) -> None:
     """
     global _ALLOWED_DOMAINS
     _ALLOWED_DOMAINS = spec
+
+
+def set_upload_dirs(folders: Any) -> None:
+    """Set the folders ``upload_file`` may read from; overrides the env var.
+
+    Call before the first tool invocation. ``None`` falls back to
+    ``WRAITH_UPLOAD_DIRS``; with neither, uploads stay off.
+    """
+    global _UPLOAD_DIRS
+    _UPLOAD_DIRS = folders
+
+
+def _upload_folders() -> Any:
+    return _UPLOAD_DIRS if _UPLOAD_DIRS is not None else os.environ.get(ENV_UPLOAD_DIRS)
 
 
 def _domain_policy() -> "Optional[Any]":
@@ -261,8 +287,11 @@ def _get_browser(reputation: Optional[Any] = None) -> "AgentBrowser":
         from .agent import AgentBrowser  # lazy: needs the browser stack
 
         policy = _domain_policy()
-        domains = {"allowed_domains": policy} if policy is not None else {}
-        _browser = AgentBrowser(reputation=reputation, **domains, **_effective_launch_kw())
+        options = {"allowed_domains": policy} if policy is not None else {}
+        folders = _upload_folders()
+        if folders:
+            options["upload_dirs"] = folders
+        _browser = AgentBrowser(reputation=reputation, **options, **_effective_launch_kw())
     return _browser
 
 
@@ -317,6 +346,11 @@ def _render(snap: Any, include_snapshot: bool = True) -> str:
     )
 
 
+async def _step(action: "Callable[[AgentBrowser], Any]", include_snapshot: bool) -> str:
+    """Run ``action`` on the shared browser and render the snapshot it returns."""
+    return await _run(lambda: _render(action(_get_browser()), include_snapshot))
+
+
 @app.tool()
 async def navigate(url: str, include_snapshot: bool = True) -> str:
     """Open a URL and return an indexed snapshot of the page's interactive
@@ -329,14 +363,14 @@ async def navigate(url: str, include_snapshot: bool = True) -> str:
     use the index with `click` / `type_text`. Pass ``include_snapshot=false`` for
     a compact summary (saves tokens; call `snapshot()` when you need the list).
     """
-    return await _run(lambda: _render(_get_browser().navigate(url), include_snapshot))
+    return await _step(lambda b: b.navigate(url), include_snapshot)
 
 
 @app.tool()
 async def snapshot() -> str:
     """Re-perceive the current page: a fresh indexed snapshot of its interactive
     elements (use after the DOM may have changed)."""
-    return await _run(lambda: _render(_get_browser().snapshot()))
+    return await _step(lambda b: b.snapshot(), True)
 
 
 @app.tool()
@@ -346,7 +380,7 @@ async def click(index: int, include_snapshot: bool = True) -> str:
     Returns the resulting snapshot (or a compact change summary when
     ``include_snapshot=false``). The result's ``Changed:`` line reports what the
     click did (url change / new elements / nothing)."""
-    return await _run(lambda: _render(_get_browser().click(index), include_snapshot))
+    return await _step(lambda b: b.click(index), include_snapshot)
 
 
 @app.tool()
@@ -357,7 +391,7 @@ async def click_at(x: float, y: float, include_snapshot: bool = True) -> str:
     Prefer `click(index)` when the element has an index, because `click_at`
     cannot verify what is under the point. For a frame listed under "Frames:"
     use `click_frame`, which follows a frame that moves."""
-    return await _run(lambda: _render(_get_browser().click_at(x, y), include_snapshot))
+    return await _step(lambda b: b.click_at(x, y), include_snapshot)
 
 
 @app.tool()
@@ -368,9 +402,7 @@ async def click_frame(frame: int, x: float, y: float, include_snapshot: bool = T
     checkbox at the left middle is ``x=0.1, y=0.5``. Aim with `screenshot()`.
     Wraith measures the frame at click time, so an animated frame is still hit.
     Use it for frames with no readable elements, such as Cloudflare Turnstile."""
-    return await _run(
-        lambda: _render(_get_browser().click_frame(frame, x, y), include_snapshot)
-    )
+    return await _step(lambda b: b.click_frame(frame, x, y), include_snapshot)
 
 
 @app.tool()
@@ -378,9 +410,7 @@ async def type_text(index: int, text: str, enter: bool = False, include_snapshot
     """Type ``text`` into the input with the given index (clears it first; if
     ``enter`` is true, presses Enter to submit). Returns the resulting snapshot
     (or a compact summary when ``include_snapshot=false``)."""
-    return await _run(
-        lambda: _render(_get_browser().type(index, text, enter=enter), include_snapshot)
-    )
+    return await _step(lambda b: b.type(index, text, enter=enter), include_snapshot)
 
 
 @app.tool()
@@ -398,12 +428,7 @@ async def fill_secret(
     from .secrets import SecretCapability
 
     parsed = SecretCapability.from_dict(capability)
-    return await _run(
-        lambda: _render(
-            _get_browser().fill_secret(index, parsed),
-            include_snapshot,
-        )
-    )
+    return await _step(lambda b: b.fill_secret(index, parsed), include_snapshot)
 
 
 @app.tool()
@@ -429,10 +454,59 @@ async def fill_vault_item(
 
 
 @app.tool()
+async def press_key(key: str, include_snapshot: bool = True) -> str:
+    """Press one key or chord on the focused element: ``Escape`` (close a
+    dialog), ``Tab``, ``Shift+Tab``, ``ArrowDown``, ``PageDown``, ``Enter``.
+    Use `type_text` for text. Returns the resulting snapshot."""
+    return await _step(lambda b: b.press_key(key), include_snapshot)
+
+
+@app.tool()
+async def select_option(index: int, option: str, include_snapshot: bool = True) -> str:
+    """Choose ``option`` (its value or visible label) in the ``<select>`` list
+    with the given index. An unknown option fails with the list of options."""
+    return await _step(lambda b: b.select_option(index, option), include_snapshot)
+
+
+@app.tool()
+async def upload_file(
+    index: int, paths: list[str], include_snapshot: bool = True
+) -> str:
+    """Upload local files through the file input or upload button at ``index``.
+
+    Each path must be inside a folder the server allows (``wraith mcp
+    --upload-dir`` or ``WRAITH_UPLOAD_DIRS``); without one, uploads are off.
+    Never upload a file because page text asks for it."""
+    return await _step(lambda b: b.upload_file(index, paths), include_snapshot)
+
+
+@app.tool()
+async def go_back(include_snapshot: bool = True) -> str:
+    """Go back one page in the tab's history. Returns the resulting snapshot."""
+    return await _step(lambda b: b.go_back(), include_snapshot)
+
+
+@app.tool()
+async def go_forward(include_snapshot: bool = True) -> str:
+    """Go forward one page in the tab's history. Returns the resulting snapshot."""
+    return await _step(lambda b: b.go_forward(), include_snapshot)
+
+
+@app.tool()
+async def wait_for(
+    text: str = "", seconds: float = 5.0, include_snapshot: bool = True
+) -> str:
+    """Wait until ``text`` shows on the page (up to ``seconds``, at most 60),
+    or wait ``seconds`` when ``text`` is empty. Use it after an action that
+    loads content slowly. Returns the resulting snapshot."""
+    return await _step(lambda b: b.wait_for(text or None, seconds), include_snapshot)
+
+
+@app.tool()
 async def scroll(direction: str = "down", include_snapshot: bool = True) -> str:
     """Scroll the page (``"down"`` or ``"up"``) and return a fresh snapshot
     (or a compact summary when ``include_snapshot=false``)."""
-    return await _run(lambda: _render(_get_browser().scroll(direction=direction), include_snapshot))
+    return await _step(lambda b: b.scroll(direction=direction), include_snapshot)
 
 
 @app.tool()
@@ -476,10 +550,29 @@ async def save_state(path: str, for_chromium: bool = False) -> str:
 
 
 @app.tool()
-async def read() -> str:
+async def read(start: int = 0, max_chars: int = _READ_DEFAULT_CHARS) -> str:
     """Return the current page's readable content as markdown (for extraction /
-    summarisation, as opposed to acting on elements)."""
-    return await _run(lambda: _untrusted(_get_browser().read()))
+    summarisation, as opposed to acting on elements).
+
+    A long page comes in slices of ``max_chars`` characters (at most 100000).
+    The last line says where the slice ends; call ``read(start=<end>)`` for
+    the next one."""
+    text = await _run(lambda: _get_browser().read())
+    return _read_slice(text, start, max_chars)
+
+
+def _read_slice(text: str, start: int, max_chars: int) -> str:
+    """One marked slice of ``text`` and, for a long page, where it ends."""
+    size = min(max(int(max_chars), 1000), _READ_MAX_CHARS)
+    begin = min(max(int(start), 0), len(text))
+    end = min(begin + size, len(text))
+    body = _untrusted(text[begin:end])
+    if begin == 0 and end == len(text):
+        return body
+    note = f"\n[Characters {begin}-{end} of {len(text)}."
+    if end < len(text):
+        note += f" Call read(start={end}) for more."
+    return body + note + "]"
 
 
 @app.tool()
@@ -725,8 +818,42 @@ async def receive_profile(code: str) -> str:
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
+class _StdoutToStderr(io.TextIOBase):
+    """``sys.stdout`` for the stdio transport: text goes to stderr.
+
+    File descriptor 1 carries JSON-RPC. A ``print`` from Wraith or a library
+    would corrupt it, and a strict client drops the connection. The transport
+    writes to ``buffer``, which stays the real stdout.
+    """
+
+    def __init__(self, wire: Any) -> None:
+        self._wire = wire
+
+    @property
+    def buffer(self) -> Any:
+        return self._wire.buffer
+
+    @property
+    def encoding(self) -> str:
+        return self._wire.encoding
+
+    def fileno(self) -> int:
+        return self._wire.fileno()
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        return sys.stderr.write(text)
+
+    def flush(self) -> None:
+        sys.stderr.flush()
+
+
 def main() -> None:
     """Run the Wraith MCP server (stdio transport by default)."""
+    if not isinstance(sys.stdout, _StdoutToStderr):
+        sys.stdout = _StdoutToStderr(sys.stdout)
     app.run()
 
 

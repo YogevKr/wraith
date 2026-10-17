@@ -9,10 +9,10 @@ import pytest
 import wraith
 import wraith.agent as ag
 import wraith.mcp as m
-from wraith import cli
 from wraith.agent import AgentBrowser
 from wraith.domains import DomainNotAllowedError, DomainPolicy
 from wraith.snapshot import Snapshot
+from tests._fakes import cli_mcp_calls, mcp_browser_kwargs
 
 
 @pytest.mark.parametrize(
@@ -244,39 +244,14 @@ def test_mcp_no_browser_tools_check_the_allowlist(monkeypatch):
 
 
 def test_mcp_browser_gets_the_policy(monkeypatch):
-    seen = {}
-
-    class FakeAgentBrowser:
-        def __init__(self, **kw):
-            seen.update(kw)
-
-    monkeypatch.setattr(ag, "AgentBrowser", FakeAgentBrowser)
-    monkeypatch.setattr(m, "_browser", None)
-    monkeypatch.setattr(m, "_LAUNCH_KW", {})
-    m.set_allowed_domains("a.com,*.b.com")
-    try:
-        m._get_browser()
-    finally:
-        m.set_allowed_domains(None)
-        m._browser = None
-
+    monkeypatch.setattr(m, "_ALLOWED_DOMAINS", "a.com,*.b.com")
+    seen = mcp_browser_kwargs(monkeypatch)
     assert seen["allowed_domains"].patterns == ("a.com", "*.b.com")
 
 
 def test_cli_mcp_flag_sets_the_allowlist(monkeypatch):
-    calls = []
-
-    class FakeMcp:
-        def set_allowed_domains(self, spec):
-            calls.append(spec)
-
-        def main(self):
-            calls.append("run")
-
-    monkeypatch.setattr(cli, "_lazy", lambda name: FakeMcp())
-    cli.main(["mcp", "--allowed-domains", "a.com,*.b.com"])
-
-    assert calls == ["a.com,*.b.com", "run"]
+    calls = cli_mcp_calls(monkeypatch, ["--allowed-domains", "a.com,*.b.com"])
+    assert calls == [("set_allowed_domains", "a.com,*.b.com"), ("main",)]
 
 
 def test_agent_browser_helper_takes_an_allowlist():

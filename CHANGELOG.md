@@ -6,6 +6,19 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-17
+
+### Added
+
+- `wraith.chromium_storage_state()` and `wraith.export_storage_state()` make a
+  Camoufox session loadable in Chromium tools such as agent-browser.
+  Non-secure `SameSite=None` cookies become `Lax`, the Chromium default.
+- `AgentBrowser.save_storage_state(path, for_chromium=True)` and MCP
+  `save_state(path, for_chromium=True)` write that format.
+- `wraith borrow --save-state PATH --for-chromium` saves the borrowed session.
+  In headed mode, Wraith saves after you press Enter.
+- The README explains the agent-browser handoff and its limits.
+
 ## [0.6.5] - 2026-10-17
 
 ### Fixed

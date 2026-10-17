@@ -356,10 +356,20 @@ async def browser_tabs(action: str = "list", index: int = 0, url: str = "") -> s
 
 
 @app.tool()
-async def save_state(path: str) -> str:
+async def save_state(path: str, for_chromium: bool = False) -> str:
     """Export the current session (cookies + localStorage) to a Playwright
-    storageState JSON at ``path`` — a portable, reusable authenticated session."""
-    return await _run(lambda: f"saved storageState -> {_get_browser().save_storage_state(path)}")
+    storageState JSON at ``path`` — a portable, reusable authenticated session.
+
+    Set ``for_chromium=True`` when a Chromium tool such as agent-browser will
+    load the file (``agent-browser --state <path>``). Non-secure SameSite=None
+    cookies then become Lax, which Chromium accepts."""
+    target = " for Chromium" if for_chromium else ""
+
+    def _go() -> str:
+        saved = _get_browser().save_storage_state(path, for_chromium=for_chromium)
+        return f"saved storageState{target} -> {saved}"
+
+    return await _run(_go)
 
 
 @app.tool()

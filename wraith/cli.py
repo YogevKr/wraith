@@ -151,6 +151,8 @@ def cmd_launch(args: argparse.Namespace) -> int:
 
 def cmd_borrow(args: argparse.Namespace) -> int:
     """Extract+inject cookies from a real profile, then open the target."""
+    if args.for_chromium and not args.save_state:
+        raise SystemExit("wraith: --for-chromium needs --save-state PATH")
     engine = _lazy("engine")
     identity = _lazy("identity")
 
@@ -177,6 +179,12 @@ def cmd_borrow(args: argparse.Namespace) -> int:
         print(f"wraith: opened {page.url} as borrowed identity", file=sys.stderr)
         if not args.headless and not args.no_wait:
             _hold_open()
+        if args.save_state:
+            # Save after the hold, so a manual login in the window is kept.
+            identity.export_storage_state(
+                context, args.save_state, for_chromium=args.for_chromium
+            )
+            print(f"wraith: saved storageState -> {args.save_state}", file=sys.stderr)
     return 0
 
 
@@ -628,6 +636,23 @@ def _add_engine_flags(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_state_flags(p: argparse.ArgumentParser) -> None:
+    """Add ``--save-state`` / ``--for-chromium`` (session export) flags."""
+    p.add_argument(
+        "--save-state",
+        metavar="PATH",
+        default=None,
+        help="save cookies + localStorage as Playwright storageState JSON "
+        "(after Enter when headed)",
+    )
+    p.add_argument(
+        "--for-chromium",
+        action="store_true",
+        help="make --save-state loadable by Chromium tools such as "
+        "agent-browser (--state PATH)",
+    )
+
+
 def _add_proxy_flags(p: argparse.ArgumentParser) -> None:
     """Add the shared ``--proxy`` / provider shortcut / targeting flags.
 
@@ -868,6 +893,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not hold the browser open waiting for Enter",
     )
+    _add_state_flags(p_borrow)
     _add_proxy_flags(p_borrow)
     _add_engine_flags(p_borrow)
     p_borrow.set_defaults(func=cmd_borrow)

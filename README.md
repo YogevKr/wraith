@@ -79,7 +79,8 @@ is needed at all: a real Firefox engine clears the challenge natively, and
   *(`pip install 'wraith[fastpath]'`.)*
 - **Live session harvesting** — latch the first request carrying both an
   `Authorization` header and a named auth cookie, for tokens never stored on
-  disk. Export a portable Playwright `storageState` from any cleared session.
+  disk. Export a portable Playwright `storageState` from any cleared session,
+  or a Chromium-ready one for agent-browser (`--for-chromium`).
 - **WAAP/bot-defense fingerprinting** — `identify_waap()` recognises Reblaze/
   Link11, Akamai, reCAPTCHA, DataDome, Imperva/Incapsula, Kasada, SiteMinder;
   `classify_response()` / `is_blocked()` tell the fast path when to escalate.
@@ -401,6 +402,47 @@ claude mcp add wraith -- uv run --directory /path/to/wraith wraith-mcp
 Call `navigate(url)` as usual. It automatically attempts HUMAN/PerimeterX Press & Hold challenges.
 The MCP server instructions and tool description expose this behavior to the agent.
 Navigation reports an error if verification fails. Restart the MCP server after upgrading Wraith.
+
+### (d) Hand off a session to agent-browser
+
+[agent-browser](https://github.com/vercel-labs/agent-browser) is a Chromium
+automation CLI for agents. It has a wide command set but no stealth engine. Use
+Wraith to get the session, then give the session to agent-browser.
+
+Firefox (Camoufox) exports a cookie without a SameSite attribute as
+`sameSite: "None"`. Chromium drops a `None` cookie that is not Secure. The
+Chromium export changes each such cookie to `"Lax"`, the Chromium default.
+
+```bash
+# Borrow your own login and save a Chromium-ready state file.
+# Headed mode waits for Enter, so you can finish a login in the window first.
+uv run wraith borrow https://app.example.com --save-state app.state.json --for-chromium
+agent-browser --state app.state.json open https://app.example.com
+```
+
+```python
+from wraith import agent_browser
+
+with agent_browser(engine="camoufox") as ab:
+    ab.navigate("https://app.example.com")
+    ab.save_storage_state("app.state.json", for_chromium=True)
+```
+
+From MCP, call `save_state(path, for_chromium=True)`.
+
+Limits:
+
+- agent-browser does not hide automation. On the rebrowser bot detector it
+  fails `runtimeEnableLeak` and `navigatorWebdriver`. A site with bot checks
+  can challenge the Chromium session again.
+- Some clearance cookies are bound to the browser fingerprint or the exit IP,
+  for example Cloudflare `cf_clearance`. They can fail in a different browser.
+  Use the handoff where a login cookie controls access, not a bot challenge.
+- Do not connect agent-browser to a Wraith browser over CDP. Camoufox has no
+  CDP endpoint. On Wraith's Chromium, agent-browser sends `Runtime.enable`, and
+  the `runtimeEnableLeak` check fails.
+- The file contains session tokens. Keep it private and delete it after use.
+  Export is blocked after a secret fill unless you pass `allow_secret_tainted=True`.
 
 ## Architecture
 

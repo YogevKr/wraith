@@ -69,6 +69,26 @@ score high on general benchmarks.
 - **`ignore_default_args=['--enable-automation', '--enable-unsafe-swiftshader']`**
   — strip the automation banner flag and the SwiftShader flag that advertise a
   headless/software-GPU context.
+- **Installed Google Chrome first** (`channel="chrome"`). Playwright's bundled
+  build is Chrome for Testing: its Client Hints brands lack `Google Chrome`,
+  which `rebrowser-bot-detector`'s `useragent` check flags. Without an installed
+  Chrome, headless uses `channel="chromium"` (full Chromium in the new headless
+  mode), never the headless shell: the shell has no WebGL, no `window.chrome`,
+  and `HeadlessChrome` in its brands.
+- **No `HeadlessChrome` in the UA.** Wraith reads the browser's own UA from a
+  blank page and sets it back with `HeadlessChrome/` → `Chrome/` as the
+  context `user_agent`. That covers pages, workers, and request headers and
+  keeps `userAgentData.getHighEntropyValues()` intact; a `--user-agent` flag
+  empties its `fullVersionList`.
+- **A desktop-sized headless window.** Headless windows default to `1280x720`.
+  Wraith sizes them like a maximized 1920x1080 window: launch flags for a
+  persistent profile (outer and inner sizes differ by the browser UI), screen
+  and viewport emulation for a new context.
+- **Keep the renderer sandbox.** Playwright passes `--no-sandbox` by default.
+  Wraith sets `chromium_sandbox=True` where Chrome supports it (macOS,
+  Windows, Linux as non-root) and falls back if the browser does not start.
+- **Hold buttons and keys.** Automation releases a mouse button or key in
+  under 1 ms. Wraith holds clicks for 45–110 ms and keys for 35–95 ms.
 
 ---
 

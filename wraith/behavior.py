@@ -35,6 +35,22 @@ from typing import Any
 __all__ = ["human_move", "human_type", "dwell"]
 
 
+# A person holds a mouse button or a key down for tens of milliseconds;
+# automation releases it in under one, which input-timing sensors record.
+_CLICK_HOLD_MS = (45.0, 110.0)
+_KEY_HOLD_MS = (35.0, 95.0)
+
+
+def click_hold_ms() -> float:
+    """Milliseconds to hold the mouse button down during one click."""
+    return random.uniform(*_CLICK_HOLD_MS)
+
+
+def key_hold_ms() -> float:
+    """Milliseconds to hold a key down during one keystroke."""
+    return random.uniform(*_KEY_HOLD_MS)
+
+
 def _ease_in_out(t: float) -> float:
     """Cubic ease-in-out; cursors accelerate then decelerate, not linear."""
     return 4 * t * t * t if t < 0.5 else 1 - pow(-2 * t + 2, 3) / 2
@@ -119,7 +135,7 @@ def human_type(
     low; over-injecting is itself detectable.
     """
     if click:
-        locator.click()
+        locator.click(delay=click_hold_ms())
     for ch in text:
         if mistake_rate and random.random() < mistake_rate:
             wrong = random.choice("abcdefghijklmnopqrstuvwxyz")
@@ -185,9 +201,16 @@ def _viewport_size(page: Any) -> tuple[float, float]:
 def _press_char(locator: Any, ch: str) -> None:
     """Insert a single character with realistic key events.
 
-    ``Locator.press_sequentially`` / ``type`` emit proper keydown/keyup; we
-    use them per-char so each keystroke is a real event, not a value set.
+    ``press`` holds the key for :func:`key_hold_ms` between keydown and keyup.
+    A character outside the keyboard layout (an accent, another script) has
+    no key to press; ``press_sequentially`` / ``type`` insert it instead.
     """
+    try:
+        locator.press(ch, delay=key_hold_ms())
+        return
+    except Exception as exc:
+        if "Unknown key" not in str(exc):
+            raise
     try:
         locator.press_sequentially(ch, delay=0)
         return

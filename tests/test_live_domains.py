@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import http.server
 import os
-import threading
 
 import pytest
 
 if os.environ.get("WRAITH_LIVE_TEST") != "1":
     pytest.skip("set WRAITH_LIVE_TEST=1 to run the allowlist check", allow_module_level=True)
 
+from tests._local_server import serve
 from wraith.agent import AgentBrowser
 from wraith.domains import DomainNotAllowedError
 from wraith.engine import launch
@@ -48,11 +48,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 @pytest.fixture
 def server():
-    srv = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
-    srv.hits = []
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield srv
-    srv.shutdown()
+    with serve(_Handler) as srv:
+        srv.hits = []
+        yield srv
 
 
 def test_allowlist_keeps_the_browser_on_allowed_hosts(server):

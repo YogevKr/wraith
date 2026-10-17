@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import http.server
 import os
-import threading
 
 import pytest
 
 if os.environ.get("WRAITH_LIVE_TEST") != "1":
     pytest.skip("set WRAITH_LIVE_TEST=1 to run the handoff check", allow_module_level=True)
 
+from tests._local_server import serve
 from wraith.engine import launch
 from wraith.identity import export_storage_state
 
@@ -41,10 +41,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 @pytest.fixture
 def origin():
-    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_port}"
-    server.shutdown()
+    with serve(_Handler) as server:
+        yield f"http://127.0.0.1:{server.server_port}"
 
 
 def test_camoufox_session_loads_in_chromium(origin, tmp_path):

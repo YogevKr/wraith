@@ -60,7 +60,7 @@ class _Mouse:
     def __init__(self):
         self.clicks = []
 
-    def click(self, x, y):
+    def click(self, x, y, **_kwargs):
         self.clicks.append((x, y))
 
 

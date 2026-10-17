@@ -22,20 +22,50 @@ from wraith.uploads import UploadNotAllowedError, UploadPolicy
 class _Keyboard:
     def __init__(self):
         self.pressed = []
+        self.focused = None
 
     def press(self, key, delay=0):
         self.pressed.append((key, delay))
+        if self.focused is not None:
+            self.focused.key(key)
 
 
 class _Select:
-    def __init__(self, options):
-        self.options, self.selected = options, None
+    """A <select> with the browser's type-ahead: typed text picks a label."""
+
+    def __init__(self, options, value=None, multiple=False, keyboard=None):
+        self.options, self.value, self.multiple = options, value, multiple
+        self.keyboard, self.typed, self.selected = keyboard, "", None
 
     def evaluate(self, js):
-        return self.options
+        if js == ag._SELECT_OPTIONS_JS:
+            if self.options is None:
+                return None
+            state = {"value": self.value, "multiple": self.multiple, "disabled": False}
+            return dict(state, options=self.options)
+        return self.value  # "el => el.value"
 
-    def select_option(self, option, timeout=None):
-        self.selected = option
+    def focus(self):
+        self.typed = ""
+        self.keyboard.focused = self
+
+    def key(self, char):
+        if char == "é":
+            raise RuntimeError('Keyboard.press: Unknown key: "é"')
+        self.typed += char
+        match = next(
+            (
+                v
+                for v, label in self.options
+                if label.lower().startswith(self.typed.lower())
+            ),
+            None,
+        )
+        if match is not None:
+            self.value = match
+
+    def select_option(self, value=None, timeout=None):
+        self.selected = self.value = value
 
 
 class _Page:
@@ -88,18 +118,65 @@ def test_press_key_holds_the_key(browser):
         ab.press_key("  ")
 
 
-def test_select_option_matches_value_or_label(browser):
-    select = _Select([["us", "United States"], ["il", "Israel"]])
-    ab, _ = browser(select)
-    ab.select_option(3, "Israel")
-    assert select.selected == "Israel"
+COUNTRIES = [["us", "United States"], ["uk", "United Kingdom"], ["il", "Israel"]]
 
-    with pytest.raises(ValueError, match="Options: United States, Israel"):
+
+@pytest.fixture
+def select_list(browser, monkeypatch):
+    monkeypatch.setattr(ag.time, "sleep", lambda seconds: None)
+
+    def make(options, **kw):
+        keyboard = _Keyboard()
+        select = _Select(options, keyboard=keyboard, **kw)
+        ab, page = browser(select)
+        page.keyboard = keyboard
+        return ab, select, keyboard
+
+    return make
+
+
+def test_select_option_types_the_label_like_a_keyboard_user(select_list, monkeypatch):
+    ab, select, keyboard = select_list(COUNTRIES, value="us")
+    ab.select_option(3, "uk")  # by value; the label is typed
+    assert "".join(key for key, _ in keyboard.pressed) == "United Kingdom"
+    assert all(35 <= hold <= 95 for _, hold in keyboard.pressed)
+    assert select.value == "uk" and select.selected is None  # no untrusted fallback
+
+    keyboard.pressed.clear()
+    ab.select_option(3, "United Kingdom")  # already chosen
+    assert keyboard.pressed == []
+
+    sleeps = []
+    monkeypatch.setattr(ag.time, "sleep", sleeps.append)
+    ab.select_option(3, "Israel")  # right after typing: wait for the reset
+    assert sleeps[0] > 1 and select.value == "il"
+
+    with pytest.raises(
+        ValueError, match="Options: United States, United Kingdom, Israel"
+    ):
         ab.select_option(3, "France")
 
 
-def test_select_option_refuses_other_elements(browser):
-    ab, _ = browser(_Select(None))
+@pytest.mark.parametrize(
+    "options, kw, wanted",
+    [
+        ([["a", "Café"], ["b", "Bar"]], {}, "a"),  # a character with no key
+        ([["a", "Same"], ["b", "Same"]], {"value": "x"}, "b"),  # type-ahead picks "a"
+        (COUNTRIES, {"multiple": True}, "il"),  # a multiple list is not typed into
+    ],
+)
+def test_select_option_falls_back_when_typing_cannot_reach_it(
+    select_list, options, kw, wanted
+):
+    ab, select, keyboard = select_list(options, **kw)
+    ab.select_option(3, wanted)
+    assert select.selected == wanted
+    if kw.get("multiple"):
+        assert keyboard.pressed == []
+
+
+def test_select_option_refuses_other_elements(select_list):
+    ab, _, _ = select_list(None)
     with pytest.raises(RuntimeError, match="not a <select>"):
         ab.select_option(3, "x")
 

@@ -23,7 +23,10 @@ from wraith.uploads import UploadNotAllowedError
 
 PAD = "<p>" + "Fixture text for a page with real content. " * 8 + "</p>"
 FORM = f"""<!doctype html><title>Form</title><body>{PAD}
-<select name=country><option value=us>United States</option><option value=il>Israel</option></select>
+<select name=country><option value=us>United States</option><option value=uk>United Kingdom</option><option value=il>Israel</option></select>
+<script>document.querySelector('[name=country]').addEventListener('change', e => {{
+  document.body.dataset.change = (document.body.dataset.change || '') + e.isTrusted + ' ';
+}});</script>
 <input type=file name=doc>
 <button onclick="document.getElementById('hidden').click()">Attach file</button>
 <input type=file id=hidden style="display:none">
@@ -75,8 +78,12 @@ def test_input_tools_on_a_real_page(base, engine, tmp_path):
         ab = AgentBrowser(session=session, upload_dirs=[str(uploads)])
         ab.navigate(f"{base}/form")
 
-        ab.select_option(_index(ab, name="country"), "Israel")
+        ab.select_option(_index(ab, name="country"), "United Kingdom")
+        assert js("() => document.querySelector('[name=country]').value") == "uk"
+        ab.select_option(_index(ab, name="country"), "il")
         assert js("() => document.querySelector('[name=country]').value") == "il"
+        changes = js("() => document.body.dataset.change").split()
+        assert changes and set(changes) == {"true"}, changes  # typed, not set by script
 
         ab.upload_file(_index(ab, name="doc"), str(uploads / "cv.txt"))
         assert (

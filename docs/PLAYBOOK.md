@@ -63,9 +63,11 @@ score high on general benchmarks.
 - Use the **patchright** backend — it suppresses the CDP `Runtime.enable` leak
   that vanilla Playwright-Chromium emits (caught by `rebrowser-bot-detector`'s
   `runtimeEnableLeak`).
-- **`viewport=None`** — the Playwright default `1280x720` viewport is a **red
-  flag** on `rebrowser-bot-detector`. `None` lets the real window size show
-  through.
+- **`no_viewport=True`** — the Playwright default `1280x720` viewport (and a
+  screen of the same size) is a **red flag** on `rebrowser-bot-detector`.
+  `no_viewport=True` lets the real window and screen show through. In
+  Playwright for Python, `viewport=None` is the same as leaving it out, so it
+  keeps the 1280x720 emulation.
 - **`ignore_default_args=['--enable-automation', '--enable-unsafe-swiftshader']`**
   — strip the automation banner flag and the SwiftShader flag that advertise a
   headless/software-GPU context.
@@ -107,7 +109,7 @@ every signal mutually consistent:
   is an instant headless tell** (it's check #4 in Reblaze's cluster).
   SwiftShader / ANGLE are softer, server-side-evaluated risks — prefer a real or
   realistically-spoofed GPU.
-- **viewport / window:** real, non-default dimensions (see `viewport=None`).
+- **viewport / window:** real, non-default dimensions (see `no_viewport=True`).
 
 ---
 
@@ -575,7 +577,7 @@ Tier 1, and — critically — **don't expect to brute Tier 3.**
    and **classify the layer** (§0): JS challenge (247) / reputation gate /
    IP rate-limit (474/481).
 2. **Pick the engine:** Camoufox primary (with `playwright==1.55` pinned);
-   patchright fallback (`viewport=None`, suppress `Runtime.enable`, strip
+   patchright fallback (`no_viewport=True`, suppress `Runtime.enable`, strip
    automation args). For a plain `247` this alone gets you through — Camoufox
    solves `ac_v2` cookie-free.
 3. **Set identity consistency:** `geoip=True`, matching locale, no

@@ -619,7 +619,7 @@ def recaptcha_params(page: Any) -> Any:
 _BOT_DETECTOR_TESTS = (
     "runtimeEnableLeak",   # Runtime.enable CDP leak (patchright suppresses this)
     "navigatorWebdriver",  # navigator.webdriver === true
-    "viewport",            # default 1280x720 viewport is a red flag; want viewport=None
+    "viewport",            # default 1280x720 viewport is a red flag; want no_viewport=True
     "pwInitScripts",       # Playwright init-script / addInitScript leak
     "dummyFn",             # exposeFunction / dummyFn leak
     "sourceUrlLeak",       # //# sourceURL= leak from injected scripts
@@ -704,7 +704,7 @@ def bot_detector(page: Any) -> dict:
     the detector emits are included too.
 
     :param page: a live Playwright ``Page`` (driven by the stealth backend you
-        want to assess). Use ``viewport=None`` and the patchright backend to
+        want to assess). Use ``no_viewport=True`` and the patchright backend to
         clear ``viewport`` and ``runtimeEnableLeak`` respectively.
     :returns: ``{testName: status}``.
     """

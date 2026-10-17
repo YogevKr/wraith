@@ -108,9 +108,13 @@ def _dataset(page, root, key):
     return json.loads(page.evaluate(script))
 
 
-@pytest.mark.parametrize("engine", ENGINES)
-def test_fingerprint_has_no_automation_tells(base, engine):
-    with launch(engine=engine, headless=True, geoip=False) as session:
+@pytest.mark.parametrize(
+    "engine, headless",
+    [("camoufox", True), ("chromium", True), ("chromium", False)],
+    ids=["camoufox", "chromium", "chromium-headed"],
+)
+def test_fingerprint_has_no_automation_tells(base, engine, headless):
+    with launch(engine=engine, headless=headless, geoip=False) as session:
         session.page.goto(f"{base}/probe")
         seen = _dataset(session.page, "document.body", "probe")
 
@@ -128,7 +132,9 @@ def test_fingerprint_has_no_automation_tells(base, engine):
     assert seen["webgl"] and not SOFTWARE_GL.search(seen["webgl"]), seen["webgl"]
     (sw, sh), (ow, oh), (iw, ih) = seen["screen"], seen["outer"], seen["inner"]
     assert sw >= ow >= iw and sh >= oh >= ih, seen
-    assert (iw, ih) != (1280, 720), "Playwright's default viewport"
+    assert (iw, ih) != (1280, 720) and (sw, sh) != (1280, 720), (
+        "Playwright's default viewport"
+    )
     if engine == "chromium":
         assert seen["chrome"] == "object"
         assert (

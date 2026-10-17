@@ -17,7 +17,7 @@ Two engines are supported, in priority order:
 
 2. **patchright-Chromium** (FALLBACK) — patched Playwright Chromium via
    ``patchright.sync_api``. The patchright backend suppresses the
-   ``Runtime.enable`` CDP leak. We additionally force ``viewport=None`` (the
+   ``Runtime.enable`` CDP leak. We additionally force ``no_viewport=True`` (the
    Playwright default ``1280x720`` viewport is a red flag on
    rebrowser-bot-detector) and strip the ``--enable-automation`` and
    ``--enable-unsafe-swiftshader`` default args.
@@ -543,7 +543,8 @@ def _launch_chromium(
 
     Stealth hardening applied:
       * patchright backend (suppresses the ``Runtime.enable`` CDP leak),
-      * ``viewport=None`` / ``no_viewport=True`` (avoids the 1280x720 tell),
+      * ``no_viewport=True`` (avoids the 1280x720 tell; in Playwright for
+        Python ``viewport=None`` means "use the default" and does not),
       * ``ignore_default_args`` strips ``--enable-automation`` and
         ``--enable-unsafe-swiftshader``,
       * the renderer sandbox stays on where Chrome supports it,
@@ -776,8 +777,8 @@ def _open_persistent_chromium(
         user_agent = _clean_headless_user_agent(pw, launch_kw)
         if user_agent:
             context_kw["user_agent"] = user_agent
-    # Use no_viewport=True (the persistent-context equivalent of
-    # viewport=None) unless the caller forced a viewport.
+    # no_viewport=True shows the real window size, unless the caller forced
+    # a viewport.
     if "viewport" not in context_kw:
         context_kw.setdefault("no_viewport", True)
     return pw.chromium.launch_persistent_context(
@@ -808,9 +809,12 @@ def _new_chromium_context(
         user_agent = _clean_headless_user_agent(pw, launch_kw, browser_obj)
         if user_agent:
             context_kw["user_agent"] = user_agent
-    # viewport=None disables Playwright's fixed 1280x720 viewport — a known
-    # rebrowser-bot-detector red flag.
-    context_kw.setdefault("viewport", None)
+    # Playwright emulates a 1280x720 viewport and screen by default, a known
+    # rebrowser-bot-detector red flag. In Python, viewport=None is the same as
+    # leaving it out; no_viewport=True turns the emulation off, so the page
+    # sees the real window and screen.
+    if "viewport" not in context_kw:
+        context_kw.setdefault("no_viewport", True)
     return browser_obj.new_context(**context_kw)
 
 

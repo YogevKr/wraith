@@ -44,8 +44,9 @@ jobs:
 
   camoufox-macos:
     # macOS keeps Camoufox in an app bundle with a different file layout.
-    # Launch the pinned build there, because the offline suite cannot.
-    name: camoufox launch (macOS)
+    # Run the browser tests that use only local fixture pages there, because
+    # the offline suite cannot launch a browser.
+    name: live browser tests (macOS)
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -72,7 +73,24 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: uv run camoufox fetch official/152.0.4-beta.30
 
-      - name: Launch Camoufox
+      - name: Cache patched Chromium
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: patchright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install patched Chromium
+        # The handoff test loads a Camoufox session into Chromium.
+        run: uv run patchright install chromium
+
+      - name: Live browser tests (local fixtures only)
         env:
           WRAITH_LIVE_TEST: "1"
-        run: uv run pytest -q tests/test_live_launch.py
+        run: >-
+          uv run pytest -q
+          tests/test_live_launch.py
+          tests/test_live_frames.py
+          tests/test_live_press_hold.py
+          tests/test_live_clawd.py
+          tests/test_live_secret_policy.py
+          tests/test_live_handoff.py

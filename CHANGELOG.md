@@ -6,6 +6,12 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- The macOS CI job runs every live browser test that uses only local fixture
+  pages: launch, frames, Press & Hold, Clawd, secret policy, and the Chromium
+  handoff.
+
 ## [0.8.0] - 2026-10-17
 
 ### Added

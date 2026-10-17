@@ -37,6 +37,18 @@ __all__ = ["Element", "FrameInfo", "Snapshot", "take_snapshot"]
 # --------------------------------------------------------------------------- #
 
 
+# Input types whose value is a choice, not typed text (so never a secret).
+_CHOICE_TYPES = frozenset(
+    {"checkbox", "radio", "button", "submit", "reset", "image", "range", "color"}
+)
+
+
+def _value_is_secret(tag: str, attributes: dict) -> bool:
+    """Whether a control's value may be typed text, which can hold a secret."""
+    input_type = str(attributes.get("type") or "text").lower()
+    return tag == "textarea" or (tag == "input" and input_type not in _CHOICE_TYPES)
+
+
 @dataclass
 class Element:
     """A single interactive element discovered in a :class:`Snapshot`.
@@ -87,13 +99,9 @@ class Element:
         self-heal) and genuinely-new elements can be flagged.
         """
         a = self.attributes or {}
-        input_type = str(a.get("type") or "text").lower()
-        option_types = {"checkbox", "radio", "button", "submit", "reset", "image"}
-        redacted_value = self.tag == "textarea" or (
-            self.tag == "input"
-            and input_type not in option_types
-        )
-        safe_text = (self.text or "")[:40]
+        redacted_value = _value_is_secret(self.tag, a)
+        # A list keeps its identity when its choice changes.
+        safe_text = "" if self.tag == "select" else (self.text or "")[:40]
         key = "|".join(
             f"{k}={a[k]}"
             for k in ("name", "id", "type", "href", "aria-label", "placeholder", "value")
@@ -112,14 +120,9 @@ class Element:
             parts.append(f"role={self.role}")
 
         # Surface a few high-signal attributes inline; keep the line short.
-        input_type = str(self.attributes.get("type") or "text").lower()
-        option_types = {"checkbox", "radio", "button", "submit", "reset", "image"}
-        redacted_value = self.tag == "textarea" or (
-            self.tag == "input"
-            and input_type not in option_types
-        )
+        redacted_value = _value_is_secret(self.tag, self.attributes)
         for key in ("type", "name", "placeholder", "aria-label", "href",
-                    "value", "checked", "title", "alt"):
+                    "value", "checked", "files", "options", "title", "alt"):
             if key == "value" and redacted_value:
                 continue
             val = self.attributes.get(key)
@@ -196,6 +199,9 @@ class Snapshot:
     changed: Optional[str] = None
     #: Visible child frames, numbered from 1 (see :attr:`Element.frame`).
     frames: list[FrameInfo] = field(default_factory=list)
+    #: Captcha widgets on the page by kind (``turnstile``, ``recaptcha``,
+    #: ``hcaptcha``) -> whether their response token field holds a value.
+    challenges: dict[str, bool] = field(default_factory=dict)
 
     def to_text(self) -> str:
         """Render the snapshot as browser-use-style text for an LLM.
@@ -216,6 +222,12 @@ class Snapshot:
             lines.append("")
             lines.append("Frames:")
             lines.extend(frame.to_text() for frame in self.frames)
+        if self.challenges:
+            states = ", ".join(
+                f"{kind} {'solved' if done else 'not solved yet'}"
+                for kind, done in sorted(self.challenges.items())
+            )
+            lines.extend(["", f"Challenges: {states}"])
         return "\n".join(lines)
 
     def frame_handle(self, number: int) -> Any:
@@ -308,13 +320,26 @@ def take_snapshot(
             screenshot = None
 
     return Snapshot(
-        url=url, title=title, elements=elements, screenshot=screenshot, frames=frames
+        url=url,
+        title=title,
+        elements=elements,
+        screenshot=screenshot,
+        frames=frames,
+        challenges=_challenge_state(page),
     )
 
 
 # --------------------------------------------------------------------------- #
 # Internal helpers
 # --------------------------------------------------------------------------- #
+
+
+def _challenge_state(page: Any) -> dict[str, bool]:
+    """Captcha kind -> whether its token field holds a value (never the token)."""
+    try:
+        return page.evaluate(_CHALLENGE_STATE_JS) or {}
+    except Exception:
+        return {}
 
 
 def _walk_frames(
@@ -524,6 +549,22 @@ def _clip(s: str, n: int) -> str:
 # tolerates detached/odd nodes.
 # --------------------------------------------------------------------------- #
 
+# Captcha widgets put their token in a form field of the page. Report only
+# whether it holds a value; the token itself is a credential.
+_CHALLENGE_STATE_JS = r"""() => {
+    const fields = {
+        turnstile: '[name="cf-turnstile-response"]',
+        recaptcha: '[name="g-recaptcha-response"]',
+        hcaptcha: '[name="h-captcha-response"]',
+    };
+    const out = {};
+    for (const [kind, selector] of Object.entries(fields)) {
+        const found = Array.from(document.querySelectorAll(selector));
+        if (found.length) out[kind] = found.some((el) => (el.value || '').length > 0);
+    }
+    return out;
+}"""
+
 # The node behind a snapshot index in this frame, or null when the snapshot
 # is gone (a navigation) or the node left the document.
 _INDEXED_NODE_JS = r"""(index) => {
@@ -706,6 +747,10 @@ _BUILD_DOM_TREE_JS = r"""
       if (parts) return parts;
     }
     const tag = el.tagName.toLowerCase();
+    if (tag === 'select') {
+      // The chosen option, not every option's text run together.
+      return Array.from(el.selectedOptions || []).map((o) => o.label.trim()).join('; ');
+    }
     if (tag === 'input') {
       const ty = (el.getAttribute('type') || 'text').toLowerCase();
       if (ty === 'submit' || ty === 'button' || ty === 'reset') {
@@ -733,7 +778,7 @@ _BUILD_DOM_TREE_JS = r"""
     const tag = (el.tagName || '').toLowerCase();
     const type = (el.type || 'text').toLowerCase();
     const optionValueTypes = new Set([
-      'checkbox', 'radio', 'button', 'submit', 'reset', 'image'
+      'checkbox', 'radio', 'button', 'submit', 'reset', 'image', 'range', 'color'
     ]);
     const editable = tag === 'textarea' || el.isContentEditable === true
       || (tag === 'input' && !optionValueTypes.has(type));
@@ -747,6 +792,17 @@ _BUILD_DOM_TREE_JS = r"""
         }
       } catch (e) {}
     }
+    // What a non-secret control holds now (the live state, not the markup).
+    try {
+      if (tag === 'select') {
+        const labels = Array.from(el.options).map((o) => o.label.trim());
+        out['options'] = labels.join(' | ').slice(0, 200);
+      } else if (tag === 'input' && (type === 'range' || type === 'color')) {
+        out['value'] = el.value;
+      } else if (tag === 'input' && type === 'file' && el.files && el.files.length) {
+        out['files'] = Array.from(el.files).map((f) => f.name).join(', ').slice(0, 200);
+      }
+    } catch (e) {}
     // Booleans surfaced as real booleans for to_text().
     try { if (el.hasAttribute('disabled')) out['disabled'] = true; } catch (e) {}
     try { if (el.isContentEditable === true) out['contenteditable'] = true; } catch (e) {}

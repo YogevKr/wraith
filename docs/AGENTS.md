@@ -120,6 +120,12 @@ frame 2 @ (901,435) 523x156 https://challenges.cloudflare.com/…: no readable e
 - `max_elements` caps the count so a pathological page can't blow the context
   window.
 
+> **Control state:** a `<select>` line shows its chosen option as text and
+> `options="a | b"`; a file input shows `files="…"`; range and colour inputs show
+> `value`. Typed text fields never show a value. A page with a captcha token
+> field ends with `Challenges: turnstile solved` / `not solved yet`. After an
+> action, `Changed:` names new visible text and changed control values.
+
 > **Index lifetime:** an index identifies an element only within the snapshot
 > that minted it. The next `take_snapshot` replaces the index map. Always act
 > on the latest snapshot.

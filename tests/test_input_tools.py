@@ -233,7 +233,8 @@ def test_upload_file_sets_files_on_a_file_input(browser, tmp_path):
         files = None
 
         def evaluate(self, js):
-            return True
+            assert js == ag._UPLOAD_TARGET_JS
+            return "file"
 
         def set_input_files(self, files):
             self.files = files
@@ -308,3 +309,43 @@ def test_stdout_guard_sends_text_to_stderr(monkeypatch):
 
     assert err.getvalue() == "stray\n"
     assert sys.stdout.buffer is wire.buffer and wire.buffer.getvalue() == b""
+
+
+@pytest.mark.parametrize("kind", ["a link", "a text field"])
+def test_upload_refuses_links_and_text_fields_before_clicking(browser, tmp_path, kind):
+    (tmp_path / "cv.pdf").write_text("cv")
+    clicks = []
+
+    class _Target:
+        def evaluate(self, js):
+            return kind
+
+        def click(self, **kw):
+            clicks.append(kw)
+
+    ab, _ = browser(_Target(), upload_dirs=[str(tmp_path)])
+    with pytest.raises(RuntimeError, match=f"is {kind}, not a file input"):
+        ab.upload_file(3, str(tmp_path / "cv.pdf"))
+    assert clicks == []
+
+
+def test_upload_trigger_that_opens_no_chooser_says_so(browser, tmp_path, monkeypatch):
+    (tmp_path / "cv.pdf").write_text("cv")
+
+    class _Button:
+        def evaluate(self, js):
+            return "trigger"
+
+    ab, page = browser(_Button(), upload_dirs=[str(tmp_path)])
+
+    class _NoChooser:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            raise TimeoutError('Timeout 5000ms exceeded while waiting for event "filechooser"')
+
+    page.expect_file_chooser = lambda timeout=None: _NoChooser()
+    monkeypatch.setattr(AgentBrowser, "_pointer_click", lambda self, index: None)
+    with pytest.raises(RuntimeError, match=r"opened no file chooser within 5 s"):
+        ab.upload_file(3, str(tmp_path / "cv.pdf"))

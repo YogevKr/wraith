@@ -28,7 +28,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-__all__ = ["Element", "Snapshot", "take_snapshot"]
+__all__ = ["Element", "FrameInfo", "Snapshot", "take_snapshot"]
 
 
 # --------------------------------------------------------------------------- #
@@ -64,6 +64,8 @@ class Element:
     #: Set by AgentBrowser.snapshot() when this element wasn't in the prior
     #: snapshot (browser-use-style new-element marking; shown with a leading *).
     is_new: bool = False
+    #: 0 for the main frame, else the :class:`FrameInfo` number that holds it.
+    frame: int = 0
     x: float | None = None
     y: float | None = None
     width: float | None = None
@@ -134,9 +136,42 @@ class Element:
         point = ""
         if self.center is not None:
             point = f" @ ({self.center[0]:.0f},{self.center[1]:.0f})"
+        where = f" (frame {self.frame})" if self.frame else ""
         if body:
-            return f"{mark}[{self.index}]{point}<{head}>{body}</{self.tag}>"
-        return f"{mark}[{self.index}]{point}<{head}/>"
+            return f"{mark}[{self.index}]{point}<{head}>{body}</{self.tag}>{where}"
+        return f"{mark}[{self.index}]{point}<{head}/>{where}"
+
+
+@dataclass
+class FrameInfo:
+    """A visible child frame (iframe) in a :class:`Snapshot`.
+
+    Coordinates are in main-viewport pixels. A frame whose content cannot be
+    read (a closed shadow root, such as Cloudflare Turnstile) has no indexed
+    elements; an agent can still click a point in it with ``click_frame``.
+    """
+
+    number: int
+    url: str
+    x: float
+    y: float
+    width: float
+    height: float
+    element_count: int = 0
+    #: The live Playwright ``Frame``; not part of the text view.
+    handle: Any = field(default=None, repr=False, compare=False)
+
+    def to_text(self) -> str:
+        cx, cy = self.x + self.width / 2, self.y + self.height / 2
+        what = (
+            f"{self.element_count} indexed elements"
+            if self.element_count
+            else f"no readable elements; aim with screenshot() and click_frame({self.number}, x, y)"
+        )
+        return (
+            f"frame {self.number} @ ({cx:.0f},{cy:.0f}) "
+            f"{self.width:.0f}x{self.height:.0f} {_clip(self.url, 80)}: {what}"
+        )
 
 
 @dataclass
@@ -159,6 +194,8 @@ class Snapshot:
     #: AgentBrowser.click/type), e.g. "url changed -> ...", "+3 elements",
     #: "no visible change detected". None for a plain snapshot.
     changed: Optional[str] = None
+    #: Visible child frames, numbered from 1 (see :attr:`Element.frame`).
+    frames: list[FrameInfo] = field(default_factory=list)
 
     def to_text(self) -> str:
         """Render the snapshot as browser-use-style text for an LLM.
@@ -175,7 +212,15 @@ class Snapshot:
             lines.extend(el.to_text() for el in self.elements)
         else:
             lines.append("(no interactive elements found)")
+        if self.frames:
+            lines.append("")
+            lines.append("Frames:")
+            lines.extend(frame.to_text() for frame in self.frames)
         return "\n".join(lines)
+
+    def frame_handle(self, number: int) -> Any:
+        """Return the live ``Frame`` for frame ``number``, or ``None``."""
+        return next((f.handle for f in self.frames if f.number == number), None)
 
     def by_index(self, i: int) -> Optional[Element]:
         """Return the element with index ``i``, or ``None`` if absent."""
@@ -202,6 +247,7 @@ def take_snapshot(
     viewport_only: bool = True,
     highlight: bool = False,
     max_elements: int = 200,
+    include_frames: bool = True,
 ) -> Snapshot:
     """Walk ``page``'s DOM and return an indexed :class:`Snapshot`.
 
@@ -219,6 +265,9 @@ def take_snapshot(
             and capture a PNG screenshot into :attr:`Snapshot.screenshot`.
         max_elements: Cap on how many elements to index (keeps the text view
             and the LLM context bounded).
+        include_frames: Also index visible child frames (iframes), same- or
+            cross-origin. Their elements continue the index sequence and carry
+            :attr:`Element.frame`; their coordinates are main-viewport pixels.
 
     Returns:
         A :class:`Snapshot`. ``elements`` is empty if the JS fails or nothing
@@ -246,6 +295,7 @@ def take_snapshot(
         raw = []
 
     elements = _parse_elements(raw)
+    frames = _walk_frames(page, elements, args) if include_frames else []
 
     screenshot: Optional[bytes] = None
     if highlight:
@@ -254,12 +304,132 @@ def take_snapshot(
         except Exception:
             screenshot = None
 
-    return Snapshot(url=url, title=title, elements=elements, screenshot=screenshot)
+    return Snapshot(
+        url=url, title=title, elements=elements, screenshot=screenshot, frames=frames
+    )
 
 
 # --------------------------------------------------------------------------- #
 # Internal helpers
 # --------------------------------------------------------------------------- #
+
+
+def _walk_frames(page: Any, elements: list[Element], args: dict) -> list[FrameInfo]:
+    """Index visible child frames depth-first; append their elements in place.
+
+    Each frame runs the same DOM walker, continuing the index sequence. An
+    element counts only when every ancestor document shows the frame at its
+    point, so an overlay above the iframe hides it as it would in the page.
+    """
+    main = getattr(page, "main_frame", None)
+    if main is None or not _child_frames(main):
+        return []
+    try:
+        view = tuple(main.evaluate("() => [window.innerWidth, window.innerHeight]"))
+    except Exception:
+        return []
+    frames: list[FrameInfo] = []
+    next_index = max((el.index for el in elements), default=-1) + 1
+    stack = [(main, child, []) for child in reversed(_child_frames(main))]
+    while stack:
+        parent, child, chain = stack.pop()
+        placed = _place_frame(parent, child, chain, view, args["viewportOnly"])
+        if placed is None:
+            continue
+        link, origin, screen = placed
+        budget = int(args["maxElements"]) - len(elements)
+        found = _frame_elements(child, args, next_index, budget)
+        next_index = max((el.index for el in found), default=next_index - 1) + 1
+        kept = [el for el, ok in zip(found, _unblocked(link, [el.center for el in found])) if ok]
+        if not kept and not _unblocked(link, [(screen[2] / 2, screen[3] / 2)])[0]:
+            continue  # an overlay in an ancestor covers the whole frame
+        number = len(frames) + 1
+        for el in kept:
+            el.frame = number
+            el.x = (el.x or 0.0) + origin[0]
+            el.y = (el.y or 0.0) + origin[1]
+        elements.extend(kept)
+        frames.append(FrameInfo(number, str(getattr(child, "url", "") or ""), *screen,
+                                element_count=len(kept), handle=child))
+        stack.extend((child, grand, link) for grand in reversed(_child_frames(child)))
+    return frames
+
+
+def _place_frame(
+    parent: Any, child: Any, chain: list, view: tuple, viewport_only: bool
+) -> Optional[tuple[list, tuple[float, float], tuple[float, float, float, float]]]:
+    """Locate ``child``: its ancestor chain, content origin, and on-screen box.
+
+    Returns ``None`` for a frame that is detached, tiny (a tracking pixel), or
+    outside the viewport. The origin offsets are exact for an untransformed
+    frame; Playwright's box follows CSS (and 3D) transforms, which is what a
+    ``click_frame`` aim needs.
+    """
+    try:
+        iframe = child.frame_element()
+        box = iframe.evaluate(_FRAME_BOX_JS)
+        dx, dy = float(box["x"]), float(box["y"])
+        local = (float(box["width"]), float(box["height"]))
+    except Exception:
+        return None
+    link = chain + [(parent, iframe, dx, dy)]
+    origin = (sum(level[2] for level in link), sum(level[3] for level in link))
+    screen = _screen_box(iframe) or (*origin, *local)
+    x, y, width, height = screen
+    if width <= 2 or height <= 2:
+        return None
+    if viewport_only and (x + width <= 0 or y + height <= 0 or x >= view[0] or y >= view[1]):
+        return None
+    return link, origin, screen
+
+
+def _frame_elements(child: Any, args: dict, start: int, budget: int) -> list[Element]:
+    """Run the DOM walker in ``child``, numbering from ``start``."""
+    if budget <= 0:
+        return []
+    try:
+        raw = child.evaluate(
+            _BUILD_DOM_TREE_JS, {**args, "startIndex": start, "maxElements": budget}
+        )
+    except Exception:
+        return []
+    return [el for el in _parse_elements(raw) if el.center is not None]
+
+
+def _screen_box(iframe: Any) -> Optional[tuple[float, float, float, float]]:
+    """The iframe's on-screen box in main-viewport pixels, or ``None``."""
+    try:
+        box = iframe.bounding_box()
+        return (float(box["x"]), float(box["y"]), float(box["width"]), float(box["height"]))
+    except Exception:
+        return None
+
+
+def _child_frames(frame: Any) -> list[Any]:
+    try:
+        return list(frame.child_frames or [])
+    except Exception:
+        return []
+
+
+def _unblocked(
+    chain: list[tuple[Any, Any, float, float]], points: list[tuple[float, float]]
+) -> list[bool]:
+    """Whether each frame-local point reaches the frame through every ancestor."""
+    ok = [True] * len(points)
+    if not points:
+        return ok
+    shift_x = shift_y = 0.0
+    for holder, iframe, dx, dy in reversed(chain):
+        shift_x += dx
+        shift_y += dy
+        moved = [[x + shift_x, y + shift_y] for x, y in points]
+        try:
+            hits = holder.evaluate(_HITS_FRAME_JS, [iframe, moved])
+        except Exception:
+            return [False] * len(points)
+        ok = [a and bool(b) for a, b in zip(ok, hits)]
+    return ok
 
 
 def _parse_elements(raw: Any) -> list[Element]:
@@ -361,6 +531,32 @@ _POINTER_POINT_JS = r"""(el) => {
     return {x, y};
 }"""
 
+# Content-box origin and size of an <iframe>, in its own document's viewport.
+_FRAME_BOX_JS = r"""(el) => {
+    const r = el.getBoundingClientRect();
+    return {x: r.left + el.clientLeft, y: r.top + el.clientTop,
+            width: el.clientWidth, height: el.clientHeight};
+}"""
+
+# For each point, whether the top hit in this document is the given <iframe>.
+# An iframe inside a closed shadow root (Cloudflare Turnstile) can only be hit
+# through its retargeted shadow host, so the frame's own hosts also count.
+_HITS_FRAME_JS = r"""([frame, points]) => {
+    const hosts = [];
+    for (let root = frame.getRootNode(); root && root.host; root = root.host.getRootNode()) {
+        hosts.push(root.host);
+    }
+    return points.map(([x, y]) => {
+        let hit = document.elementFromPoint(x, y);
+        while (hit && hit.shadowRoot && typeof hit.shadowRoot.elementFromPoint === 'function') {
+            const inner = hit.shadowRoot.elementFromPoint(x, y);
+            if (!inner || inner === hit) break;
+            hit = inner;
+        }
+        return hit === frame || hosts.includes(hit);
+    });
+}"""
+
 _BUILD_DOM_TREE_JS = r"""
 (args) => {
   args = args || {};
@@ -368,6 +564,8 @@ _BUILD_DOM_TREE_JS = r"""
   const highlight = !!args.highlight;
   const maxElements = (typeof args.maxElements === 'number' && args.maxElements > 0)
     ? args.maxElements : 200;
+  const startIndex = (typeof args.startIndex === 'number' && args.startIndex > 0)
+    ? args.startIndex : 0;
 
   const HIGHLIGHT_CONTAINER_ID = '__wraith_highlight_container__';
   const INDEX_ATTR = 'data-wraith-index';
@@ -544,10 +742,10 @@ _BUILD_DOM_TREE_JS = r"""
 
   // ---- walk the DOM (incl. open shadow roots) ---------------------------- //
   const results = [];
-  let counter = 0;
+  let counter = startIndex;
   const queue = [document.documentElement];
 
-  while (queue.length && counter < maxElements) {
+  while (queue.length && counter - startIndex < maxElements) {
     const node = queue.shift();
     if (!node) continue;
 

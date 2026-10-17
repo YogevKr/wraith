@@ -6,6 +6,27 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-17
+
+### Added
+
+- Snapshots index elements inside visible iframes, same-origin and
+  cross-origin, including nested frames. Indices continue the main sequence,
+  lines end with `(frame N)`, and `click()` / `type()` act on them. An overlay
+  above an iframe hides its covered elements.
+- Snapshots list frames under `Frames:` with their on-screen box. A frame
+  that cannot be read (a closed shadow root, such as Cloudflare Turnstile)
+  says so.
+- `click_frame(frame, x, y)` (library and MCP) clicks a fraction of a frame's
+  box, measured at click time, so a moving frame is still hit.
+- `click_at(x, y)` (library and MCP) clicks a page point in CSS pixels after a
+  human-like mouse path.
+- `AgentBrowser.screenshot(scale=...)`. The MCP `screenshot` uses CSS scale.
+
+### Security
+
+- Secret fills (`fill_secret`, `fill_vault_item`) refuse frame fields.
+
 ## [0.7.1] - 2026-10-17
 
 ### Fixed

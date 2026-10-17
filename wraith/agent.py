@@ -99,6 +99,7 @@ _CONSENT_SELECTORS = (
 
 
 _NAVIGATION_START_MS = 500
+_FRAME_CLICK_TIMEOUT_MS = 3000
 _NAVIGATION_COMMIT_MS = 10000
 _HAS_FOCUS_JS = "t => t === document.activeElement || t.contains(document.activeElement)"
 _EDITABLE_JS = """el => {
@@ -154,22 +155,27 @@ def _has_focus(target: Any) -> bool:
     return False
 
 
-def _focused_value(page: Any) -> Optional[str]:
-    """The focused control's text, or ``None`` when it is not editable."""
+def _focused_value(scope: Any) -> Optional[str]:
+    """The focused control's text in ``scope`` (a page or frame), or ``None``."""
     with contextlib.suppress(Exception):
-        value = page.evaluate(_FOCUSED_VALUE_JS)
+        value = scope.evaluate(_FOCUSED_VALUE_JS)
         return value if isinstance(value, str) else None
     return None
 
 
-def _clear_focused(page: Any) -> None:
-    """Clear the focused control with keys, then verify it is empty."""
-    value = _focused_value(page)
+def _clear_focused(page: Any, frame: Any = None) -> None:
+    """Clear the focused control with keys, then verify it is empty.
+
+    ``frame`` is the frame that holds the field; its document knows the
+    focused control (the main document only sees the iframe).
+    """
+    scope = frame if frame is not None else page
+    value = _focused_value(scope)
     if value is not None and value.strip() == "":
         return
     page.keyboard.press("ControlOrMeta+a")
     page.keyboard.press("Backspace")
-    value = _focused_value(page)
+    value = _focused_value(scope)
     if value is not None and value.strip() == "":
         return
     raise ClearFailedError(
@@ -178,6 +184,54 @@ def _clear_focused(page: Any) -> None:
         "could not be read back); refusing to type on top of unknown "
         "existing content"
     )
+
+
+def _click_in_frame(target: Any) -> None:
+    """Click a node inside a child frame once.
+
+    Playwright maps the point through the iframe (and its CSS transforms) and
+    checks that the node receives the pointer before it dispatches; it never
+    repeats a dispatched click.
+    """
+    if target is None:
+        raise RuntimeError("The visible target is unavailable")
+    target.click(timeout=_FRAME_CLICK_TIMEOUT_MS)
+
+
+def _human_click(page: Any, aim: Callable[[], tuple[float, float]]) -> None:
+    """Move along a human-like path to ``aim()``, re-aim, then click once.
+
+    The second ``aim()`` follows a target that moved during the travel.
+    """
+    with contextlib.suppress(Exception):
+        from .behavior import human_move
+
+        human_move(page, target=aim())
+    x, y = aim()
+    page.mouse.click(x, y)
+
+
+def _frame_aim(
+    snap: Optional[Snapshot], frame: int, x: float, y: float
+) -> Callable[[], tuple[float, float]]:
+    """Return a function that maps frame fractions to a point at call time."""
+    fx, fy = float(x), float(y)
+    if not (0 <= fx <= 1 and 0 <= fy <= 1):
+        raise ValueError("click_frame needs x and y between 0 and 1")
+    # A snapshot with no indexed elements is falsy (len 0) but can still list
+    # frames, so test for None.
+    handle = snap.frame_handle(int(frame)) if snap is not None else None
+    if handle is None:
+        raise ValueError(f"frame {frame} is not in the last snapshot")
+    iframe = handle.frame_element()
+
+    def aim() -> tuple[float, float]:
+        box = iframe.bounding_box()
+        if not box:
+            raise RuntimeError(f"frame {frame} is no longer visible")
+        return box["x"] + fx * box["width"], box["y"] + fy * box["height"]
+
+    return aim
 
 
 def _await_navigation(page: Any, action: Callable[[], Any]) -> None:
@@ -537,8 +591,38 @@ class AgentBrowser:
             A fresh :class:`~wraith.snapshot.Snapshot` taken after the click
             settles.
         """
+        return self._act(lambda: self._pointer_click(index))
+
+    def click_at(self, x: float, y: float) -> Snapshot:
+        """Click the main-viewport point ``(x, y)`` in CSS pixels.
+
+        Use it for a frame whose content Wraith cannot index, such as a closed
+        shadow root (Cloudflare Turnstile): aim with the frame box in the
+        snapshot and :meth:`screenshot` (``scale="css"`` matches these units).
+        The mouse travels a human-like path first. Wraith cannot check what is
+        under the point, so prefer :meth:`click` when the target has an index.
+        """
+        x, y = float(x), float(y)
+        if not (x >= 0 and y >= 0):  # also rejects NaN
+            raise ValueError("click_at needs a point inside the viewport")
+        return self._act(lambda: _human_click(self.page, lambda: (x, y)))
+
+    def click_frame(self, frame: int, x: float, y: float) -> Snapshot:
+        """Click a point of child frame ``frame`` from the last snapshot.
+
+        ``x`` and ``y`` are fractions (0 to 1) of the frame's on-screen box,
+        so a checkbox at the left middle is ``(0.1, 0.5)``. Wraith reads the
+        box at click time, and again after the mouse travel, so a frame that
+        moves (a CSS animation) is still hit. Use it for a frame with no
+        indexed elements, such as Cloudflare Turnstile.
+        """
+        aim = _frame_aim(self.last_snapshot, frame, x, y)
+        return self._act(lambda: _human_click(self.page, aim))
+
+    def _act(self, action: Callable[[], Any]) -> Snapshot:
+        """Run ``action``, wait for a navigation it starts, and re-snapshot."""
         pre = self._page_signature()
-        _await_navigation(self.page, lambda: self._pointer_click(index))
+        _await_navigation(self.page, action)
         self._wait_for_settle()
         snap = self.snapshot()
         self._set_changed(pre, snap)
@@ -620,7 +704,7 @@ class AgentBrowser:
         focused = _has_focus(locator)
         if clear:
             if focused:
-                _clear_focused(self.page)
+                _clear_focused(self.page, self._frame_of(index))
             else:
                 self._clear_verified(locator)
         keys = _FocusedKeyboard(self.page.keyboard) if focused else locator
@@ -672,6 +756,7 @@ class AgentBrowser:
         if kind not in SECRET_FIELD_KINDS:
             raise SecretCapabilityError("The vault field kind is invalid")
 
+        self._require_main_frame(index)
         origin = canonical_origin(self.current_url)
         locator = self._locator(index)
         try:
@@ -757,6 +842,7 @@ class AgentBrowser:
         if not isinstance(capability, SecretCapability):
             raise SecretCapabilityError("capability has an invalid type")
 
+        self._require_main_frame(index)
         origin = canonical_origin(self.current_url)
         if origin not in capability.allowed_origins:
             raise SecretPolicyError("The current origin is not allowed")
@@ -938,12 +1024,15 @@ class AgentBrowser:
         path: Optional[str] = None,
         *,
         allow_secret_tainted: bool = False,
+        scale: str = "device",
     ) -> bytes:
         """Capture a screenshot of the current page.
 
         Args:
             path: Optional filesystem path to also write the PNG to.
             allow_secret_tainted: Permit a screenshot after a secret fill.
+            scale: ``"device"`` (full resolution) or ``"css"`` (one image
+                pixel per CSS pixel, the unit of :meth:`click_at`).
 
         Returns:
             The PNG image bytes.
@@ -954,8 +1043,8 @@ class AgentBrowser:
                 "Pass allow_secret_tainted=True to accept the risk."
             )
         if path is not None:
-            return self.page.screenshot(path=path)
-        return self.page.screenshot()
+            return self.page.screenshot(path=path, scale=scale)
+        return self.page.screenshot(scale=scale)
 
     # ------------------------------------------------------------------ #
     # Properties
@@ -1018,7 +1107,8 @@ class AgentBrowser:
         re-snapshot once and return the locator for the element that still
         matches — so a slightly-stale index recovers instead of throwing.
         """
-        loc = self.page.locator(f'[data-wraith-index="{int(index)}"]')
+        scope = self._frame_of(index) or self.page
+        loc = scope.locator(f'[data-wraith-index="{int(index)}"]')
         try:
             if loc.count() > 0:
                 return loc
@@ -1031,8 +1121,22 @@ class AgentBrowser:
             fresh = self.snapshot()
             match = next((e for e in fresh.elements if e.signature == sig), None)
             if match is not None:
-                return self.page.locator(f'[data-wraith-index="{int(match.index)}"]')
+                scope = self._frame_of(match.index) or self.page
+                return scope.locator(f'[data-wraith-index="{int(match.index)}"]')
         return loc  # let the caller's action raise a clear error if truly gone
+
+    def _frame_of(self, index: int) -> Any:
+        """The child ``Frame`` that holds ``index``, or ``None`` for the main frame."""
+        snap = self.last_snapshot
+        element = snap.by_index(index) if snap else None
+        if element is None or not element.frame:
+            return None
+        return snap.frame_handle(element.frame)
+
+    def _require_main_frame(self, index: int) -> None:
+        """Secret fills bind to the page origin, so frame fields never qualify."""
+        if self._frame_of(index) is not None:
+            raise SecretPolicyError("Secret fills accept only main-frame fields")
 
     def _pointer_click(self, index: int) -> None:
         """Pin the indexed node, then click its current visible point once."""
@@ -1040,7 +1144,9 @@ class AgentBrowser:
         try:
             element = self.last_snapshot.by_index(index) if self.last_snapshot else None
             locator = self._locator(index)
-            if element is None or element.center is None:
+            if element is not None and element.frame:
+                _click_in_frame(locator.element_handle())
+            elif element is None or element.center is None:
                 locator.click()
             else:
                 self._click_pointer_target(locator.element_handle())
@@ -1066,6 +1172,10 @@ class AgentBrowser:
         """Return the pinned field after focusing its current visible point."""
         prior = self.last_snapshot.by_index(index) if self.last_snapshot else None
         locator = self._locator(index)
+        if prior is not None and prior.frame:
+            target = locator.element_handle()
+            _click_in_frame(target)
+            return target
         if prior is not None and prior.center is not None:
             target = locator.element_handle()
             self._click_pointer_target(target)

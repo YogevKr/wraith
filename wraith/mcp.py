@@ -71,7 +71,11 @@ app = _MCPServer(
         "If verification fails, navigation reports an error; do not assume clearance. "
         "Each line looks like `[12]<button role=button>Search</button>`; "
         "act on an element by its index with `click(index)` or "
-        "`type_text(index, text)`. Use `fill_secret(index, capability)` for an "
+        "`type_text(index, text)`. Elements inside iframes carry `(frame N)` and "
+        "act the same way. A frame listed under `Frames:` with no readable "
+        "elements (for example Cloudflare Turnstile) can be clicked with "
+        "`click_frame(frame, x, y)` (fractions of the frame); aim with "
+        "`screenshot()`. `click_at(x, y)` clicks any page point. Use `fill_secret(index, capability)` for an "
         "opaque secret capability from a registered provider. Use "
         "`fill_vault_item(index, item_id, field_kind)` for a vault-backed "
         "opaque fill that returns only success or failure. "
@@ -286,6 +290,30 @@ async def click(index: int, include_snapshot: bool = True) -> str:
 
 
 @app.tool()
+async def click_at(x: float, y: float, include_snapshot: bool = True) -> str:
+    """Click a point in the page, in CSS pixels (the same units as the
+    snapshot's ``@ (x,y)`` points and the screenshot).
+
+    Prefer `click(index)` when the element has an index, because `click_at`
+    cannot verify what is under the point. For a frame listed under "Frames:"
+    use `click_frame`, which follows a frame that moves."""
+    return await _run(lambda: _render(_get_browser().click_at(x, y), include_snapshot))
+
+
+@app.tool()
+async def click_frame(frame: int, x: float, y: float, include_snapshot: bool = True) -> str:
+    """Click a point inside frame ``frame`` (the number under "Frames:").
+
+    ``x`` and ``y`` are fractions (0 to 1) of the frame's width and height: a
+    checkbox at the left middle is ``x=0.1, y=0.5``. Aim with `screenshot()`.
+    Wraith measures the frame at click time, so an animated frame is still hit.
+    Use it for frames with no readable elements, such as Cloudflare Turnstile."""
+    return await _run(
+        lambda: _render(_get_browser().click_frame(frame, x, y), include_snapshot)
+    )
+
+
+@app.tool()
 async def type_text(index: int, text: str, enter: bool = False, include_snapshot: bool = True) -> str:
     """Type ``text`` into the input with the given index (clears it first; if
     ``enter`` is true, presses Enter to submit). Returns the resulting snapshot
@@ -401,8 +429,9 @@ async def screenshot() -> Any:
     Returns an inline PNG image (so a multimodal model can see the page and
     disambiguate by the same element indices). On an SDK without image content
     support, falls back to saving a temp PNG and returning its path. Wraith
-    blocks this tool after a secret fill."""
-    png = await _run(lambda: _get_browser().screenshot())
+    blocks this tool after a secret fill. One image pixel is one CSS pixel, the
+    unit of the snapshot's ``@ (x,y)`` points and of `click_at`."""
+    png = await _run(lambda: _get_browser().screenshot(scale="css"))
     if Image is not None:
         return Image(data=png, format="png")
     import os

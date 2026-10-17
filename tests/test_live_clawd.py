@@ -94,8 +94,9 @@ def test_vault_pins_field_and_clears_material(browser, mutation):
     if mutation == "stale":
         browser.page.evaluate('''() => {
             const input=document.querySelector('input');
-            input.removeAttribute('data-wraith-index');
-            input.insertAdjacentHTML('beforebegin', '<button>Earlier control</button>');
+            const copy=input.cloneNode(true);
+            input.replaceWith(copy);
+            copy.insertAdjacentHTML('beforebegin', '<button>Earlier control</button>');
         }''')
 
     class Provider:

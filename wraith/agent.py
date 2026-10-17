@@ -8,11 +8,11 @@ the page and then acting on those elements **by integer index** — ``click(12)`
 
 The indexing contract is owned by :mod:`wraith.snapshot`:
 :func:`~wraith.snapshot.take_snapshot` walks the DOM, finds the interactive
-elements, assigns each a sequential integer index, and stamps
-``data-wraith-index="<i>"`` onto the live DOM node. This class acts on those
-stamped attributes via ``page.locator('[data-wraith-index="<i>"]')`` — so a
-snapshot must be reasonably fresh for an index to resolve (every mutating action
-re-snapshots so the indices the caller sees are always current).
+elements, assigns each a sequential integer index, and keeps index -> node in
+Wraith's isolated JavaScript world, where the page cannot see it. This class
+resolves an index to that node (:data:`wraith.snapshot._INDEXED_NODE_JS`) — so
+a snapshot must be reasonably fresh for an index to resolve (every mutating
+action re-snapshots so the indices the caller sees are always current).
 
 Why this sits on top of the stealth engine (and not vanilla Playwright)
 ----------------------------------------------------------------------
@@ -75,7 +75,7 @@ from .secrets import (
     SECRET_FIELD_KINDS,
 )
 from .redaction import redacted_exception
-from .snapshot import Snapshot, take_snapshot, _POINTER_POINT_JS
+from .snapshot import Snapshot, take_snapshot, _INDEXED_NODE_JS, _POINTER_POINT_JS
 
 __all__ = ["AgentBrowser", "agent_browser", "ClearFailedError"]
 
@@ -123,6 +123,36 @@ _FOCUSED_VALUE_JS = """() => {
   if (typeof a.value === 'string') return a.value;
   return a.isContentEditable ? a.innerText : null;
 }"""
+
+
+class _IndexedNode:
+    """One snapshot node, used where a Playwright locator would be.
+
+    It wraps the ``ElementHandle`` from the snapshot's index Map; ``count()``
+    is 0 when the node is gone. Other attributes come from the handle.
+    """
+
+    def __init__(self, handle: Any) -> None:
+        self._handle = handle
+
+    @classmethod
+    def resolve(cls, scope: Any, index: int) -> "_IndexedNode":
+        """Look ``index`` up in ``scope`` (a page or frame)."""
+        try:
+            return cls(scope.evaluate_handle(_INDEXED_NODE_JS, int(index)).as_element())
+        except Exception:
+            return cls(None)
+
+    def count(self) -> int:
+        return 0 if self._handle is None else 1
+
+    def element_handle(self) -> Any:
+        return self._handle
+
+    def __getattr__(self, name: str) -> Any:
+        if self._handle is None:
+            raise RuntimeError("The indexed element is no longer on the page")
+        return getattr(self._handle, name)
 
 
 class _FocusedKeyboard:
@@ -599,7 +629,7 @@ class AgentBrowser:
         return self.snapshot()
 
     # ------------------------------------------------------------------ #
-    # Actions (all act by data-wraith-index and re-snapshot)
+    # Actions (all act by snapshot index and re-snapshot)
     # ------------------------------------------------------------------ #
     def click(self, index: int) -> Snapshot:
         """Click the element with the given snapshot ``index``.
@@ -857,7 +887,6 @@ class AgentBrowser:
             if not element.evaluate(_POINTER_POINT_JS):
                 raise SecretPolicyError("The target field is covered or unavailable")
             self._secret_state.tainted = True
-            element.evaluate("node => node.setAttribute('data-wraith-secret', 'true')")
             element.fill(material.reveal())
         except SecretPolicyError:
             raise
@@ -961,10 +990,6 @@ class AgentBrowser:
             # Reserve the use before the browser can receive any secret bytes.
             secret_state.uses[usage_key] = uses + 1
             secret_state.tainted = True
-            with contextlib.suppress(Exception):
-                element.evaluate(
-                    "node => node.setAttribute('data-wraith-secret', 'true')"
-                )
             element.fill(material.reveal())
         except (SecretCapabilityError, SecretPolicyError):
             raise
@@ -1144,24 +1169,19 @@ class AgentBrowser:
     # ------------------------------------------------------------------ #
     # Internal helpers
     # ------------------------------------------------------------------ #
-    def _locator(self, index: int) -> Any:
-        """Build a Playwright locator for the snapshot ``index``, self-healing.
+    def _locator(self, index: int) -> "_IndexedNode":
+        """Resolve the snapshot ``index`` to its live node, self-healing.
 
-        The selector targets the ``data-wraith-index`` attribute stamped onto
-        the live DOM by the most recent :func:`wraith.snapshot.take_snapshot`.
-        If that stamp is gone (the DOM changed since the snapshot), re-resolve by
+        The node comes from the index Map the most recent
+        :func:`wraith.snapshot.take_snapshot` kept in Wraith's isolated world.
+        If the node is gone (the DOM changed since the snapshot), re-resolve by
         the element's content :pyattr:`~wraith.snapshot.Element.signature`:
-        re-snapshot once and return the locator for the element that still
-        matches — so a slightly-stale index recovers instead of throwing.
+        re-snapshot once and return the element that still matches — so a
+        slightly-stale index recovers instead of throwing.
         """
-        scope = self._frame_of(index) or self.page
-        loc = scope.locator(f'[data-wraith-index="{int(index)}"]')
-        try:
-            if loc.count() > 0:
-                return loc
-        except Exception:
-            return loc
-        # Stale stamp — try to heal by signature against a fresh snapshot.
+        node = _IndexedNode.resolve(self._frame_of(index) or self.page, index)
+        if node.count():
+            return node
         prior = self.last_snapshot.by_index(index) if self.last_snapshot else None
         if prior is not None:
             sig = prior.signature
@@ -1169,8 +1189,8 @@ class AgentBrowser:
             match = next((e for e in fresh.elements if e.signature == sig), None)
             if match is not None:
                 scope = self._frame_of(match.index) or self.page
-                return scope.locator(f'[data-wraith-index="{int(match.index)}"]')
-        return loc  # let the caller's action raise a clear error if truly gone
+                return _IndexedNode.resolve(scope, match.index)
+        return node  # let the caller's action raise a clear error if truly gone
 
     def _frame_of(self, index: int) -> Any:
         """The child ``Frame`` that holds ``index``, or ``None`` for the main frame."""

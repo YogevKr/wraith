@@ -11,11 +11,12 @@ small integer index, e.g.::
     [12]<button role=button>Search</button>
     [13]<input role=textbox placeholder="Search query"/>
 
-The agent then acts by index — ``page.locator('[data-wraith-index="12"]')`` —
-because :func:`take_snapshot` stamps the matching ``data-wraith-index``
-attribute onto every interactive element it returns. Indices are sequential and
-only valid for the snapshot that produced them; re-snapshot after any action
-that mutates the DOM.
+The agent then acts by index: :func:`take_snapshot` keeps each returned
+element in a Map on Wraith's isolated-world ``window``, and
+:data:`_INDEXED_NODE_JS` returns the node for an index. Nothing is written to
+the page's DOM, so the page cannot see which elements Wraith indexed. Indices
+are sequential and only valid for the snapshot that produced them;
+re-snapshot after any action that mutates the DOM.
 
 Everything here is duck-typed against Playwright's *sync* API and contains no
 hard imports of Playwright/Camoufox, so ``import wraith.snapshot`` succeeds even
@@ -41,10 +42,9 @@ class Element:
     """A single interactive element discovered in a :class:`Snapshot`.
 
     Attributes:
-        index: Sequential integer assigned during the snapshot. Act on this
-            element via ``page.locator('[data-wraith-index="<index>"]')`` — the
-            snapshot stamps a matching ``data-wraith-index`` attribute onto the
-            live DOM node.
+        index: Sequential integer assigned during the snapshot. Resolve the
+            live node with ``frame.evaluate_handle(_INDEXED_NODE_JS, index)``
+            in the element's frame.
         tag: Lowercase tag name (``button``, ``a``, ``input``, ...).
         role: ARIA role — the explicit ``role`` attribute when present, else an
             implicit role derived from the tag (e.g. ``a`` -> ``link``). May be
@@ -253,9 +253,8 @@ def take_snapshot(
     """Walk ``page``'s DOM and return an indexed :class:`Snapshot`.
 
     Runs :data:`_BUILD_DOM_TREE_JS` in the page to find visible interactive
-    elements, stamp each with a sequential ``data-wraith-index`` attribute, and
-    return their metadata. Act on a returned element by index via
-    ``page.locator('[data-wraith-index="<index>"]')``.
+    elements, give each a sequential index, and return their metadata. Resolve
+    a returned element by index with :data:`_INDEXED_NODE_JS`.
 
     Args:
         page: A Playwright sync ``Page``.
@@ -512,14 +511,26 @@ def _clip(s: str, n: int) -> str:
 #   * walks the document (optionally piercing open shadow roots),
 #   * keeps elements that are INTERACTIVE (tag, handler, tabindex, or role),
 #   * filters to visible (and, when viewportOnly, in-viewport) elements,
-#   * assigns a sequential integer index and stamps data-wraith-index="<i>",
+#   * assigns a sequential integer index and keeps index -> node in a Map on
+#     the evaluating world's window (see _INDEXED_NODE_JS),
 #   * optionally overlays labeled highlight boxes,
 #   * returns [{index, tag, role, text, attributes}, ...].
 #
-# Robustness notes: never throws out of the top level (per-node work is wrapped
-# in try/catch), tolerates detached/odd nodes, and re-running it first clears
-# any stale data-wraith-index / highlight overlay from a previous snapshot.
+# Wraith evaluates in an isolated world (Camoufox, patchright), so the page's
+# own scripts cannot see the Map, and the walker writes nothing to the DOM: a
+# page can watch for attribute changes. Each run replaces the Map and removes
+# a highlight overlay left by a previous snapshot. Robustness notes: never
+# throws out of the top level (per-node work is wrapped in try/catch) and
+# tolerates detached/odd nodes.
 # --------------------------------------------------------------------------- #
+
+# The node behind a snapshot index in this frame, or null when the snapshot
+# is gone (a navigation) or the node left the document.
+_INDEXED_NODE_JS = r"""(index) => {
+    const nodes = window.__wraithNodes;
+    const node = nodes && nodes.get(index);
+    return node && node.isConnected ? node : null;
+}"""
 
 _POINTER_POINT_JS = r"""(el) => {
     if (!el || !el.isConnected) return null;
@@ -584,18 +595,10 @@ _BUILD_DOM_TREE_JS = r"""
     ? args.startIndex : 0;
 
   const HIGHLIGHT_CONTAINER_ID = '__wraith_highlight_container__';
-  const INDEX_ATTR = 'data-wraith-index';
 
-  // ---- cleanup any state left by a previous snapshot --------------------- //
-  try {
-    const roots = [document];
-    while (roots.length) {
-      for (const el of roots.pop().querySelectorAll('*')) {
-        el.removeAttribute(INDEX_ATTR);
-        if (el.shadowRoot) roots.push(el.shadowRoot);
-      }
-    }
-  } catch (e) {}
+  // ---- replace the state of a previous snapshot ------------------------- //
+  const nodes = new Map();
+  window.__wraithNodes = nodes;
   try {
     const old = document.getElementById(HIGHLIGHT_CONTAINER_ID);
     if (old) old.remove();
@@ -784,7 +787,7 @@ _BUILD_DOM_TREE_JS = r"""
       if ((viewportOnly || inViewport(node)) && !point) continue;
 
       const index = counter++;
-      node.setAttribute(INDEX_ATTR, String(index));
+      nodes.set(index, node);
       results.push({
         index: index,
         tag: node.tagName.toLowerCase(),
@@ -811,9 +814,7 @@ _BUILD_DOM_TREE_JS = r"""
       const palette = ['#FF0000', '#00AA00', '#0000FF', '#FF8800',
                        '#AA00AA', '#008888', '#888800', '#AA0044'];
       results.forEach((r) => {
-        let el;
-        try { el = document.querySelector('[' + INDEX_ATTR + '="' + r.index + '"]'); }
-        catch (e) { el = null; }
+        const el = nodes.get(r.index);
         if (!el) return;
         const rect = el.getBoundingClientRect();
         const color = palette[r.index % palette.length];

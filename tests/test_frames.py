@@ -12,6 +12,7 @@ import wraith.mcp as m
 from wraith import snapshot as snap_mod
 from wraith.agent import AgentBrowser
 from wraith.secrets import SecretPolicyError
+from tests._fakes import NodeHandle
 
 
 def _item(tag, text, x, y, w=80, h=20, **attrs):
@@ -38,14 +39,15 @@ class _Frame:
         self.iframe = iframe
         self.child_frames = list(children)
         self.walks: list[dict] = []
-        self.locators: list[str] = []
+        self.lookups: list[int] = []
 
     def frame_element(self):
         return self.iframe
 
-    def locator(self, selector):
-        self.locators.append(selector)
-        return _Locator(self, selector)
+    def evaluate_handle(self, js, index):
+        assert js == snap_mod._INDEXED_NODE_JS
+        self.lookups.append(index)
+        return NodeHandle(_Locator(self, index))
 
     def evaluate(self, js, arg=None):
         if js == snap_mod._BUILD_DOM_TREE_JS:
@@ -61,17 +63,14 @@ class _Frame:
 
 
 class _Locator:
-    def __init__(self, frame, selector):
-        self.frame, self.selector = frame, selector
-
-    def count(self):
-        return 1
+    def __init__(self, frame, index):
+        self.frame, self.index = frame, index
 
     def element_handle(self):
         return self
 
     def click(self, **kw):
-        self.frame.clicked = (self.selector, kw)
+        self.frame.clicked = (self.index, kw)
 
 
 class _Page:
@@ -85,8 +84,8 @@ class _Page:
     def evaluate(self, js, arg=None):
         return self.main_frame.evaluate(js, arg)
 
-    def locator(self, selector):
-        return self.main_frame.locator(selector)
+    def evaluate_handle(self, js, index):
+        return self.main_frame.evaluate_handle(js, index)
 
 
 def _page():
@@ -155,11 +154,11 @@ def test_frame_elements_resolve_and_click_in_their_frame(browser):
 
     a._pointer_click(submit)
 
-    selector, options = form.clicked
-    assert selector == f'[data-wraith-index="{submit}"]'
+    index, options = form.clicked
+    assert index == submit
     assert options["timeout"] == ag._FRAME_CLICK_TIMEOUT_MS
     assert 45 <= options["delay"] <= 110  # the button is held like a person's
-    assert form.locators and not page.main_frame.locators
+    assert form.lookups and not page.main_frame.lookups
 
 
 def test_secret_fills_refuse_frame_fields(browser):

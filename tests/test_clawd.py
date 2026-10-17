@@ -17,14 +17,12 @@ from wraith.secrets import (
     unregister_vault_provider,
 )
 from wraith.snapshot import Element, Snapshot, _parse_elements
+from tests._fakes import NodeHandle
 
 
 class _Locator:
     def __init__(self) -> None:
         self.filled = None
-
-    def count(self):
-        return 1
 
     def element_handle(self):
         return self
@@ -71,8 +69,8 @@ class _Page:
         self.mouse = _Mouse()
         self.loc = _Locator()
 
-    def locator(self, _selector):
-        return self.loc
+    def evaluate_handle(self, _js, _index):
+        return NodeHandle(self.loc)
 
     def wait_for_load_state(self, *_args, **_kwargs):
         return None

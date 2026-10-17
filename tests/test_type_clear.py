@@ -21,6 +21,7 @@ import wraith.agent as ag
 import wraith.behavior as behavior_mod
 from wraith.agent import AgentBrowser, ClearFailedError
 from wraith.snapshot import Snapshot
+from tests._fakes import NodeHandle
 
 
 # --------------------------------------------------------------------------- #
@@ -32,8 +33,8 @@ class _FakePage:
     def __init__(self, locator):
         self._locator = locator
 
-    def locator(self, sel):
-        return self._locator
+    def evaluate_handle(self, js, index):
+        return NodeHandle(self._locator)
 
     def evaluate(self, *a, **k):
         return {}
@@ -73,9 +74,6 @@ class _CodeMirrorLikeLocator(_Keys):
         self.value = initial
         self._selected_all = False
         self.calls: list[str] = []
-
-    def count(self) -> int:
-        return 1
 
     def fill(self, text: str) -> None:
         self.calls.append(f"fill({text!r})")
@@ -127,9 +125,6 @@ class _PlainInputLocator(_Keys):
     def __init__(self, initial: str):
         self.value = initial
         self.calls: list[str] = []
-
-    def count(self) -> int:
-        return 1
 
     def fill(self, text: str) -> None:
         self.calls.append(f"fill({text!r})")
@@ -254,9 +249,6 @@ class _SwapOnFirstKeyField(_Keys):
         self.value = ""
         self.attached = True
         self.calls: list[str] = []
-
-    def count(self) -> int:
-        return 1
 
     def evaluate(self, js, *a):
         return self.attached  # focus is on this node until it is replaced
@@ -415,9 +407,6 @@ def test_type_refuses_a_non_editable_target_before_clicking():
     class _DonateLink:
         def __init__(self):
             self.calls: list[str] = []
-
-        def count(self) -> int:
-            return 1
 
         def evaluate(self, js, *a):
             return False if js == ag._EDITABLE_JS else True

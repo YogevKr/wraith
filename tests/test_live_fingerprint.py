@@ -49,8 +49,14 @@ INPUT_PAGE = """<!doctype html><title>input</title><body>
 <input name=field placeholder="Probe field" autocomplete=off>
 <button id=target>Probe target</button>
 <script>
-const probe = {events: [], moves: 0, added: 0};
-const save = () => { document.documentElement.dataset.input = JSON.stringify(probe); };
+const probe = {events: [], moves: 0, added: 0, attributes: 0};
+const save = () => {
+  // What the page itself can see of the agent: marked nodes, its globals.
+  probe.marked = Array.from(document.querySelectorAll('*')).filter(
+    el => Array.from(el.attributes).some(a => a.name.startsWith('data-wraith'))).length;
+  probe.globals = Object.keys(window).filter(k => /wraith/i.test(k));
+  document.documentElement.dataset.input = JSON.stringify(probe);
+};
 for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'keydown', 'keyup']) {
   document.addEventListener(type, e => {
     probe.events.push({type, trusted: e.isTrusted, key: e.key || null, time: performance.now()});
@@ -59,9 +65,12 @@ for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click',
 }
 document.addEventListener('mousemove', () => { probe.moves += 1; save(); }, true);
 new MutationObserver(records => {
-  for (const r of records) probe.added += r.addedNodes.length;
+  for (const r of records) {
+    probe.added += r.addedNodes.length;
+    if (r.type === 'attributes') probe.attributes += 1;
+  }
   save();
-}).observe(document.body, {childList: true, subtree: true});
+}).observe(document.body, {childList: true, subtree: true, attributes: true});
 save();
 </script></body>"""
 
@@ -183,6 +192,8 @@ def test_agent_input_looks_like_a_person(base, engine):
     assert len(holds) >= len(TYPED) and sorted(holds)[len(holds) // 2] > 5, holds
     assert value == TYPED
     assert probe["added"] == 0, "Wraith added nodes to the page"
+    assert probe["attributes"] == 0 and probe["marked"] == 0, "Wraith marked page nodes"
+    assert probe["globals"] == [], probe["globals"]
 
 
 def test_chromium_command_line_has_no_automation_flags():

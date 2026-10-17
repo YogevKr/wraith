@@ -124,6 +124,10 @@ uv run camoufox fetch official/152.0.4-beta.30  # fetch Wraith's pinned Camoufox
 uv run patchright install chromium # (optional) fetch patched Chromium for the fallback engine
 ```
 
+The Chromium engine uses an installed Google Chrome when it finds one, because
+the bundled Chrome for Testing build is a known bot signal. Pass
+`channel="chromium"` to `launch()` to use the bundled build instead.
+
 Or with pip:
 
 ```bash

@@ -155,7 +155,10 @@ def test_frame_elements_resolve_and_click_in_their_frame(browser):
 
     a._pointer_click(submit)
 
-    assert form.clicked == (f'[data-wraith-index="{submit}"]', {"timeout": ag._FRAME_CLICK_TIMEOUT_MS})
+    selector, options = form.clicked
+    assert selector == f'[data-wraith-index="{submit}"]'
+    assert options["timeout"] == ag._FRAME_CLICK_TIMEOUT_MS
+    assert 45 <= options["delay"] <= 110  # the button is held like a person's
     assert form.locators and not page.main_frame.locators
 
 
@@ -175,7 +178,7 @@ def test_click_at_moves_then_clicks_the_point(monkeypatch):
     calls = []
 
     class _Mouse:
-        def click(self, x, y):
+        def click(self, x, y, **_kwargs):
             calls.append(("click", x, y))
 
     page = type("P", (), {"mouse": _Mouse()})()

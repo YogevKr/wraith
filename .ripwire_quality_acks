@@ -13,16 +13,32 @@ ack new-clone-of-reused-helper 7a15e5e2f5e86aec 3 MCP tool wrapper idiom: async 
 ack new-clone-of-reused-helper b2b80687f91c2e4e 3 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
 ack new-clone-of-reused-helper bb79b17697aece54 3 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
 ack short-horizon-churn 017c78255777b73f 5 cid=00e6b97441db1592 stacked feature work on agent actions (allowlist checks)
-ack short-horizon-churn 1ced20c4bd86493f 5 cid=7c4bd3f4e1a8888b stacked feature work on agent actions (allowlist checks) | prior: stacked on #19: frame-aware focus/clear follow-up
+ack short-horizon-churn 164f45c988f31c6e 6 cid=97a537775c266e44 stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn 18fefd6e79b16448 6 cid=a975ea22642ede45 stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn 1ced20c4bd86493f 6 cid=372403b9e6da5917 stacked fix: click and key hold times reach the input helpers and their test stubs | prior: stacked feature work on agent actions (allowlist checks)
+ack short-horizon-churn 2914b9057f29d5a5 2 cid=59a83e36c094e5de stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn 3de3801285ece76c 2 cid=73b971224e6efb50 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 5cc5bb06e26efb73 5 cid=263b4ffdcf148174 stacked feature work on agent actions (allowlist checks)
+ack short-horizon-churn 629ef977fc849573 3 cid=c89bf676baadfe09 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 6572f30e9932a654 4 cid=37c0b0fd22026597 stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 66237ee2e6eeadce 8 cid=b3463245717c175a intentional release version bump for v0.6.5 | prior: intentional release version bump for v0.6.4
 ack short-horizon-churn 663387691dbed52d 4 cid=18d774624128b83d stacked on #19: frame-aware focus/clear follow-up
+ack short-horizon-churn 6bc9443f2681c693 3 cid=3d04fc221753d020 stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn 764c1565cc77f12d 6 cid=c3bb09ff112e9bbf stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn 8041d2adab8608ec 3 cid=27b37c4439d0c8f4 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 8c57d66d83c05660 8 cid=87f998d458134756 intentional release version bump for v0.6.5 | prior: intentional release version bump for v0.6.4
+ack short-horizon-churn 8e0b617291abd8cf 3 cid=208a24687c043a9a stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn a654bd35577ac57f 6 cid=2eb0ff91c920a0c9 stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn a96a513b582fcea7 6 cid=146e5551b19e4a07 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn c1c9a155fdcda92d 3 cid=4457b72027ba37c1 stacked feature work on agent actions (allowlist checks)
+ack short-horizon-churn d10450aca794231b 3 cid=2291fa35bf73fe84 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn d277b3502104c2d9 4 cid=27f52ffa3c0ff469 stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn d4e69ad1abf1fb58 5 cid=ac05ce57a8d20775 stacked feature work on agent actions (allowlist checks)
+ack short-horizon-churn dc4c1f8353e2d72f 3 cid=3cdc35456ae5b358 stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn e0d9039ea52f8402 3 cid=345c80d8ac65c9f0 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn e1bb6e557f3a1051 3 cid=0143f55941f7baf2 stacked feature work on agent actions (allowlist checks)
 ack short-horizon-churn e47cc055b4877a74 5 cid=f34168a8f7171e72 stacked feature work on agent actions (allowlist checks) | prior: stacked on #19: frame-aware focus/clear follow-up
+ack short-horizon-churn e5966c6e18f47447 2 cid=128a5ddbe212f761 stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn f8c91622872119f6 2 cid=f34afb87b0c1afe1 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack verbosity 1ced20c4bd86493f 1237 cid=7c4bd3f4e1a8888b allowlist plumbing: constructor param and thin policy calls | prior: new public API: click_at, click_frame, shared _act
-ack verbosity 719e8441be665024 83 cid=018cc564bf471e88 workflow config: macOS live fixture tests | prior: workflow config: separate macOS Camoufox launch job
+ack verbosity 719e8441be665024 86 cid=64115937c9aac2c8 workflow config: macOS live fingerprint tests | prior: workflow config: macOS live fixture tests

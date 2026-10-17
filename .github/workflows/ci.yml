@@ -80,7 +80,8 @@ jobs:
           key: patchright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock') }}
 
       - name: Install patched Chromium
-        # The handoff test loads a Camoufox session into Chromium.
+        # The handoff test loads a Camoufox session into Chromium. The
+        # fingerprint test uses the runner's Google Chrome when it has one.
         run: uv run patchright install chromium
 
       - name: Live browser tests (local fixtures only)
@@ -95,3 +96,4 @@ jobs:
           tests/test_live_secret_policy.py
           tests/test_live_handoff.py
           tests/test_live_domains.py
+          tests/test_live_fingerprint.py

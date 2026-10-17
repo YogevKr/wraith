@@ -58,6 +58,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
 from . import engine as _engine
+from .behavior import click_hold_ms
 from .identity import export_storage_state
 from .domains import DomainPolicy
 from .secrets import (
@@ -133,8 +134,8 @@ class _FocusedKeyboard:
     def press_sequentially(self, text: str, delay: float = 0) -> None:
         self._keyboard.type(text, delay=delay)
 
-    def press(self, key: str) -> None:
-        self._keyboard.press(key)
+    def press(self, key: str, delay: float = 0) -> None:
+        self._keyboard.press(key, delay=delay)
 
 
 class ClearFailedError(RuntimeError):
@@ -196,7 +197,7 @@ def _click_in_frame(target: Any) -> None:
     """
     if target is None:
         raise RuntimeError("The visible target is unavailable")
-    target.click(timeout=_FRAME_CLICK_TIMEOUT_MS)
+    target.click(timeout=_FRAME_CLICK_TIMEOUT_MS, delay=click_hold_ms())
 
 
 def _human_click(page: Any, aim: Callable[[], tuple[float, float]]) -> None:
@@ -209,7 +210,7 @@ def _human_click(page: Any, aim: Callable[[], tuple[float, float]]) -> None:
 
         human_move(page, target=aim())
     x, y = aim()
-    page.mouse.click(x, y)
+    page.mouse.click(x, y, delay=click_hold_ms())
 
 
 def _frame_aim(
@@ -1193,7 +1194,7 @@ class AgentBrowser:
             if element is not None and element.frame:
                 _click_in_frame(locator.element_handle())
             elif element is None or element.center is None:
-                locator.click()
+                locator.click(delay=click_hold_ms())
             else:
                 self._click_pointer_target(locator.element_handle())
         except Exception:
@@ -1212,7 +1213,7 @@ class AgentBrowser:
         if not point:
             raise RuntimeError("The visible target is covered or unavailable")
         # Never retry a dispatched click: it may have submitted a purchase.
-        self.page.mouse.click(point["x"], point["y"])
+        self.page.mouse.click(point["x"], point["y"], delay=click_hold_ms())
 
     def _pointer_focus(self, index: int) -> Any:
         """Return the pinned field after focusing its current visible point."""

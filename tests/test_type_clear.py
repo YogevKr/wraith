@@ -48,7 +48,17 @@ def _agent(locator) -> AgentBrowser:
     return AgentBrowser(session=_FakeSession(_FakePage(locator)))
 
 
-class _CodeMirrorLikeLocator:
+class _Keys:
+    """``press`` of one character types it, as Playwright's ``press`` does."""
+
+    def press(self, key: str, delay: float = 0) -> None:
+        if len(key) == 1:
+            self.press_sequentially(key)
+        else:
+            self._key(key)
+
+
+class _CodeMirrorLikeLocator(_Keys):
     """A hidden-textarea-backed locator whose real content is JS-owned.
 
     Mirrors the reported behavior: ``fill("")`` sets nothing (the editor's own
@@ -89,7 +99,7 @@ class _CodeMirrorLikeLocator:
     def focus(self) -> None:
         self.calls.append("focus()")
 
-    def press(self, key: str) -> None:
+    def _key(self, key: str) -> None:
         self.calls.append(f"press({key!r})")
         if key == "ControlOrMeta+a":
             self._selected_all = True
@@ -106,12 +116,12 @@ class _CodeMirrorLikeLocator:
 class _NeverClearsLocator(_CodeMirrorLikeLocator):
     """Nothing clears it: fill("") no-ops AND the keyboard fallback fails too."""
 
-    def press(self, key: str) -> None:
+    def _key(self, key: str) -> None:
         self.calls.append(f"press({key!r})")
         # deliberately does not honor select-all+delete
 
 
-class _PlainInputLocator:
+class _PlainInputLocator(_Keys):
     """An ordinary <input>/<textarea>: fill("") clears it immediately."""
 
     def __init__(self, initial: str):
@@ -134,7 +144,7 @@ class _PlainInputLocator:
     def focus(self) -> None:
         self.calls.append("focus()")
 
-    def press(self, key: str) -> None:
+    def _key(self, key: str) -> None:
         self.calls.append(f"press({key!r})")
 
     def press_sequentially(self, ch: str, delay: float = 0) -> None:
@@ -233,7 +243,7 @@ def test_clear_failed_error_reexported():
     assert wraith.ClearFailedError is ClearFailedError
 
 
-class _SwapOnFirstKeyField:
+class _SwapOnFirstKeyField(_Keys):
     """A focused input that the page replaces after the first key.
 
     Wikipedia's search box does this: the pinned handle detaches, focus moves
@@ -262,9 +272,12 @@ class _SwapOnFirstKeyField:
     def focus(self) -> None:
         self.calls.append("focus()")
 
-    def press(self, key: str) -> None:
+    def press(self, key: str, delay: float = 0) -> None:
         if not self.attached:
             raise RuntimeError("ElementHandle.press: Element is not attached to the DOM")
+        super().press(key, delay)
+
+    def _key(self, key: str) -> None:
         self.calls.append(f"press({key!r})")
 
     def press_sequentially(self, ch: str, delay: float = 0) -> None:
@@ -285,7 +298,10 @@ class _FocusedPageKeyboard:
     def type(self, text: str, delay: float = 0) -> None:
         self.value += text
 
-    def press(self, key: str) -> None:
+    def press(self, key: str, delay: float = 0) -> None:
+        if len(key) == 1:  # a typed character
+            self.value += key
+            return
         self.pressed.append(key)
         if key == "ControlOrMeta+a":
             self._selected_all = True
@@ -331,7 +347,7 @@ def test_focused_clear_uses_keys_and_verifies():
 
 def test_focused_clear_refuses_unverified_content():
     class _StickyKeyboard(_FocusedPageKeyboard):
-        def press(self, key: str) -> None:
+        def press(self, key: str, delay: float = 0) -> None:
             self.pressed.append(key)  # select-all + delete has no effect
 
     field = _SwapOnFirstKeyField()

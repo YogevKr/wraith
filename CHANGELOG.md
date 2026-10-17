@@ -6,6 +6,32 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-17
+
+### Fixed
+
+- Headless Chromium no longer says `HeadlessChrome` in its User-Agent, worker
+  User-Agent, request headers, or Client Hints brands. `wraith selftest
+  --engine chromium --headless` failed the `useragent` and `headless` checks.
+- The Chromium engine uses an installed Google Chrome when it finds one, and
+  full Chromium (`channel="chromium"`) otherwise in headless mode. The bundled
+  headless shell had no WebGL and no `window.chrome`.
+- Headless Chromium windows are sized like a maximized 1920x1080 window, not
+  Playwright's `1280x720` default.
+- Chromium keeps its renderer sandbox where it is supported. Playwright passed
+  `--no-sandbox`.
+- Clicks hold the mouse button for 45–110 ms and keystrokes hold the key for
+  35–95 ms. Chromium released both in under 1 ms.
+- Camoufox no longer prints a `LeakWarning` about `ff_version` on each launch.
+  Wraith sets `ff_version` to the version of its pinned build.
+
+### Added
+
+- `tests/test_live_fingerprint.py`: offline checks on 127.0.0.1 for automation
+  signs (fingerprint, worker and header User-Agent, WebGL, window sizes),
+  human-like input events through `AgentBrowser`, and Chromium launch flags.
+  The macOS CI job runs them.
+
 ## [0.9.0] - 2026-10-17
 
 ### Added

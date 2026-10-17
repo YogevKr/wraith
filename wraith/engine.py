@@ -53,6 +53,7 @@ Context manager (auto-closes everything)::
 from __future__ import annotations
 
 import contextlib
+import os
 import sys
 import warnings
 from collections.abc import Mapping
@@ -80,6 +81,36 @@ _CAMOUFOX_BROWSER_FETCH = f"official/{_CAMOUFOX_BROWSER_VERSION}"
 # giant "I am a bot" sign; --enable-unsafe-swiftshader forces a software GL
 # renderer that is a softer-but-real server-side tell.
 _CHROMIUM_STRIP_ARGS = ["--enable-automation", "--enable-unsafe-swiftshader"]
+
+# Chromium identity. Playwright's bundled build is Chrome for Testing, whose
+# Client Hints brands lack "Google Chrome" (a bot-detector red flag), so an
+# installed Google Chrome is preferred. Without one, headless runs the
+# "chromium" channel: full Chromium in the new headless mode, not the headless
+# shell (no WebGL, no window.chrome, HeadlessChrome in the brands). Both still
+# say HeadlessChrome in the User-Agent; the launcher replaces that token.
+_CHROMIUM_HEADLESS_CHANNEL = "chromium"
+_HEADLESS_UA_TOKEN = "HeadlessChrome/"
+_HEADLESS_UA_CACHE: dict[tuple[Any, Any], Optional[str]] = {}
+
+# Headless windows default to 1280x720, Playwright's well-known viewport, with
+# a screen no larger than the page. Shape them like a maximized desktop
+# window instead: a 1920x1080 screen and the page below 87px of browser UI.
+_HEADLESS_SCREEN = (1920, 1080)
+_HEADLESS_BROWSER_UI_HEIGHT = 87
+
+# Chromium options that belong to launch(), not to the browser context.
+_CHROMIUM_LAUNCH_ONLY = frozenset(
+    {
+        "channel",
+        "args",
+        "proxy",
+        "env",
+        "executable_path",
+        "slow_mo",
+        "timeout",
+        "chromium_sandbox",
+    }
+)
 
 # Clearance-cookie names by WAAP vendor. The presence of any one of these in
 # the context's cookie jar means the defense handed out a pass and the page is
@@ -384,7 +415,11 @@ def _prepare_camoufox_options(opts: dict[str, Any], extra: dict[str, Any]) -> No
 def _enter_camoufox(cm: Any) -> Any:
     """Enter Camoufox and turn missing pinned builds into a setup error."""
     try:
-        return cm.__enter__()
+        with warnings.catch_warnings():
+            # ff_version matches the pinned build (see _camoufox_browser_options);
+            # Camoufox warns about any ff_version, so this one is a false alarm.
+            warnings.filterwarnings("ignore", message="Spoofing the Firefox version")
+            return cm.__enter__()
     except Exception as exc:
         message = str(exc)
         if "not installed" in message or (
@@ -510,7 +545,17 @@ def _launch_chromium(
       * patchright backend (suppresses the ``Runtime.enable`` CDP leak),
       * ``viewport=None`` / ``no_viewport=True`` (avoids the 1280x720 tell),
       * ``ignore_default_args`` strips ``--enable-automation`` and
-        ``--enable-unsafe-swiftshader``.
+        ``--enable-unsafe-swiftshader``,
+      * the renderer sandbox stays on where Chrome supports it,
+      * an installed Google Chrome is used when present (``channel="chrome"``);
+        without one, headless runs full Chromium (``channel="chromium"``)
+        instead of the headless shell,
+      * headless removes ``HeadlessChrome`` from the User-Agent and sizes the
+        window like a maximized 1920x1080 desktop window.
+
+    Caller ``channel``, ``executable_path``, ``chromium_sandbox``,
+    ``user_agent``, ``viewport``, ``screen`` and ``--window-size`` options
+    win over these defaults.
     """
     try:
         from patchright.sync_api import sync_playwright
@@ -529,9 +574,8 @@ def _launch_chromium(
 
     # Split caller kwargs into launch-level vs context-level so we can place
     # them correctly for both persistent and non-persistent launches.
-    launch_only = {"channel", "args", "proxy", "env", "executable_path", "slow_mo", "timeout"}
-    launch_kw = {k: v for k, v in extra.items() if k in launch_only}
-    context_kw = {k: v for k, v in extra.items() if k not in launch_only}
+    launch_kw = {k: v for k, v in extra.items() if k in _CHROMIUM_LAUNCH_ONLY}
+    context_kw = {k: v for k, v in extra.items() if k not in _CHROMIUM_LAUNCH_ONLY}
 
     # Context-level identity options.
     if locale:
@@ -540,32 +584,9 @@ def _launch_chromium(
         context_kw.setdefault("timezone_id", timezone)
 
     try:
-        if profile_dir:
-            # Persistent context: launch + context in one call. Use
-            # no_viewport=True (the persistent-context equivalent of
-            # viewport=None) unless the caller forced a viewport.
-            if "viewport" not in context_kw:
-                context_kw.setdefault("no_viewport", True)
-            context = pw.chromium.launch_persistent_context(
-                profile_dir,
-                headless=headless,
-                ignore_default_args=_CHROMIUM_STRIP_ARGS,
-                **launch_kw,
-                **context_kw,
-            )
-            browser_obj = None
-            page = context.pages[0] if context.pages else context.new_page()
-        else:
-            browser_obj = pw.chromium.launch(
-                headless=headless,
-                ignore_default_args=_CHROMIUM_STRIP_ARGS,
-                **launch_kw,
-            )
-            # viewport=None disables Playwright's fixed 1280x720 viewport — a
-            # known rebrowser-bot-detector red flag.
-            context_kw.setdefault("viewport", None)
-            context = browser_obj.new_context(**context_kw)
-            page = context.new_page()
+        context, browser_obj, page = _open_chromium(
+            pw, headless, profile_dir, launch_kw, context_kw
+        )
     except Exception:
         with contextlib.suppress(Exception):
             pw.stop()
@@ -579,6 +600,218 @@ def _launch_chromium(
         headless=headless,
         _closers=[pw.stop],
     )
+
+
+def _chromium_sandbox_default() -> bool:
+    """Whether Chrome's renderer sandbox works on this host.
+
+    Playwright turns the sandbox off by default (``--no-sandbox``), which
+    leaves untrusted pages one renderer bug away from the host. Chrome refuses
+    to sandbox as root on Linux; a failed start falls back to no sandbox.
+    """
+    if sys.platform.startswith(("darwin", "win")):
+        return True
+    geteuid = getattr(os, "geteuid", None)
+    return geteuid is None or geteuid() != 0
+
+
+def _installed_chrome() -> Optional[str]:
+    """Path of an installed Google Chrome (stable) in its standard place."""
+    if sys.platform.startswith("darwin"):
+        candidates = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+    elif sys.platform.startswith("win"):
+        roots = ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)")
+        candidates = [
+            os.path.join(
+                os.environ[root], "Google", "Chrome", "Application", "chrome.exe"
+            )
+            for root in roots
+            if os.environ.get(root)
+        ]
+    else:
+        candidates = ["/opt/google/chrome/chrome"]
+    return next((path for path in candidates if os.path.exists(path)), None)
+
+
+def _chromium_launch_defaults(
+    headless: bool, launch_kw: dict[str, Any]
+) -> dict[str, Any]:
+    """Launch options Wraith adds unless the caller chose its own."""
+    defaults: dict[str, Any] = {}
+    if "chromium_sandbox" not in launch_kw:
+        defaults["chromium_sandbox"] = _chromium_sandbox_default()
+    if "channel" not in launch_kw and "executable_path" not in launch_kw:
+        if _installed_chrome():
+            defaults["channel"] = "chrome"
+        elif headless:
+            defaults["channel"] = _CHROMIUM_HEADLESS_CHANNEL
+    return defaults
+
+
+def _shapes_headless_window(
+    headless: bool, launch_kw: dict[str, Any], context_kw: dict[str, Any]
+) -> bool:
+    """Whether to give a headless window a desktop size (caller sizes win)."""
+    if not headless or {"viewport", "screen", "no_viewport"} & context_kw.keys():
+        return False
+    return not any(
+        str(arg).startswith("--window-size") for arg in launch_kw.get("args") or []
+    )
+
+
+def _clean_headless_user_agent(
+    pw: Any, launch_kw: dict[str, Any], browser_obj: Any = None
+) -> Optional[str]:
+    """Return the browser's own User-Agent with ``HeadlessChrome`` replaced.
+
+    The value comes from a blank page, so it keeps the real platform and
+    version. Setting it as the context ``user_agent`` covers pages, workers
+    and request headers, and keeps the Client Hints version list intact (a
+    ``--user-agent`` flag empties it). ``None`` when there is nothing to fix.
+    """
+    key = (launch_kw.get("channel"), launch_kw.get("executable_path"))
+    if key not in _HEADLESS_UA_CACHE:
+        probe = browser_obj
+        if probe is None:
+            probe_kw = {k: v for k, v in launch_kw.items() if k != "proxy"}
+            probe = pw.chromium.launch(
+                headless=True, ignore_default_args=_CHROMIUM_STRIP_ARGS, **probe_kw
+            )
+        try:
+            blank = probe.new_context()
+            try:
+                user_agent = blank.new_page().evaluate("() => navigator.userAgent")
+            finally:
+                blank.close()
+        finally:
+            if browser_obj is None:
+                probe.close()
+        cleaned = None
+        if _HEADLESS_UA_TOKEN in user_agent:
+            cleaned = user_agent.replace(_HEADLESS_UA_TOKEN, "Chrome/")
+        _HEADLESS_UA_CACHE[key] = cleaned
+    return _HEADLESS_UA_CACHE[key]
+
+
+def _open_chromium(
+    pw: Any,
+    headless: bool,
+    profile_dir: Optional[str],
+    launch_kw: dict[str, Any],
+    context_kw: dict[str, Any],
+) -> tuple[Any, Any, Any]:
+    """Start Chromium with Wraith's defaults and return ``(context, browser, page)``.
+
+    If the defaults stop the browser from starting (no full Chromium install,
+    no sandbox support), start it with the caller's options only.
+    """
+    defaults = _chromium_launch_defaults(headless, launch_kw)
+    try:
+        return _open_chromium_once(
+            pw, headless, profile_dir, {**launch_kw, **defaults}, dict(context_kw)
+        )
+    except Exception as exc:
+        if not defaults:
+            raise
+        warnings.warn(
+            f"Chromium did not start with {defaults} ({exc}); retrying without them",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return _open_chromium_once(
+            pw, headless, profile_dir, launch_kw, dict(context_kw)
+        )
+
+
+def _open_chromium_once(
+    pw: Any,
+    headless: bool,
+    profile_dir: Optional[str],
+    launch_kw: dict[str, Any],
+    context_kw: dict[str, Any],
+) -> tuple[Any, Any, Any]:
+    if profile_dir:
+        context = _open_persistent_chromium(
+            pw, headless, profile_dir, launch_kw, context_kw
+        )
+        page = context.pages[0] if context.pages else context.new_page()
+        return context, None, page
+    browser_obj = pw.chromium.launch(
+        headless=headless,
+        ignore_default_args=_CHROMIUM_STRIP_ARGS,
+        **launch_kw,
+    )
+    try:
+        context = _new_chromium_context(
+            pw, browser_obj, headless, launch_kw, context_kw
+        )
+        return context, browser_obj, context.new_page()
+    except Exception:
+        with contextlib.suppress(Exception):
+            browser_obj.close()
+        raise
+
+
+def _open_persistent_chromium(
+    pw: Any,
+    headless: bool,
+    profile_dir: str,
+    launch_kw: dict[str, Any],
+    context_kw: dict[str, Any],
+) -> Any:
+    """Launch a persistent-profile context (launch and context in one call)."""
+    if _shapes_headless_window(headless, launch_kw, context_kw):
+        # The browser window itself gets the size, so outer and inner sizes
+        # differ by the browser UI, as on a real desktop.
+        width, height = _HEADLESS_SCREEN
+        args = [*(launch_kw.get("args") or [])]
+        args += [
+            f"--window-size={width},{height}",
+            f"--screen-info={{0,0 {width}x{height}}}",
+        ]
+        launch_kw = {**launch_kw, "args": args}
+    if headless and "user_agent" not in context_kw:
+        # The context takes its User-Agent at launch, so read it from a short
+        # probe browser first (cached per binary).
+        user_agent = _clean_headless_user_agent(pw, launch_kw)
+        if user_agent:
+            context_kw["user_agent"] = user_agent
+    # Use no_viewport=True (the persistent-context equivalent of
+    # viewport=None) unless the caller forced a viewport.
+    if "viewport" not in context_kw:
+        context_kw.setdefault("no_viewport", True)
+    return pw.chromium.launch_persistent_context(
+        profile_dir,
+        headless=headless,
+        ignore_default_args=_CHROMIUM_STRIP_ARGS,
+        **launch_kw,
+        **context_kw,
+    )
+
+
+def _new_chromium_context(
+    pw: Any,
+    browser_obj: Any,
+    headless: bool,
+    launch_kw: dict[str, Any],
+    context_kw: dict[str, Any],
+) -> Any:
+    """Open the session context in a launched browser."""
+    if _shapes_headless_window(headless, launch_kw, context_kw):
+        # New contexts open 1280x720 windows whatever the launch flags say,
+        # so emulate the desktop screen and page size instead.
+        width, height = _HEADLESS_SCREEN
+        inner = height - _HEADLESS_BROWSER_UI_HEIGHT
+        context_kw["viewport"] = {"width": width, "height": inner}
+        context_kw["screen"] = {"width": width, "height": height}
+    if headless and "user_agent" not in context_kw:
+        user_agent = _clean_headless_user_agent(pw, launch_kw, browser_obj)
+        if user_agent:
+            context_kw["user_agent"] = user_agent
+    # viewport=None disables Playwright's fixed 1280x720 viewport — a known
+    # rebrowser-bot-detector red flag.
+    context_kw.setdefault("viewport", None)
+    return browser_obj.new_context(**context_kw)
 
 
 # --------------------------------------------------------------------------- #

@@ -14,6 +14,12 @@ All notable changes to **Wraith** are documented here. The format is based on
   warns or fails, and `wraith benchmark compare` prints it under the table.
   `wraith.detect.bot_detector_notes(page, names)` reads it.
 
+### Documentation
+
+- The playbook explains the Linux `bot.headless` warning: without a GPU,
+  Chrome draws WebGL with SwiftShader, which only headless Chrome does. Use
+  Camoufox on such hosts.
+
 ## [0.12.3] - 2026-10-17
 
 ### Fixed

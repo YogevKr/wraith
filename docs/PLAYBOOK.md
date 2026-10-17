@@ -86,6 +86,11 @@ score high on general benchmarks.
   Wraith sizes them like a maximized 1920x1080 window: launch flags for a
   persistent profile (outer and inner sizes differ by the browser UI), screen
   and viewport emulation for a new context.
+- **No GPU, no Chromium.** On a Linux server without a GPU, Chrome draws WebGL
+  with SwiftShader. Real Chrome does that only in headless mode or with
+  `--enable-unsafe-swiftshader`, so `rebrowser-bot-detector`'s `headless` check
+  warns (seen on GitHub's Linux runners). Spoofing the renderer from a script
+  would trip `nativeTampering`. Use Camoufox there; it reports a consistent GPU.
 - **Keep the renderer sandbox.** Playwright passes `--no-sandbox` by default.
   Wraith sets `chromium_sandbox=True` where Chrome supports it (macOS,
   Windows, Linux as non-root) and falls back if the browser does not start.

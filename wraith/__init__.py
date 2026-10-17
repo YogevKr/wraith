@@ -30,7 +30,7 @@ namespace and ``__all__``; ``wraith.missing_imports`` records why.
 
 from __future__ import annotations
 
-__version__ = "0.9.2"
+__version__ = "0.10.0"
 
 # Names that imported cleanly, assembled into __all__ at the end.
 __all__: list[str] = []
@@ -251,6 +251,7 @@ _reexport(
 
 # Domain allowlist: keep an agent browser on trusted hosts.
 _reexport("domains", ["DomainPolicy", "DomainNotAllowedError"])
+_reexport("uploads", ["UploadPolicy", "UploadNotAllowedError"])
 
 # Snapshot: the agent perception layer — indexed, browser-use-style DOM
 # snapshots of the interactive elements on a page.

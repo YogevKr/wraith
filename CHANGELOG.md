@@ -6,6 +6,28 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-17
+
+### Added
+
+- `press_key(key)`: press Escape, Tab, arrow keys, Enter, or a chord on the
+  focused element. The key is held for a human time.
+- `select_option(index, option)`: choose a `<select>` option by value or
+  label. An unknown option fails with the option list.
+- `upload_file(index, paths)`: put files into a file input, or click an upload
+  button and fill its file chooser. Uploads are off until folders are allowed
+  with `AgentBrowser(upload_dirs=...)`, `wraith mcp --upload-dir`, or
+  `WRAITH_UPLOAD_DIRS`. `wraith.UploadPolicy` and `wraith.UploadNotAllowedError`.
+- `go_back()`, `go_forward()`, and `wait_for(text, seconds)`.
+- All six are MCP tools too.
+
+### Changed
+
+- The MCP `read` tool returns a long page in slices of 20,000 characters
+  (`read(start, max_chars)`). The last line names the next `start`.
+- The MCP server sends stray `print` output to stderr. A print reached the
+  stdio channel as invalid JSON, even with MCP SDK 2.1.1.
+
 ## [0.9.2] - 2026-10-17
 
 ### Fixed

@@ -140,6 +140,20 @@ Limits:
 - Content markers help the model tell page text from instructions. They do
   not enforce anything.
 
+## File Uploads
+
+An upload sends a local file to a website. A prompt injection can ask an agent
+to upload a key or a credential file, so `upload_file` is off until the
+operator names folders: `AgentBrowser(upload_dirs=[...])`,
+`wraith mcp --upload-dir DIR`, or `WRAITH_UPLOAD_DIRS`.
+
+- Each path is resolved, symlinks included, and must be a regular file inside
+  one of those folders.
+- Use a folder that holds only files meant for upload. Do not allow your home
+  folder.
+- The domain allowlist still applies: the page that receives the file must be
+  on an allowed host.
+
 ## Profile Sync Dead-Drop
 
 `wraith profile sync` moves a cookie jar from a laptop to a remote Wraith over a

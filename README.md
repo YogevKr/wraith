@@ -448,8 +448,9 @@ A cookie jar is the session past 2FA — keep syncs domain-scoped, and see
 
 Wraith ships a stdio MCP server (`wraith-mcp`) that exposes the agent browser as
 tools — `navigate`, `snapshot`, `click`, `click_at`, `click_frame`, `type_text`,
-`fill_secret`, `scroll`, `read`, `screenshot`, `detect_waap`, `borrow`, and
-`receive_profile`. Wire it into an MCP
+`press_key`, `select_option`, `upload_file`, `go_back`, `go_forward`,
+`wait_for`, `fill_secret`, `scroll`, `read`, `screenshot`, `detect_waap`,
+`borrow`, and `receive_profile`. Wire it into an MCP
 client such as Claude Code:
 
 ```bash
@@ -461,6 +462,12 @@ claude mcp add wraith -- uv run --directory /path/to/wraith wraith-mcp
 Call `navigate(url)` as usual. It automatically attempts HUMAN/PerimeterX Press & Hold challenges.
 The MCP server instructions and tool description expose this behavior to the agent.
 Navigation reports an error if verification fails. Restart the MCP server after upgrading Wraith.
+
+`read()` returns a long page in slices of 20,000 characters; its last line
+gives the `read(start=...)` call for the next slice. `upload_file` is off until
+you allow folders: `wraith mcp --upload-dir ~/agent-uploads` (repeatable) or
+`WRAITH_UPLOAD_DIRS`. The server sends stray `print` output to stderr, so a
+library that prints cannot corrupt the stdio protocol.
 
 ### (d) Hand off a session to agent-browser
 

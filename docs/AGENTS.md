@@ -185,6 +185,11 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | `click(index)` | click the indexed element; when the click starts a navigation (within 500 ms), wait for the commit; re-snapshot | `Snapshot` |
 | `type(index, text, *, clear=True, enter=False)` | refuse a non-text target before any click; click the field, then send keys to the focused control (they follow a field that replaces its node); verified clear; optional Enter waits the same way as `click`; re-snapshot | `Snapshot` |
 | `scroll(direction="down", amount=700)` | scroll, re-snapshot | `Snapshot` |
+| `press_key(key)` | press a key or chord (`Escape`, `Tab`, `Shift+Tab`, `ArrowDown`) on the focused element, held for 35–95 ms; re-snapshot | `Snapshot` |
+| `select_option(index, option)` | choose an option of a `<select>` by value or label; an unknown option raises with the option list | `Snapshot` |
+| `upload_file(index, paths)` | set files on a file input, or click an upload button and fill its file chooser; each file must be inside `upload_dirs` (off by default) | `Snapshot` |
+| `go_back()` / `go_forward()` | move through the tab's history | `Snapshot` |
+| `wait_for(text=None, seconds=5)` | wait until `text` is in the main frame's visible text (at most 60 s), else raise `TimeoutError`; without `text`, wait `seconds` | `Snapshot` |
 | `read()` | readable markdown of the page (markdownify on `page.content()`, else `inner_text('body')`) | `str` |
 | `get_text(index=None)` | text of one element, or the whole page | `str` |
 | `screenshot(path=None)` | PNG bytes (saved to `path` if given) | `bytes` |
@@ -266,7 +271,12 @@ operates on one persistent session.
 | `click_frame` | `click_frame(frame: int, x: float, y: float)` | new snapshot text |
 | `type_text` | `type_text(index: int, text: str, enter: bool=False)` | new snapshot text |
 | `scroll` | `scroll(direction: str="down")` | new snapshot text |
-| `read` | `read()` | readable markdown of the page |
+| `press_key` | `press_key(key: str)` | new snapshot text |
+| `select_option` | `select_option(index: int, option: str)` | new snapshot text |
+| `upload_file` | `upload_file(index: int, paths: list[str])` | new snapshot text; refused outside `--upload-dir` folders |
+| `go_back` / `go_forward` | `go_back()` / `go_forward()` | new snapshot text |
+| `wait_for` | `wait_for(text: str="", seconds: float=5)` | new snapshot text |
+| `read` | `read(start: int=0, max_chars: int=20000)` | one slice of the page as markdown; the last line gives the next `start` |
 | `screenshot` | `screenshot()` | inline PNG at CSS scale (one pixel per `click_at` unit) |
 | `detect_waap` | `detect_waap(url: str)` | list of detected WAAP vendors |
 | `borrow` | `borrow(domain: str, profile: str=None)` | injects a warmed identity's cookies from a Firefox/Zen profile into the live context |

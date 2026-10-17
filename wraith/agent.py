@@ -58,9 +58,10 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
 from . import engine as _engine
-from .behavior import click_hold_ms
+from .behavior import click_hold_ms, key_hold_ms
 from .identity import export_storage_state
 from .domains import DomainPolicy
+from .uploads import UploadPolicy, require_policy
 from .secrets import (
     SecretCapability,
     SecretCapabilityError,
@@ -123,6 +124,18 @@ _FOCUSED_VALUE_JS = """() => {
   if (typeof a.value === 'string') return a.value;
   return a.isContentEditable ? a.innerText : null;
 }"""
+
+
+_SELECT_TIMEOUT_MS = 3000
+_FILE_CHOOSER_TIMEOUT_MS = 5000
+_WAIT_MAX_SECONDS = 60.0
+
+# [value, label] for each option of a <select>, or null for another element.
+_SELECT_OPTIONS_JS = """el => el.tagName === 'SELECT'
+    ? Array.from(el.options).map(o => [o.value, o.label.trim()])
+    : null"""
+
+_TEXT_SHOWN_JS = "text => !!document.body && document.body.innerText.includes(text)"
 
 
 class _IndexedNode:
@@ -340,6 +353,7 @@ class AgentBrowser:
         reputation: Optional[Any] = None,
         secret_providers: Optional[Mapping[str, SecretProvider]] = None,
         allowed_domains: Any = None,
+        upload_dirs: Any = None,
         **launch_kw: Any,
     ) -> None:
         """Create an agent browser.
@@ -371,6 +385,10 @@ class AgentBrowser:
                 list, or a :class:`~wraith.domains.DomainPolicy`). The browser
                 then refuses requests, WebSockets, and navigations to other
                 hosts, and closes a page that a redirect moved off the list.
+            upload_dirs: Folders :meth:`upload_file` may read from (a list,
+                ``os.pathsep``-joined text, or an
+                :class:`~wraith.uploads.UploadPolicy`). ``None`` (default)
+                turns file upload off.
             **launch_kw: Extra kwargs forwarded to :func:`wraith.engine.launch`
                 when self-launching (e.g. ``headless``, ``geoip``, ``locale``,
                 ``proxy``, ``profile_dir``).
@@ -385,6 +403,7 @@ class AgentBrowser:
         self.last_snapshot: Optional[Snapshot] = None
         self.domains: Optional[DomainPolicy] = DomainPolicy.parse(allowed_domains)
         self._domains_installed: bool = False
+        self.uploads: Optional[UploadPolicy] = UploadPolicy.parse(upload_dirs)
 
         # When we self-launch with a reputation source, the Camoufox engine must
         # un-partition 3rd-party cookies so the borrowed google.com reputation
@@ -1037,6 +1056,89 @@ class AgentBrowser:
         self._wait_for_settle()
         return self.snapshot()
 
+    def press_key(self, key: str) -> Snapshot:
+        """Press one key or chord on the focused element and re-snapshot.
+
+        Use it for keys that :meth:`type` does not send: ``"Escape"`` (close a
+        dialog), ``"Tab"`` / ``"Shift+Tab"``, ``"ArrowDown"``, ``"PageDown"``,
+        ``"Enter"``. Names follow Playwright's ``keyboard.press``. The key is
+        held for a human time; a navigation it starts is awaited.
+        """
+        name = str(key or "").strip()
+        if not name:
+            raise ValueError("press_key needs a key name, such as Escape or ArrowDown")
+        return self._act(lambda: self.page.keyboard.press(name, delay=key_hold_ms()))
+
+    def select_option(self, index: int, option: str) -> Snapshot:
+        """Choose ``option`` (its value or its visible label) in a ``<select>``.
+
+        Raises when ``index`` is not a ``<select>`` or no option matches; the
+        error lists the options.
+        """
+        return self._act(lambda: self._select(index, str(option)))
+
+    def _select(self, index: int, option: str) -> None:
+        handle = self._locator(index).element_handle()
+        if handle is None:
+            raise RuntimeError("The indexed element is no longer on the page")
+        labels = handle.evaluate(_SELECT_OPTIONS_JS)
+        if labels is None:
+            raise RuntimeError(f"[{index}] is not a <select> list")
+        if not any(option in pair for pair in labels):
+            choices = ", ".join(label or value for value, label in labels[:30])
+            raise ValueError(f"No option {option!r} in [{index}]. Options: {choices}")
+        handle.select_option(option, timeout=_SELECT_TIMEOUT_MS)
+
+    def upload_file(self, index: int, paths: Any) -> Snapshot:
+        """Put local files into the file input or upload button at ``index``.
+
+        ``paths`` is one path or a list. Each file must be inside a folder
+        allowed with ``upload_dirs``; uploads are off without one. A file
+        ``<input>`` takes the files directly; any other element is clicked
+        and the file chooser it opens gets the files.
+        """
+        files = require_policy(self.uploads).check(paths)
+        return self._act(lambda: self._upload(index, files))
+
+    def _upload(self, index: int, files: list[str]) -> None:
+        handle = self._locator(index).element_handle()
+        if handle is None:
+            raise RuntimeError("The indexed element is no longer on the page")
+        if handle.evaluate("el => el.tagName === 'INPUT' && el.type === 'file'"):
+            handle.set_input_files(files)
+            return
+        with self.page.expect_file_chooser(timeout=_FILE_CHOOSER_TIMEOUT_MS) as chooser:
+            self._pointer_click(index)
+        chooser.value.set_files(files)
+
+    def go_back(self) -> Snapshot:
+        """Go back one page in the tab's history and re-snapshot."""
+        return self._act(lambda: self.page.go_back(wait_until="commit"))
+
+    def go_forward(self) -> Snapshot:
+        """Go forward one page in the tab's history and re-snapshot."""
+        return self._act(lambda: self.page.go_forward(wait_until="commit"))
+
+    def wait_for(self, text: Optional[str] = None, seconds: float = 5.0) -> Snapshot:
+        """Wait until ``text`` shows in the page, or for ``seconds``, then re-snapshot.
+
+        With ``text``, raise :class:`TimeoutError` when it does not appear in
+        the main frame's visible text within ``seconds`` (at most 60).
+        """
+        limit = min(max(float(seconds), 0.0), _WAIT_MAX_SECONDS)
+        if text:
+            try:
+                self.page.wait_for_function(
+                    _TEXT_SHOWN_JS, arg=str(text), timeout=limit * 1000
+                )
+            except Exception as exc:
+                raise TimeoutError(
+                    f"{text!r} did not appear within {limit:g} s"
+                ) from exc
+        else:
+            self.page.wait_for_timeout(limit * 1000)
+        return self.snapshot()
+
     # ------------------------------------------------------------------ #
     # Reading
     # ------------------------------------------------------------------ #
@@ -1552,6 +1654,7 @@ def agent_browser(
     reputation: Optional[Any] = None,
     secret_providers: Optional[Mapping[str, SecretProvider]] = None,
     allowed_domains: Any = None,
+    upload_dirs: Any = None,
     **launch_kw: Any,
 ):
     """Context-manager factory for an :class:`AgentBrowser`.
@@ -1569,6 +1672,7 @@ def agent_browser(
             ``ensure_high_score`` on navigate).
         secret_providers: Optional local secret providers by name.
         allowed_domains: Optional host allowlist; see :class:`AgentBrowser`.
+        upload_dirs: Optional upload folders; see :class:`AgentBrowser`.
         **launch_kw: Forwarded to :func:`wraith.engine.launch` when
             self-launching.
 
@@ -1583,6 +1687,7 @@ def agent_browser(
         reputation=reputation,
         secret_providers=secret_providers,
         allowed_domains=allowed_domains,
+        upload_dirs=upload_dirs,
         **launch_kw,
     )
     try:

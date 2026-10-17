@@ -15,4 +15,4 @@ ack short-horizon-churn 8c57d66d83c05660 8 cid=87f998d458134756 intentional rele
 ack short-horizon-churn d277b3502104c2d9 4 cid=27f52ffa3c0ff469 stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn e47cc055b4877a74 4 cid=e60becf5a732a3f5 stacked on #19: frame-aware focus/clear follow-up
 ack verbosity 1ced20c4bd86493f 1196 cid=d30dde06ef296fa5 new public API: click_at, click_frame, shared _act
-ack verbosity 719e8441be665024 65 cid=521feb4ca752890d workflow config: separate macOS Camoufox launch job
+ack verbosity 719e8441be665024 83 cid=018cc564bf471e88 workflow config: macOS live fixture tests | prior: workflow config: separate macOS Camoufox launch job

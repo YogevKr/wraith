@@ -132,6 +132,7 @@ ENV_PROXY_NETWORK = "WRAITH_PROXY_NETWORK"  # anyIP only: residential | mobile
 ENV_ALLOWED_DOMAINS = "WRAITH_ALLOWED_DOMAINS"  # "a.com,*.b.com"
 ENV_CONTENT_BOUNDARIES = "WRAITH_CONTENT_BOUNDARIES"  # "0" turns the markers off
 ENV_UPLOAD_DIRS = "WRAITH_UPLOAD_DIRS"  # upload_file folders, os.pathsep-joined
+ENV_TOOL_TIMEOUT = "WRAITH_TOOL_TIMEOUT"  # seconds one browser tool call may take
 
 _ALLOWED_DOMAINS: Any = None
 _UPLOAD_DIRS: Any = None
@@ -256,12 +257,80 @@ async def _run(fn: "Callable[[], T]") -> T:
     value could leak), so they go to the client as a ``ToolError``.
     """
     loop = asyncio.get_running_loop()
+    executor = _EXEC
+    limit = _tool_timeout()
     try:
-        return await loop.run_in_executor(_EXEC, fn)
+        return await asyncio.wait_for(loop.run_in_executor(executor, fn), limit)
+    except asyncio.TimeoutError:
+        _abandon_browser(executor)
+        raise _ToolError(
+            f"BrowserStuck: the browser did not answer within {limit:.0f} s. "
+            "Wraith closed it; the next tool call starts a new browser "
+            "(open pages and tabs are lost)."
+        ) from None
     except _ToolError:
         raise
     except Exception as exc:
         raise _ToolError(f"{type(exc).__name__}: {exc}") from exc
+
+
+def _tool_timeout() -> float:
+    """Seconds one tool call may take (``WRAITH_TOOL_TIMEOUT``, default 180)."""
+    try:
+        return max(1.0, float(os.environ.get(ENV_TOOL_TIMEOUT, "") or 180))
+    except ValueError:
+        return 180.0
+
+
+def _abandon_browser(executor: ThreadPoolExecutor) -> None:
+    """Replace a worker that a browser call blocks, and kill that browser.
+
+    A page can block a Playwright call with no timeout (a script stuck in a
+    loop). The worker is the only thread allowed to use the browser, so every
+    later call would wait behind it. Killing the Playwright driver ends the
+    blocked call; a new worker launches a new browser on the next call.
+    """
+    global _EXEC, _browser
+    stuck, _browser = _browser, None
+    _EXEC = ThreadPoolExecutor(max_workers=1, thread_name_prefix="wraith-browser")
+    executor.shutdown(wait=False, cancel_futures=True)
+    pid = _driver_pid(stuck)
+    if pid is not None:
+        _kill_tree(pid)
+
+
+def _driver_pid(browser: Any) -> Optional[int]:
+    """The Playwright driver process behind ``browser``, if it can be found."""
+    try:
+        page = browser._session.page
+        return int(page._impl_obj._connection._transport._proc.pid)
+    except Exception:
+        return None
+
+
+def _kill_tree(pid: int) -> None:
+    """Kill ``pid`` and its descendants (the browser) with SIGKILL."""
+    import signal
+    import subprocess
+
+    victims = [pid]
+    try:
+        table = subprocess.run(
+            ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=5
+        ).stdout
+        children: dict[int, list[int]] = {}
+        for line in table.splitlines():
+            child, parent = (int(part) for part in line.split())
+            children.setdefault(parent, []).append(child)
+        for parent in victims:
+            victims.extend(children.get(parent, []))
+    except Exception:
+        pass
+    for victim in reversed(victims):
+        try:
+            os.kill(victim, signal.SIGKILL)
+        except (OSError, AttributeError):
+            pass
 
 
 def _get_browser(reputation: Optional[Any] = None) -> "AgentBrowser":

@@ -479,7 +479,9 @@ Navigation reports an error if verification fails. Restart the MCP server after 
 gives the `read(start=...)` call for the next slice. `upload_file` is off until
 you allow folders: `wraith mcp --upload-dir ~/agent-uploads` (repeatable) or
 `WRAITH_UPLOAD_DIRS`. The server sends stray `print` output to stderr, so a
-library that prints cannot corrupt the stdio protocol.
+library that prints cannot corrupt the stdio protocol. A browser call that
+does not answer within `WRAITH_TOOL_TIMEOUT` seconds (default 180) fails with
+`BrowserStuck`, and the next call starts a new browser.
 
 `drag(dx, dy, index=…)` or `drag(dx, dy, x=…, y=…)` presses on a knob, moves it
 along a human path (eased, with a small wobble, uneven timing, and a short

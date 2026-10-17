@@ -20,7 +20,7 @@ import pytest
 def test_import_wraith():
     import wraith
 
-    assert wraith.__version__ == "0.14.1"
+    assert wraith.__version__ == "0.14.2"
     assert isinstance(wraith.__all__, list)
 
 
@@ -172,3 +172,24 @@ def wraith_identify(resp):
     import wraith
 
     return wraith.identify_waap(resp)
+
+
+
+def test_install_hints_name_real_extras():
+    # A hint like `pip install 'wraith[all]'` fails when the extra does not
+    # exist, and the name "wraith" on PyPI is another project.
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    pyproject = (root / "pyproject.toml").read_text()
+    section = pyproject.split("[project.optional-dependencies]")[1].split("\n[")[0]
+    extras = set(re.findall(r"^([a-z0-9_-]+)\s*=", section, re.M))
+    assert "fastpath" in extras
+    for source in [root / "README.md", *sorted((root / "wraith").glob("*.py"))]:
+        text = source.read_text()
+        for named in re.findall(r"wraith\[([a-z0-9_,-]+)\]", text):
+            assert set(named.split(",")) <= extras, f"{source.name}: wraith[{named}]"
+        for line in text.splitlines():
+            if re.search(r"pip install ['\"]?wraith\b", line):
+                assert "git+" in line, f"{source.name}: {line.strip()}"

@@ -61,8 +61,8 @@ def _lazy(module: str):
         raise SystemExit(
             f"wraith: the '{module}' component is not available "
             f"({type(exc).__name__}: {exc}).\n"
-            f"       Install the full toolkit, e.g. `uv sync` / "
-            f"`pip install 'wraith[all]'`."
+            f"       Install the full toolkit: `uv sync --extra fastpath` in a clone, or "
+            f"`pip install 'wraith[fastpath] @ git+https://github.com/YogevKr/wraith'`."
         )
 
 
@@ -1082,7 +1082,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="no-browser TLS-impersonation request, replaying a borrowed/harvested session",
         description="Replay a captured session (--session) against a URL with a real-browser "
         "TLS+HTTP2 fingerprint and no browser — the cheap half of capture-once/replay-many. "
-        "Needs curl_cffi (pip install 'wraith[fastpath]').",
+        "Needs curl_cffi (pip install curl_cffi).",
     )
     p_fetch.add_argument("url", help="URL to fetch")
     p_fetch.add_argument(

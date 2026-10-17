@@ -96,6 +96,17 @@ Book a flight
 The model replies with an action like *"type 'TLV' into 2, type 'BCN' into 3,
 click 4"*, and your loop maps each to a Wraith call.
 
+Elements inside iframes continue the index sequence and end with `(frame N)`.
+Frames whose content cannot be read are listed at the end:
+
+```
+[6] @ (512,240)<button role=button>Pay</button> (frame 1)
+
+Frames:
+frame 1 @ (640,300) 400x260 https://pay.example/form: 3 indexed elements
+frame 2 @ (901,435) 523x156 https://challenges.cloudflare.com/…: no readable elements; aim with screenshot() and click_frame(2, x, y)
+```
+
 ### Knobs
 
 - `viewport_only=True` (default) keeps the snapshot small and matches what a
@@ -176,6 +187,8 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | `screenshot(path=None)` | PNG bytes (saved to `path` if given) | `bytes` |
 | `current_url` / `current_title` | properties | `str` |
 | `save_storage_state(path, *, for_chromium=False)` | write cookies + localStorage as Playwright `storageState`; `for_chromium=True` makes the file loadable by Chromium tools such as agent-browser | `str` (the path) |
+| `click_at(x, y)` | human-like move, then click the page point in CSS pixels; it cannot verify the target | `Snapshot` |
+| `click_frame(frame, x, y)` | click a point of frame `frame` from the last snapshot; `x`/`y` are fractions (0 to 1) of its on-screen box, measured at click time | `Snapshot` |
 | `close()` | close the Session **iff** we launched it | — |
 
 `AgentBrowser` is a context manager; `agent_browser(**kw)` is the module-level
@@ -246,10 +259,12 @@ operates on one persistent session.
 | `navigate` | `navigate(url)` | snapshot `to_text()` |
 | `snapshot` | `snapshot()` | snapshot `to_text()` |
 | `click` | `click(index: int)` | new snapshot text |
+| `click_at` | `click_at(x: float, y: float)` | new snapshot text |
+| `click_frame` | `click_frame(frame: int, x: float, y: float)` | new snapshot text |
 | `type_text` | `type_text(index: int, text: str, enter: bool=False)` | new snapshot text |
 | `scroll` | `scroll(direction: str="down")` | new snapshot text |
 | `read` | `read()` | readable markdown of the page |
-| `screenshot` | `screenshot()` | path to the saved PNG |
+| `screenshot` | `screenshot()` | inline PNG at CSS scale (one pixel per `click_at` unit) |
 | `detect_waap` | `detect_waap(url: str)` | list of detected WAAP vendors |
 | `borrow` | `borrow(domain: str, profile: str=None)` | injects a warmed identity's cookies from a Firefox/Zen profile into the live context |
 | `save_state` | `save_state(path: str, for_chromium: bool=False)` | writes the session as `storageState`; set `for_chromium=True` for `agent-browser --state` |

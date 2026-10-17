@@ -265,6 +265,22 @@ pointer. Each line includes a coordinate such as `@ (640,412)`. `click()` and
 text entry use that point. A modal therefore hides covered controls instead of
 exposing unusable DOM buttons.
 
+### Frames
+
+Snapshots also index elements inside visible iframes, same-origin and
+cross-origin. Their indices continue the main sequence, and each line ends
+with `(frame N)`. `click()` and `type()` act on them the same way. An overlay
+above an iframe hides its covered elements.
+
+Some frames cannot be read, for example Cloudflare Turnstile, which renders
+in a closed shadow root. The snapshot lists them under `Frames:` with their
+on-screen box. Aim with a screenshot, then call `click_frame(N, x, y)`. `x`
+and `y` are fractions (0 to 1) of that box. Wraith measures the box at click
+time, so a frame that moves is still hit. `click_at(x, y)` clicks any page
+point in CSS pixels.
+
+Secret fills accept only main-frame fields.
+
 ### Managed Clawd flow
 
 `wraith clawd-run --config flow.json` validates a versioned flow and prints a
@@ -389,8 +405,9 @@ A cookie jar is the session past 2FA — keep syncs domain-scoped, and see
 ### (c) MCP server
 
 Wraith ships a stdio MCP server (`wraith-mcp`) that exposes the agent browser as
-tools — `navigate`, `snapshot`, `click`, `type_text`, `fill_secret`, `scroll`, `read`,
-`screenshot`, `detect_waap`, `borrow`, and `receive_profile`. Wire it into an MCP
+tools — `navigate`, `snapshot`, `click`, `click_at`, `click_frame`, `type_text`,
+`fill_secret`, `scroll`, `read`, `screenshot`, `detect_waap`, `borrow`, and
+`receive_profile`. Wire it into an MCP
 client such as Claude Code:
 
 ```bash

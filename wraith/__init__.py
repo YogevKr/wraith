@@ -30,7 +30,7 @@ namespace and ``__all__``; ``wraith.missing_imports`` records why.
 
 from __future__ import annotations
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 
 # Names that imported cleanly, assembled into __all__ at the end.
 __all__: list[str] = []
@@ -257,6 +257,7 @@ _reexport(
         "take_snapshot",
         "Snapshot",
         "Element",
+        "FrameInfo",
     ],
 )
 

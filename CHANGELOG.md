@@ -6,6 +6,19 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-10-17
+
+### Fixed
+
+- Camoufox launches on macOS again. Version 0.6.4 failed with a missing
+  `Contents/MacOS/properties.json` error, so `wraith selftest` failed too.
+- Wraith now reads `properties.json` from the app bundle `Contents/Resources`
+  folder. Camoufox 0.5.8 has the same fallback.
+
+### Added
+
+- CI launches the pinned Camoufox build on macOS.
+
 ## [0.6.4] - 2026-09-29
 
 ### Fixed

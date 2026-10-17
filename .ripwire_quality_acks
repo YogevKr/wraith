@@ -1,4 +1,5 @@
 # ripwire quality acks v1 — written by --quality-ack; a finding stays suppressed until it worsens past its acked magnitude
 # format: ack <kind> <16-hex-key> <ackNow> [cid=<16-hex-content-id>] [by=<scope that acked it>] <reason to end of line> — one per line, kept SORTED by (kind,key) on every write (merge-friendly)
-ack short-horizon-churn 66237ee2e6eeadce 7 cid=bbfd3545766f8779 intentional release version bump for v0.6.4
-ack short-horizon-churn 8c57d66d83c05660 7 cid=36a3aeebaf11966d intentional release version bump for v0.6.4
+ack short-horizon-churn 66237ee2e6eeadce 8 cid=b3463245717c175a intentional release version bump for v0.6.5 | prior: intentional release version bump for v0.6.4
+ack short-horizon-churn 8c57d66d83c05660 8 cid=87f998d458134756 intentional release version bump for v0.6.5 | prior: intentional release version bump for v0.6.4
+ack verbosity 719e8441be665024 65 cid=521feb4ca752890d workflow config: separate macOS Camoufox launch job

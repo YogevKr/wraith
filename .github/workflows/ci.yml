@@ -41,3 +41,38 @@ jobs:
 
       - name: Test (pytest)
         run: uv run pytest -q
+
+  camoufox-macos:
+    # macOS keeps Camoufox in an app bundle with a different file layout.
+    # Launch the pinned build there, because the offline suite cannot.
+    name: camoufox launch (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Cache Camoufox browser
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/Library/Caches/camoufox
+          key: camoufox-${{ runner.os }}-${{ runner.arch }}-152.0.4-beta.30
+
+      - name: Fetch pinned Camoufox
+        env:
+          # Authenticated GitHub API calls avoid the anonymous rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run camoufox fetch official/152.0.4-beta.30
+
+      - name: Launch Camoufox
+        env:
+          WRAITH_LIVE_TEST: "1"
+        run: uv run pytest -q tests/test_live_launch.py

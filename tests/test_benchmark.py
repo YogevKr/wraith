@@ -231,3 +231,38 @@ def test_cli_run_and_compare(monkeypatch, tmp_path, capsys):
     (previous / "mac.json").write_text(json.dumps(_record("mac", {"bot.x": "pass"})))
     cli.main(args)
     assert "mac: `bot.x` pass → fail" in issue.read_text()
+
+
+class _NotesPage:
+    def __init__(self, fail=False):
+        self.calls, self.fail = [], fail
+
+    def evaluate(self, js, names):
+        self.calls.append(names)
+        if self.fail:
+            raise RuntimeError("page closed")
+        return {name: f"🟡 {name} 1 ms reason for {name}" for name in names}
+
+
+def test_bot_checks_keep_the_detectors_reason_for_warn_and_fail(monkeypatch):
+    statuses = {
+        "headless": "warn",
+        "viewport": "pass",
+        "useragent": "fail",
+        "dummyFn": "unknown",
+    }
+    result = {"checks": {name: {"status": status} for name, status in statuses.items()}}
+    monkeypatch.setattr(detect, "selftest", lambda page: result)
+
+    page = _NotesPage()
+    bot = benchmark._bot_checks(detect, page)
+    assert page.calls == [["headless", "useragent"]]
+    assert bot["notes"]["headless"] == "🟡 headless 1 ms reason for headless"
+
+    table = benchmark.render([_record("linux", {"bot.headless": "warn"}, {"bot": bot})])
+    assert "- linux `bot.headless`: 🟡 headless 1 ms reason for headless" in table
+
+    failing = benchmark._bot_checks(detect, _NotesPage(fail=True))
+    assert failing["checks"] == statuses  # a missing note never loses a status
+    assert failing["notes"]["useragent"] == "no note (RuntimeError)"
+    assert detect.bot_detector_notes(page, []) == {} and len(page.calls) == 1

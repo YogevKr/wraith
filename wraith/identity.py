@@ -36,13 +36,15 @@ also need live harvesting from network requests (see the harvest module).
 
 from __future__ import annotations
 
+import copy
+import json
 import platform
 import shutil
 import sqlite3
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 __all__ = [
     "Cookie",
@@ -53,6 +55,8 @@ __all__ = [
     "extract_google_reputation",
     "to_playwright_cookies",
     "inject_cookies",
+    "chromium_storage_state",
+    "export_storage_state",
     "to_cookiejar",
     "ChromeEncryptionError",
     "GOOGLE_REPUTATION_COOKIES",
@@ -552,6 +556,38 @@ def inject_cookies(
             cookie["sameSite"] = "None"
     context.add_cookies(payload)
     return len(payload)
+
+
+def chromium_storage_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a copy of a Playwright ``storageState`` that Chromium accepts.
+
+    Firefox (Camoufox) exports a cookie set without a SameSite attribute as
+    ``sameSite="None"``. Chromium drops a "None" cookie that is not Secure, so
+    a Camoufox session loaded into a Chromium tool (agent-browser ``--state``,
+    Playwright, patchright) loses those cookies without an error. Chromium
+    treats a cookie without SameSite as "Lax", so each non-secure "None"
+    cookie becomes "Lax". Secure "None" cookies keep cross-site delivery.
+    """
+    out = copy.deepcopy(dict(state))
+    for cookie in out.get("cookies") or []:
+        if cookie.get("sameSite") == "None" and not cookie.get("secure"):
+            cookie["sameSite"] = "Lax"
+    return out
+
+
+def export_storage_state(context: Any, path: str, *, for_chromium: bool = False) -> str:
+    """Save a context's cookies + localStorage as a ``storageState`` file.
+
+    ``for_chromium=True`` applies :func:`chromium_storage_state` first, so a
+    Chromium tool such as agent-browser can load a Camoufox session. Returns
+    ``path``.
+    """
+    if not for_chromium:
+        context.storage_state(path=path)
+        return path
+    state = chromium_storage_state(context.storage_state())
+    Path(path).write_text(json.dumps(state, indent=2), encoding="utf-8")
+    return path
 
 
 def to_cookiejar(cookies: Iterable[Any]) -> Any:

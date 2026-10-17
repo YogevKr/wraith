@@ -58,6 +58,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
 from . import engine as _engine
+from .identity import export_storage_state
 from .secrets import (
     SecretCapability,
     SecretCapabilityError,
@@ -293,18 +294,21 @@ class AgentBrowser:
         path: str,
         *,
         allow_secret_tainted: bool = False,
+        for_chromium: bool = False,
     ) -> str:
         """Export the context's cookies + localStorage to a Playwright
         ``storageState`` JSON file — a portable, reusable authenticated session
         (the durable form of an identity-borrowed / challenge-cleared context).
+
+        Pass ``for_chromium=True`` when a Chromium tool such as agent-browser
+        will load the file (see :func:`wraith.identity.chromium_storage_state`).
         """
         if self.secret_tainted and not allow_secret_tainted:
             raise SecretPolicyError(
                 "Storage export is blocked after a secret fill. "
                 "Pass allow_secret_tainted=True to accept the risk."
             )
-        self.context.storage_state(path=path)
-        return path
+        return export_storage_state(self.context, path, for_chromium=for_chromium)
 
     # ------------------------------------------------------------------ #
     # Perception

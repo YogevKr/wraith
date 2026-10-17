@@ -175,6 +175,7 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | `get_text(index=None)` | text of one element, or the whole page | `str` |
 | `screenshot(path=None)` | PNG bytes (saved to `path` if given) | `bytes` |
 | `current_url` / `current_title` | properties | `str` |
+| `save_storage_state(path, *, for_chromium=False)` | write cookies + localStorage as Playwright `storageState`; `for_chromium=True` makes the file loadable by Chromium tools such as agent-browser | `str` (the path) |
 | `close()` | close the Session **iff** we launched it | — |
 
 `AgentBrowser` is a context manager; `agent_browser(**kw)` is the module-level
@@ -251,6 +252,7 @@ operates on one persistent session.
 | `screenshot` | `screenshot()` | path to the saved PNG |
 | `detect_waap` | `detect_waap(url: str)` | list of detected WAAP vendors |
 | `borrow` | `borrow(domain: str, profile: str=None)` | injects a warmed identity's cookies from a Firefox/Zen profile into the live context |
+| `save_state` | `save_state(path: str, for_chromium: bool=False)` | writes the session as `storageState`; set `for_chromium=True` for `agent-browser --state` |
 
 Imports inside the tools are lazy, so `import wraith.mcp` works even on a host
 that has no browser binary installed.

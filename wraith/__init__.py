@@ -30,7 +30,7 @@ namespace and ``__all__``; ``wraith.missing_imports`` records why.
 
 from __future__ import annotations
 
-__version__ = "0.6.5"
+__version__ = "0.7.0"
 
 # Names that imported cleanly, assembled into __all__ at the end.
 __all__: list[str] = []
@@ -98,6 +98,8 @@ _reexport(
         "extract_google_reputation",
         "to_playwright_cookies",
         "inject_cookies",
+        "chromium_storage_state",
+        "export_storage_state",
         "to_cookiejar",
         "GOOGLE_REPUTATION_COOKIES",
         "ChromeEncryptionError",

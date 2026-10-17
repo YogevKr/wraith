@@ -6,6 +6,29 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-17
+
+### Fixed
+
+- Snapshots show what a control holds: a `<select>` shows its chosen option as
+  its text and its options as `options="…"` (it showed every option's text
+  run together), a file input shows `files="…"`, and range and colour inputs
+  show their value. Typed text fields still never show a value.
+- The `Changed:` line after an action names what changed: new visible text
+  (`new text: "File Uploaded!"`) and new control values (`country -> Israel`).
+  It said "no visible change detected" after `select_option` and needed a
+  `read()` to confirm a form submit.
+- `upload_file` refuses a link, a text field, or a `<select>` before it
+  clicks anything. With a wrong index it clicked a link (a new tab opened) and
+  then failed with a raw Playwright timeout. A trigger that opens no file
+  chooser now says so.
+
+### Added
+
+- Snapshots end with `Challenges: turnstile solved` (or `not solved yet`;
+  also reCAPTCHA and hCaptcha) when the page has a captcha token field. Only
+  the field's state is read, never the token.
+
 ## [0.13.0] - 2026-10-17
 
 ### Added

@@ -143,7 +143,75 @@ _SELECT_OPTIONS_JS = """el => el.tagName === 'SELECT' ? {
     options: Array.from(el.options).map(o => [o.value, o.label.trim()]),
 } : null"""
 
+# "file" for a file input, "trigger" for an element that may open a file
+# chooser, else what the element is ("a link", "a text field").
+_UPLOAD_TARGET_JS = """el => {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.type || '').toLowerCase();
+    if (tag === 'input' && type === 'file') return 'file';
+    if (tag === 'a' && el.hasAttribute('href')) return 'a link';
+    if (tag === 'select') return 'a select list';
+    if (tag === 'textarea' || el.isContentEditable) return 'a text field';
+    if (tag === 'input' && !['button', 'submit', 'image', 'reset'].includes(type)) {
+        return 'a text field';
+    }
+    return 'trigger';
+}"""
+
 _TEXT_SHOWN_JS = "text => !!document.body && document.body.innerText.includes(text)"
+
+# Before/after an action: URL, control count, a hash of the visible text, the
+# visible text lines, and what non-secret controls hold. Typed text fields
+# are left out: their values can be secrets.
+_PAGE_SIGNATURE_JS = """() => {
+    const t = (document.body && document.body.innerText) || '';
+    let h = 0;
+    for (let i = 0; i < t.length; i++) { h = ((h << 5) - h + t.charCodeAt(i)) | 0; }
+    const lines = [];
+    for (const raw of t.split('\\n')) {
+        const line = raw.trim();
+        if (line && lines.length < 3000) lines.push(line.slice(0, 160));
+    }
+    const controls = {};
+    document.querySelectorAll('select, input').forEach((el, i) => {
+        const type = (el.type || '').toLowerCase();
+        const key = el.name || el.id || `${el.tagName.toLowerCase()}#${i}`;
+        if (el.tagName === 'SELECT') {
+            controls[key] = Array.from(el.selectedOptions).map((o) => o.label.trim()).join('; ');
+        } else if (type === 'checkbox' || type === 'radio') {
+            controls[key + (type === 'radio' ? '=' + el.value : '')] = el.checked ? 'on' : 'off';
+        } else if (type === 'range' || type === 'color') {
+            controls[key] = el.value;
+        } else if (type === 'file') {
+            controls[key] = Array.from(el.files || []).map((f) => f.name).join(', ');
+        }
+    });
+    return {
+        url: location.href,
+        n: document.querySelectorAll('a,button,input,select,textarea,[role]').length,
+        h,
+        lines,
+        controls,
+    };
+}"""
+
+
+def _control_changes(before: Any, after: Any) -> list[str]:
+    """``"country -> Israel"`` for each non-secret control whose state changed."""
+    before, after = before or {}, after or {}
+    changed = [
+        f"{key} -> {after[key] or '(empty)'}"
+        for key in after
+        if key in before and before[key] != after[key]
+    ]
+    return changed[:5]
+
+
+def _new_lines(before: Any, after: Any, limit: int = 3) -> list[str]:
+    """Visible text lines that appeared, clipped, at most ``limit``."""
+    seen = set(before or [])
+    fresh = [line for line in (after or []) if line not in seen]
+    return [f'"{line[:80]}"' for line in fresh[:limit]]
 
 
 class _IndexedNode:
@@ -598,18 +666,7 @@ class AgentBrowser:
     def _page_signature(self) -> Optional[dict]:
         """Cheap pre/post-action page fingerprint for change observation."""
         try:
-            return self.page.evaluate(
-                """() => {
-                    const t = (document.body && document.body.innerText) || '';
-                    let h = 0;
-                    for (let i = 0; i < t.length; i++) { h = ((h << 5) - h + t.charCodeAt(i)) | 0; }
-                    return {
-                        url: location.href,
-                        n: document.querySelectorAll('a,button,input,select,textarea,[role]').length,
-                        h,
-                    };
-                }"""
-            )
+            return self.page.evaluate(_PAGE_SIGNATURE_JS)
         except Exception:
             return None
 
@@ -628,6 +685,11 @@ class AgentBrowser:
             parts.append(f"+{dn} elements")
         elif dn < 0:
             parts.append(f"{dn} elements")
+        if pre.get("url") == post.get("url"):
+            parts += _control_changes(pre.get("controls"), post.get("controls"))
+            new_text = _new_lines(pre.get("lines"), post.get("lines"))
+            if new_text:
+                parts.append("new text: " + " / ".join(new_text))
         if not parts and pre.get("h") != post.get("h"):
             parts.append("content changed")
         snap.changed = "; ".join(parts) if parts else "no visible change detected"
@@ -1210,11 +1272,30 @@ class AgentBrowser:
         handle = self._locator(index).element_handle()
         if handle is None:
             raise RuntimeError("The indexed element is no longer on the page")
-        if handle.evaluate("el => el.tagName === 'INPUT' && el.type === 'file'"):
+        kind = handle.evaluate(_UPLOAD_TARGET_JS)
+        if kind == "file":
             handle.set_input_files(files)
             return
-        with self.page.expect_file_chooser(timeout=_FILE_CHOOSER_TIMEOUT_MS) as chooser:
-            self._pointer_click(index)
+        if kind != "trigger":
+            # A wrong index must not click a link or type into a field.
+            raise RuntimeError(
+                f"[{index}] is {kind}, not a file input or an upload button. "
+                "Use the index of the file input or of the button that opens "
+                "the file chooser."
+            )
+        try:
+            with self.page.expect_file_chooser(
+                timeout=_FILE_CHOOSER_TIMEOUT_MS
+            ) as chooser:
+                self._pointer_click(index)
+        except Exception as exc:
+            if "filechooser" not in str(exc):
+                raise
+            raise RuntimeError(
+                f"Clicking [{index}] opened no file chooser within "
+                f"{_FILE_CHOOSER_TIMEOUT_MS // 1000} s. Use the index of the file "
+                "input or of the button that opens the file chooser."
+            ) from None
         chooser.value.set_files(files)
 
     def go_back(self) -> Snapshot:

@@ -6,6 +6,22 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-17
+
+### Changed
+
+- The README is shorter and easier to scan: a banner, a snapshot example,
+  measured stealth and challenge results, a three-step quickstart, the MCP
+  tools by group, a configuration table, and diagrams for the defense tiers,
+  profile sync, and the modules. The secret-fill reference moved to
+  `docs/SECRETS.md`; borrow, profile sync, agent-browser handoff, and the
+  Clawd flow moved to `docs/SESSIONS.md`.
+
+### Fixed
+
+- The README told users to run `pip install wraith`, which installs a
+  different project from PyPI. It now installs from GitHub.
+
 ## [0.14.1] - 2026-10-17
 
 ### Fixed

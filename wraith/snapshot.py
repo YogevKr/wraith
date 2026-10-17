@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 __all__ = ["Element", "FrameInfo", "Snapshot", "take_snapshot"]
 
@@ -248,6 +248,7 @@ def take_snapshot(
     highlight: bool = False,
     max_elements: int = 200,
     include_frames: bool = True,
+    frame_filter: Optional[Callable[[str], bool]] = None,
 ) -> Snapshot:
     """Walk ``page``'s DOM and return an indexed :class:`Snapshot`.
 
@@ -268,6 +269,9 @@ def take_snapshot(
         include_frames: Also index visible child frames (iframes), same- or
             cross-origin. Their elements continue the index sequence and carry
             :attr:`Element.frame`; their coordinates are main-viewport pixels.
+        frame_filter: Optional ``url -> bool``. A frame it rejects (and every
+            frame inside it) is left out, for example a host outside the
+            domain allowlist.
 
     Returns:
         A :class:`Snapshot`. ``elements`` is empty if the JS fails or nothing
@@ -295,7 +299,7 @@ def take_snapshot(
         raw = []
 
     elements = _parse_elements(raw)
-    frames = _walk_frames(page, elements, args) if include_frames else []
+    frames = _walk_frames(page, elements, args, frame_filter) if include_frames else []
 
     screenshot: Optional[bytes] = None
     if highlight:
@@ -314,7 +318,12 @@ def take_snapshot(
 # --------------------------------------------------------------------------- #
 
 
-def _walk_frames(page: Any, elements: list[Element], args: dict) -> list[FrameInfo]:
+def _walk_frames(
+    page: Any,
+    elements: list[Element],
+    args: dict,
+    frame_filter: Optional[Callable[[str], bool]] = None,
+) -> list[FrameInfo]:
     """Index visible child frames depth-first; append their elements in place.
 
     Each frame runs the same DOM walker, continuing the index sequence. An
@@ -333,6 +342,8 @@ def _walk_frames(page: Any, elements: list[Element], args: dict) -> list[FrameIn
     stack = [(main, child, []) for child in reversed(_child_frames(main))]
     while stack:
         parent, child, chain = stack.pop()
+        if not _frame_allowed(child, frame_filter):
+            continue
         placed = _place_frame(parent, child, chain, view, args["viewportOnly"])
         if placed is None:
             continue
@@ -353,6 +364,11 @@ def _walk_frames(page: Any, elements: list[Element], args: dict) -> list[FrameIn
                                 element_count=len(kept), handle=child))
         stack.extend((child, grand, link) for grand in reversed(_child_frames(child)))
     return frames
+
+
+def _frame_allowed(frame: Any, frame_filter: Optional[Callable[[str], bool]]) -> bool:
+    """Whether ``frame_filter`` (if any) accepts the frame's URL."""
+    return frame_filter is None or frame_filter(str(getattr(frame, "url", "") or ""))
 
 
 def _place_frame(

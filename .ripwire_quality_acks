@@ -1,18 +1,28 @@
 # ripwire quality acks v1 — written by --quality-ack; a finding stays suppressed until it worsens past its acked magnitude
 # format: ack <kind> <16-hex-key> <ackNow> [cid=<16-hex-content-id>] [by=<scope that acked it>] <reason to end of line> — one per line, kept SORTED by (kind,key) on every write (merge-friendly)
+ack duplication 1d74aa16852c1e1d 28 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
 ack duplication 1d9f39b271718aca 29 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
+ack duplication 41169da95508164d 20 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
 ack duplication 7a15e5e2f5e86aec 28 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
 ack duplication 800e79b4b15b4402 30 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
+ack duplication b2b80687f91c2e4e 23 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
 ack duplication bb79b17697aece54 30 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
+ack duplication bc32b8e385a2d4fa 47 local HTTP server fixture boilerplate in live tests
 ack duplication f20e66adf68b8c73 26 two-line pytest.raises(SystemExit) CLI rejection idiom
 ack new-clone-of-reused-helper 7a15e5e2f5e86aec 3 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
+ack new-clone-of-reused-helper b2b80687f91c2e4e 3 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
 ack new-clone-of-reused-helper bb79b17697aece54 3 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
-ack short-horizon-churn 1ced20c4bd86493f 4 cid=d30dde06ef296fa5 stacked on #19: frame-aware focus/clear follow-up
+ack short-horizon-churn 017c78255777b73f 5 cid=00e6b97441db1592 stacked feature work on agent actions (allowlist checks)
+ack short-horizon-churn 1ced20c4bd86493f 5 cid=7c4bd3f4e1a8888b stacked feature work on agent actions (allowlist checks) | prior: stacked on #19: frame-aware focus/clear follow-up
+ack short-horizon-churn 5cc5bb06e26efb73 5 cid=263b4ffdcf148174 stacked feature work on agent actions (allowlist checks)
 ack short-horizon-churn 6572f30e9932a654 4 cid=37c0b0fd22026597 stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 66237ee2e6eeadce 8 cid=b3463245717c175a intentional release version bump for v0.6.5 | prior: intentional release version bump for v0.6.4
 ack short-horizon-churn 663387691dbed52d 4 cid=18d774624128b83d stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 8c57d66d83c05660 8 cid=87f998d458134756 intentional release version bump for v0.6.5 | prior: intentional release version bump for v0.6.4
+ack short-horizon-churn c1c9a155fdcda92d 3 cid=4457b72027ba37c1 stacked feature work on agent actions (allowlist checks)
 ack short-horizon-churn d277b3502104c2d9 4 cid=27f52ffa3c0ff469 stacked on #19: frame-aware focus/clear follow-up
-ack short-horizon-churn e47cc055b4877a74 4 cid=e60becf5a732a3f5 stacked on #19: frame-aware focus/clear follow-up
-ack verbosity 1ced20c4bd86493f 1196 cid=d30dde06ef296fa5 new public API: click_at, click_frame, shared _act
+ack short-horizon-churn d4e69ad1abf1fb58 5 cid=ac05ce57a8d20775 stacked feature work on agent actions (allowlist checks)
+ack short-horizon-churn e1bb6e557f3a1051 3 cid=0143f55941f7baf2 stacked feature work on agent actions (allowlist checks)
+ack short-horizon-churn e47cc055b4877a74 5 cid=f34168a8f7171e72 stacked feature work on agent actions (allowlist checks) | prior: stacked on #19: frame-aware focus/clear follow-up
+ack verbosity 1ced20c4bd86493f 1237 cid=7c4bd3f4e1a8888b allowlist plumbing: constructor param and thin policy calls | prior: new public API: click_at, click_frame, shared _act
 ack verbosity 719e8441be665024 83 cid=018cc564bf471e88 workflow config: macOS live fixture tests | prior: workflow config: separate macOS Camoufox launch job

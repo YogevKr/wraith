@@ -6,11 +6,26 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-17
+
+### Added
+
+- Domain allowlist: `AgentBrowser(allowed_domains="a.com,*.b.com")`,
+  `wraith mcp --allowed-domains`, and `WRAITH_ALLOWED_DOMAINS`. The browser
+  refuses navigations, new tabs, requests, and WebSockets to other hosts. It
+  closes a page that a server redirect moved off the list and raises
+  `DomainNotAllowedError`. Snapshots leave out frames on other hosts.
+- The MCP `fetch` and `detect_waap` tools check the allowlist before they send
+  a request.
+- The MCP server wraps page text in `<untrusted-page-content id="…">` markers
+  with a random id. `WRAITH_CONTENT_BOUNDARIES=0` turns them off.
+- `wraith.DomainPolicy` and `wraith.DomainNotAllowedError`.
+
 ### Changed
 
 - The macOS CI job runs every live browser test that uses only local fixture
-  pages: launch, frames, Press & Hold, Clawd, secret policy, and the Chromium
-  handoff.
+  pages: launch, frames, Press & Hold, Clawd, secret policy, the Chromium
+  handoff, and the domain allowlist.
 
 ## [0.8.0] - 2026-10-17
 

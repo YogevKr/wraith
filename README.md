@@ -281,6 +281,44 @@ point in CSS pixels.
 
 Secret fills accept only main-frame fields.
 
+### Domain allowlist and content markers
+
+Wraith drives real, logged-in sessions. Text on a page can try to steer the
+agent to another site and leak data in the URL. Give the browser a host
+allowlist to stop that:
+
+```python
+with agent_browser(allowed_domains="example.com,*.example.com") as ab:
+    ab.navigate("https://app.example.com/")   # allowed
+    ab.navigate("https://evil.test/?q=...")   # DomainNotAllowedError, no request sent
+```
+
+```bash
+claude mcp add wraith -e WRAITH_ALLOWED_DOMAINS="example.com,*.example.com" \
+  -- uv run --directory /path/to/wraith wraith-mcp
+# or: wraith mcp --allowed-domains "example.com,*.example.com"
+```
+
+`example.com` matches only that host; `*.example.com` also matches every
+subdomain. With an allowlist, Wraith:
+
+- refuses `navigate()`, new tabs, and the MCP `fetch` and `detect_waap` tools
+  for other hosts before it sends a request;
+- aborts requests and closes WebSockets to other hosts, including images,
+  scripts, `fetch()` calls, iframes, and link clicks;
+- closes a page that a server redirect moved to another host, before the
+  agent reads it, and raises `DomainNotAllowedError`;
+- leaves frames on other hosts out of the snapshot.
+
+List every host the sites need, such as CDNs and challenge hosts
+(`challenges.cloudflare.com`). See [SECURITY.md](SECURITY.md#domain-allowlist)
+for the limits.
+
+The MCP server also wraps page text (snapshots, `read`, tab titles, `fetch`
+bodies) in `<untrusted-page-content id="…">` markers with a random id, so the
+model can tell page text from instructions. Set
+`WRAITH_CONTENT_BOUNDARIES=0` to turn the markers off.
+
 ### Managed Clawd flow
 
 `wraith clawd-run --config flow.json` validates a versioned flow and prints a

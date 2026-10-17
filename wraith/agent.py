@@ -59,6 +59,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from . import engine as _engine
 from .identity import export_storage_state
+from .domains import DomainPolicy
 from .secrets import (
     SecretCapability,
     SecretCapabilityError,
@@ -234,7 +235,9 @@ def _frame_aim(
     return aim
 
 
-def _await_navigation(page: Any, action: Callable[[], Any]) -> None:
+def _await_navigation(
+    page: Any, action: Callable[[], Any], allows: Optional[Callable[[str], bool]] = None
+) -> None:
     """Run ``action``; when it starts a page navigation, wait for the commit.
 
     A click or a form submit sends its request at once, but the new page
@@ -262,7 +265,9 @@ def _await_navigation(page: Any, action: Callable[[], Any]) -> None:
             timeout=_NAVIGATION_COMMIT_MS,
         ):
             with page.expect_request(
-                lambda request: request.is_navigation_request() and request.frame == main,
+                lambda request: request.is_navigation_request()
+                and request.frame == main
+                and (allows is None or allows(request.url)),
                 timeout=_NAVIGATION_START_MS,
             ):
                 _run()
@@ -303,6 +308,7 @@ class AgentBrowser:
         engine: str = "auto",
         reputation: Optional[Any] = None,
         secret_providers: Optional[Mapping[str, SecretProvider]] = None,
+        allowed_domains: Any = None,
         **launch_kw: Any,
     ) -> None:
         """Create an agent browser.
@@ -330,6 +336,10 @@ class AgentBrowser:
                 reputation source still primes the existing context on navigate.
             secret_providers: Optional local providers. Local names override
                 providers from :func:`wraith.register_secret_provider`.
+            allowed_domains: Optional host allowlist (``"a.com,*.b.com"``, a
+                list, or a :class:`~wraith.domains.DomainPolicy`). The browser
+                then refuses requests, WebSockets, and navigations to other
+                hosts, and closes a page that a redirect moved off the list.
             **launch_kw: Extra kwargs forwarded to :func:`wraith.engine.launch`
                 when self-launching (e.g. ``headless``, ``geoip``, ``locale``,
                 ``proxy``, ``profile_dir``).
@@ -342,6 +352,8 @@ class AgentBrowser:
         self._secret_providers = dict(secret_providers or {})
         self._closed: bool = False
         self.last_snapshot: Optional[Snapshot] = None
+        self.domains: Optional[DomainPolicy] = DomainPolicy.parse(allowed_domains)
+        self._domains_installed: bool = False
 
         # When we self-launch with a reputation source, the Camoufox engine must
         # un-partition 3rd-party cookies so the borrowed google.com reputation
@@ -377,6 +389,9 @@ class AgentBrowser:
         if self._session is None:
             self._session = _engine.launch(engine=self._engine, **self._launch_kw)
             self._owns_session = True
+        if self.domains is not None and not self._domains_installed:
+            self.domains.install(self._session.context)
+            self._domains_installed = True
         return self._session
 
     @property
@@ -432,6 +447,8 @@ class AgentBrowser:
 
     def new_tab(self, url: Optional[str] = None) -> Snapshot:
         """Open a new tab (optionally navigating to ``url``), make it active."""
+        if url and self.domains is not None:
+            self.domains.check(url)
         page = self.context.new_page()
         self._active_page = page
         if url:
@@ -490,6 +507,9 @@ class AgentBrowser:
                 "Highlighted snapshots are blocked after a secret fill. "
                 "Pass allow_secret_tainted=True to accept the risk."
             )
+        self._enforce_location()
+        if self.domains is not None:
+            kw.setdefault("frame_filter", self.domains.allows)
         prior = self.last_snapshot
         snap = take_snapshot(self.page, **kw)
         if prior is not None:
@@ -564,6 +584,8 @@ class AgentBrowser:
             wraith.engine.WaapHardBlockError: WAAP hard block.
             wraith.engine.WaapChallengeTimeout: challenge never cleared.
         """
+        if self.domains is not None:
+            self.domains.check(url)
         # clear_challenge drives the session we pass and never closes a
         # caller-supplied session — so it is safe to hand it ours regardless of
         # ownership. Returns the same Session object on success.
@@ -621,12 +643,31 @@ class AgentBrowser:
 
     def _act(self, action: Callable[[], Any]) -> Snapshot:
         """Run ``action``, wait for a navigation it starts, and re-snapshot."""
+        mark = self._blocked_mark()
         pre = self._page_signature()
-        _await_navigation(self.page, action)
+        _await_navigation(self.page, action, self._allows)
         self._wait_for_settle()
         snap = self.snapshot()
         self._set_changed(pre, snap)
+        self._raise_if_blocked(mark)
         return snap
+
+    @property
+    def _allows(self) -> Optional[Callable[[str], bool]]:
+        return self.domains.allows if self.domains is not None else None
+
+    def _blocked_mark(self) -> int:
+        return self.domains.blocked_navigations if self.domains is not None else 0
+
+    def _raise_if_blocked(self, mark: int) -> None:
+        """Report a navigation that the allowlist refused during an action."""
+        if self.domains is not None:
+            self.domains.raise_if_blocked(mark)
+
+    def _enforce_location(self) -> None:
+        """Close a page that a server redirect moved off the allowlist."""
+        if self.domains is not None and self._session is not None:
+            self.domains.close_if_outside(self.page)
 
     def type(
         self,
@@ -687,6 +728,7 @@ class AgentBrowser:
         """
         # A stale or wrong index must not click a link or a buy button.
         self._require_editable(index)
+        mark = self._blocked_mark()
         pre = self._page_signature()
         # The pointer selects the visible target. The locator then sends keys
         # to the focused control without trusting hidden DOM candidates.
@@ -730,11 +772,12 @@ class AgentBrowser:
 
         if enter:
             with contextlib.suppress(Exception):
-                _await_navigation(self.page, lambda: keys.press("Enter"))
+                _await_navigation(self.page, lambda: keys.press("Enter"), self._allows)
 
         self._wait_for_settle()
         snap = self.snapshot()
         self._set_changed(pre, snap)
+        self._raise_if_blocked(mark)
         return snap
 
     def fill_vault_item(
@@ -980,6 +1023,7 @@ class AgentBrowser:
         Returns:
             A markdown (or plain-text) rendering of the current page.
         """
+        self._enforce_location()
         try:
             from markdownify import markdownify as _md  # type: ignore
 
@@ -1004,6 +1048,7 @@ class AgentBrowser:
             The element's (or body's) visible text. Empty string if it cannot be
             read.
         """
+        self._enforce_location()
         if index is None:
             try:
                 return self.page.inner_text("body")
@@ -1037,6 +1082,7 @@ class AgentBrowser:
         Returns:
             The PNG image bytes.
         """
+        self._enforce_location()
         if self.secret_tainted and not allow_secret_tainted:
             raise SecretPolicyError(
                 "Screenshots are blocked after a secret fill. "
@@ -1484,6 +1530,7 @@ def agent_browser(
     engine: str = "auto",
     reputation: Optional[Any] = None,
     secret_providers: Optional[Mapping[str, SecretProvider]] = None,
+    allowed_domains: Any = None,
     **launch_kw: Any,
 ):
     """Context-manager factory for an :class:`AgentBrowser`.
@@ -1500,6 +1547,7 @@ def agent_browser(
             forwarded to :class:`AgentBrowser` (un-partition launch prefs +
             ``ensure_high_score`` on navigate).
         secret_providers: Optional local secret providers by name.
+        allowed_domains: Optional host allowlist; see :class:`AgentBrowser`.
         **launch_kw: Forwarded to :func:`wraith.engine.launch` when
             self-launching.
 
@@ -1513,6 +1561,7 @@ def agent_browser(
         engine=engine,
         reputation=reputation,
         secret_providers=secret_providers,
+        allowed_domains=allowed_domains,
         **launch_kw,
     )
     try:

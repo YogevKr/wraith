@@ -15,6 +15,7 @@ ack duplication 7a15e5e2f5e86aec 28 MCP tool wrapper idiom: async def -> await _
 ack duplication 7d75dbb6dbcd1c16 23 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication 800e79b4b15b4402 30 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
 ack duplication 8170e4a98696793a 19 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
+ack duplication 877cbdaec05bd2b1 36 paged MCP output: read and network_response share _read_slice, each is two lines
 ack duplication 9632340f0144d5ad 23 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication 96e5ef66efddd7f4 23 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication b25e5bcbe95b91ab 21 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
@@ -43,7 +44,7 @@ ack short-horizon-churn 08bdd792d172b724 2 cid=550046d768ee676e stacked fix: sna
 ack short-horizon-churn 0c06a44bade35510 3 cid=580fdd8f2c736d68 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 164f45c988f31c6e 6 cid=97a537775c266e44 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 18fefd6e79b16448 6 cid=a975ea22642ede45 stacked fix: click and key hold times reach the input helpers and their test stubs
-ack short-horizon-churn 1ced20c4bd86493f 8 cid=efc24eb557136f93 stacked feature work on MCP tools (shared _step helper, paged read, upload folders) | prior: stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
+ack short-horizon-churn 1ced20c4bd86493f 9 cid=41e9b29298e8b5af stacked release: version bump, MCP instructions and paged-read helper per PR | prior: stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
 ack short-horizon-churn 20e879d1c56f02ca 3 cid=43eed133900556f2 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 2914b9057f29d5a5 2 cid=59a83e36c094e5de stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 366c1ca61e6eff5a 4 cid=f67d1ba932d69c0d stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
@@ -52,22 +53,26 @@ ack short-horizon-churn 481acf98e0c0951b 4 cid=c140586b93e2eb0a stacked fix: sna
 ack short-horizon-churn 4b42742edb49c7be 4 cid=b6c291c8425ba725 stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
 ack short-horizon-churn 4e6b1b006b4795ce 4 cid=f1885cc1f622abb6 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 5946208a68814ef1 2 cid=e0669e4d1a82353f stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
+ack short-horizon-churn 5baa1f10addb7ad8 9 cid=792538c008f2d65e stacked release: version bump, MCP instructions and paged-read helper per PR
 ack short-horizon-churn 5cc5bb06e26efb73 5 cid=263b4ffdcf148174 stacked feature work on agent actions (allowlist checks)
 ack short-horizon-churn 629ef977fc849573 3 cid=c89bf676baadfe09 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 6572f30e9932a654 4 cid=37c0b0fd22026597 stacked on #19: frame-aware focus/clear follow-up
-ack short-horizon-churn 66237ee2e6eeadce 9 cid=f4705cf341e0da5f stacked release: one version bump per PR | prior: intentional release version bump for v0.6.5
+ack short-horizon-churn 66237ee2e6eeadce 10 cid=a5af34d79f2809f2 stacked release: version bump, MCP instructions and paged-read helper per PR | prior: stacked release: one version bump per PR
 ack short-horizon-churn 663387691dbed52d 4 cid=18d774624128b83d stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 6bc9443f2681c693 4 cid=432f893720cdd97e stacked fix: snapshot index map in the isolated world; fakes answer the index lookup | prior: stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn 6d60945c999d0cdd 9 cid=3fd91e226a083c5c stacked release: version bump, MCP instructions and paged-read helper per PR
 ack short-horizon-churn 712af28f958fc4e9 7 cid=47d64eaf2754ec44 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 764c1565cc77f12d 6 cid=c3bb09ff112e9bbf stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn 76801d3a5e0ce336 5 cid=b75362950bdae8b3 stacked release: version bump, MCP instructions and paged-read helper per PR
 ack short-horizon-churn 7c83b5e663e50fc1 8 cid=79eea60bb61af90f stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
 ack short-horizon-churn 8041d2adab8608ec 3 cid=27b37c4439d0c8f4 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 85ac0208c1882f83 4 cid=511597afe97317a6 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 89e53f399b4b5922 4 cid=81d22f0570649198 stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
-ack short-horizon-churn 8c57d66d83c05660 8 cid=87f998d458134756 intentional release version bump for v0.6.5 | prior: intentional release version bump for v0.6.4
+ack short-horizon-churn 8c57d66d83c05660 9 cid=1c442a5cd4c1e7c2 stacked release: version bump, MCP instructions and paged-read helper per PR | prior: intentional release version bump for v0.6.5
 ack short-horizon-churn 8e0b617291abd8cf 3 cid=208a24687c043a9a stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 93777a28d56a695d 4 cid=1e2054fd7e93c52b stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 98ee2fc418cb2026 7 cid=c324edcb59ae9abf stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
+ack short-horizon-churn 9a5967f8bb3f5738 9 cid=7b4d877257cb22ec stacked release: version bump, MCP instructions and paged-read helper per PR
 ack short-horizon-churn a654bd35577ac57f 6 cid=2eb0ff91c920a0c9 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn a96a513b582fcea7 6 cid=146e5551b19e4a07 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn acc6e3403f036bd3 2 cid=66269a9a8211a73c stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
@@ -80,20 +85,21 @@ ack short-horizon-churn c5c1ddae78a43137 3 cid=22d6b9ac3470a789 stacked fix: sna
 ack short-horizon-churn c60dce5dea09098f 3 cid=2da6ffd6727303ac stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn d10450aca794231b 3 cid=2291fa35bf73fe84 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn d277b3502104c2d9 4 cid=27f52ffa3c0ff469 stacked on #19: frame-aware focus/clear follow-up
-ack short-horizon-churn d4e69ad1abf1fb58 5 cid=ac05ce57a8d20775 stacked feature work on agent actions (allowlist checks)
+ack short-horizon-churn d4e69ad1abf1fb58 9 cid=eecbe66fc2698052 stacked release: version bump, MCP instructions and paged-read helper per PR | prior: stacked feature work on agent actions (allowlist checks)
 ack short-horizon-churn dc4c1f8353e2d72f 3 cid=3cdc35456ae5b358 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn dc7134ce127b0e73 3 cid=9e19973dbb47c6a0 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn e0d9039ea52f8402 3 cid=345c80d8ac65c9f0 stacked fix: click and key hold times reach the input helpers and their test stubs
-ack short-horizon-churn e1bb6e557f3a1051 4 cid=0a984b17b4d88ff6 stacked feature work on MCP tools (shared _step helper, paged read, upload folders) | prior: stacked feature work on agent actions (allowlist checks)
+ack short-horizon-churn e1bb6e557f3a1051 5 cid=dd8486a69bff80ef stacked release: version bump, MCP instructions and paged-read helper per PR | prior: stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
 ack short-horizon-churn e29bc3595e28cb82 3 cid=a21e8b9598964f3e stacked release: one version bump per PR | prior: stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
 ack short-horizon-churn e47cc055b4877a74 5 cid=f34168a8f7171e72 stacked feature work on agent actions (allowlist checks) | prior: stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn e5966c6e18f47447 2 cid=128a5ddbe212f761 stacked fix: click and key hold times reach the input helpers and their test stubs
-ack short-horizon-churn f3fa5384a571a9ce 8 cid=aeb9b1cf22dbf426 stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
+ack short-horizon-churn f3fa5384a571a9ce 9 cid=71b39b82eabf33a9 stacked release: version bump, MCP instructions and paged-read helper per PR | prior: stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
 ack short-horizon-churn f8c91622872119f6 2 cid=f34afb87b0c1afe1 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn f96b4ae6c2e1ed3d 3 cid=bae96e4c1aa95ef5 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
-ack verbosity 1ced20c4bd86493f 1316 cid=efc24eb557136f93 new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs | prior: allowlist plumbing: constructor param and thin policy calls
+ack verbosity 1ced20c4bd86493f 1349 cid=41e9b29298e8b5af new public API: network, network_response; shared secret-fill guard | prior: new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs
 ack verbosity 3e588b25ed647845 111 cid=16114520dd9efb26 CLI parser grows one block per subcommand (benchmark run/compare); weekly workflow config
-ack verbosity 719e8441be665024 87 cid=43ab0d7077b0b297 new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs | prior: workflow config: macOS live fingerprint tests
+ack verbosity 719e8441be665024 88 cid=846d289de0b3b27b new public API: network, network_response; shared secret-fill guard | prior: new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs
+ack verbosity a3aec02e7a971455 80 cid=055961c07c04785a new public API: network, network_response; shared secret-fill guard
 ack verbosity af13e8dd18fb29c3 61 cid=4a37d089ce5be27d CLI parser grows one block per subcommand (benchmark run/compare); weekly workflow config
 ack verbosity e29bc3595e28cb82 395 cid=a21e8b9598964f3e CLI parser grows one block per subcommand (benchmark run/compare); weekly workflow config | prior: new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs
-ack verbosity f3fa5384a571a9ce 78 cid=aeb9b1cf22dbf426 new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs
+ack verbosity f3fa5384a571a9ce 80 cid=71b39b82eabf33a9 new public API: network, network_response; shared secret-fill guard | prior: new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs

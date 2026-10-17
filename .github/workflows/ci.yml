@@ -98,3 +98,4 @@ jobs:
           tests/test_live_domains.py
           tests/test_live_fingerprint.py
           tests/test_live_input_tools.py
+          tests/test_live_netlog.py

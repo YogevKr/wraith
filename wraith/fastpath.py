@@ -16,7 +16,7 @@ The TLS preset is chosen to **cohere with the session that minted it**: a
 Firefox/Camoufox UA maps to a Firefox impersonation preset, Chrome to Chrome,
 etc. (a Chrome-TLS request carrying a Firefox UA is itself a tell).
 
-``curl_cffi`` is an optional dependency:  ``pip install 'wraith[fastpath]'``.
+``curl_cffi`` is an optional dependency (the ``fastpath`` extra): ``pip install curl_cffi``.
 """
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def _require_curl() -> Any:
         from curl_cffi import requests as _cc  # type: ignore
     except ImportError as exc:  # pragma: no cover - import guard
         raise FastPathUnavailableError(
-            "The fast path needs curl_cffi. Install it with: pip install 'wraith[fastpath]'"
+            "The fast path needs curl_cffi. Install it with: pip install curl_cffi"
         ) from exc
     return _cc
 

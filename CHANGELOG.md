@@ -20,7 +20,9 @@ All notable changes to **Wraith** are documented here. The format is based on
 ### Fixed
 
 - The README told users to run `pip install wraith`, which installs a
-  different project from PyPI. It now installs from GitHub.
+  different project from PyPI. It now installs from GitHub. The CLI and fast
+  path error messages no longer point at PyPI, and the CLI no longer names a
+  `wraith[all]` extra that does not exist.
 
 ## [0.14.1] - 2026-10-17
 

@@ -6,6 +6,20 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-10-17
+
+### Fixed
+
+- An action that took longer than 500 ms (a human-like `click_at` or
+  `click_frame`, or any click on a slow machine) could return before the page
+  it opened committed. Playwright's `expect_request` timer starts when the wait
+  is created, so it ran out during the action. The 500 ms window now starts
+  when the action ends.
+- `clear_challenge` could report a hard block on a Press & Hold page that was
+  clearing: when the cleared page answered while the hold check ran, the
+  content read before it (still "access denied") counted as a block. A poll
+  during which the main frame navigated no longer decides a block.
+
 ## [0.12.4] - 2026-10-17
 
 ### Added

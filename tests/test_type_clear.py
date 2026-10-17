@@ -353,42 +353,62 @@ def test_focused_clear_refuses_unverified_content():
     assert page.keyboard.value == "old query"
 
 
+class _NavRequest:
+    def __init__(self, frame, url="https://example.test/next"):
+        self.frame, self.url = frame, url
+
+    def is_navigation_request(self):
+        return True
+
+
 class _NavigatingPage(_FocusedPage):
-    """Records the Enter press inside Playwright's expect_* contexts."""
+    """Fires Playwright's request and framenavigated events while it waits.
 
-    def __init__(self, field, *, navigates: bool):
+    A navigation starts on the first wait after the action, as on a slow
+    machine, and commits on the next one. ``clock`` is the fake time.
+    """
+
+    def __init__(self, field, *, navigates: bool, url="https://example.test/next"):
         super().__init__(field)
-        self.navigates = navigates
+        self.navigates, self.url = navigates, url
         self.events: list[str] = []
+        self.handlers: dict = {}
         self.main_frame = object()
+        self.clock = 0.0
+        self._step = 0
 
-    def expect_event(self, event, predicate=None, timeout=None):
-        page = self
+    def on(self, event, handler):
+        self.handlers[event] = handler
 
-        class _Ctx:
-            def __enter__(self):
-                page.events.append(f"expect {event}")
+    def remove_listener(self, event, handler):
+        self.handlers.pop(event, None)
 
-            def __exit__(self, exc_type, *exc):
-                if exc_type is None:
-                    page.events.append("committed")
-                return False
+    def wait_for_timeout(self, ms):
+        self.clock += ms / 1000
+        if not self.navigates or "request" not in self.handlers:
+            return
+        self._step += 1
+        if self._step == 1:
+            self.events.append("request")
+            self.handlers["request"](_NavRequest(self.main_frame, self.url))
+        elif self._step == 2:
+            self.events.append("committed")
+            self.handlers["framenavigated"](self.main_frame)
 
-        return _Ctx()
 
-    def expect_request(self, predicate, timeout=None):
-        page = self
+@pytest.fixture(autouse=True)
+def _fake_clock(monkeypatch, request):
+    """time.monotonic follows the newest _NavigatingPage's clock."""
+    pages: list = []
+    real_init = _NavigatingPage.__init__
 
-        class _Ctx:
-            def __enter__(self):
-                page.events.append("expect request")
+    def init(self, *a, **kw):
+        real_init(self, *a, **kw)
+        pages.append(self)
 
-            def __exit__(self, exc_type, *exc):
-                if exc_type is None and not page.navigates:
-                    raise TimeoutError("no navigation request")
-                return False
-
-        return _Ctx()
+    monkeypatch.setattr(_NavigatingPage, "__init__", init)
+    real_monotonic = ag.time.monotonic
+    monkeypatch.setattr(ag.time, "monotonic", lambda: pages[-1].clock if pages else real_monotonic())
 
 
 @pytest.mark.parametrize("navigates", [True, False])
@@ -399,8 +419,10 @@ def test_enter_waits_only_for_a_navigation_it_starts(navigates):
     a.type(2, "Firefox", enter=True)
 
     assert page.keyboard.pressed == ["Enter"]
-    assert page.events[:2] == ["expect framenavigated", "expect request"]
     assert ("committed" in page.events) is navigates
+    assert page.handlers == {}  # listeners removed
+    if not navigates:
+        assert page.clock < 1.0  # the start window only, no commit wait
 
 
 def test_type_refuses_a_non_editable_target_before_clicking():
@@ -448,4 +470,23 @@ def test_click_waits_for_the_navigation_it_starts(monkeypatch):
 
     a.click(4)
 
-    assert page.events == ["expect framenavigated", "expect request", "click 4", "committed"]
+    assert page.events == ["click 4", "request", "committed"]
+
+
+def test_the_wait_window_starts_when_a_slow_action_ends():
+    # Playwright's expect_request timer started before the action, so a click
+    # that took longer than the window returned before the new page committed.
+    page = _NavigatingPage(_SwapOnFirstKeyField(), navigates=True)
+
+    def slow_click():
+        page.clock += 2.0  # a human-like click on a slow machine
+
+    ag._await_navigation(page, slow_click)
+    assert page.events == ["request", "committed"]
+
+
+def test_a_refused_navigation_is_not_awaited():
+    page = _NavigatingPage(_SwapOnFirstKeyField(), navigates=True, url="https://evil.test/")
+    ag._await_navigation(page, lambda: None, allows=lambda url: "evil" not in url)
+    assert page.events[0] == "request"
+    assert page.clock <= ag._NAVIGATION_START_MS / 1000 + 0.05  # no commit wait

@@ -932,6 +932,18 @@ def _behavioral_nudge(page: Any) -> None:
         _behavior.dwell(0.1, 0.3)
 
 
+def _raise_if_not_loaded(url: str, error: Optional[Exception], status: Any) -> None:
+    """Raise when ``goto()`` failed and no main-frame response arrived.
+
+    The page then still shows the previous document, which must not pass as a
+    cleared target.
+    """
+    if error is None or status is not None:
+        return
+    reason = (str(error).strip().splitlines() or [type(error).__name__])[0]
+    raise NavigationFailedError(f"Navigation to {url} failed: {reason}")
+
+
 def clear_challenge(
     url: str,
     *,
@@ -1105,11 +1117,7 @@ def clear_challenge(
 
         main_status = goto_status if goto_status is not None else nav_status["status"]
 
-        # No main-frame response at all: the page still shows the previous
-        # document, which must not pass as a cleared target.
-        if goto_error is not None and main_status is None:
-            reason = (str(goto_error).strip().splitlines() or [type(goto_error).__name__])[0]
-            raise NavigationFailedError(f"Navigation to {url} failed: {reason}")
+        _raise_if_not_loaded(url, goto_error, main_status)
 
         # Hard, non-solvable tiers — bail immediately with actionable guidance.
         if main_status in _WAAP_RATE_LIMIT_STATUSES:

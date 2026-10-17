@@ -169,7 +169,7 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | `navigate(url)` | `clear_challenge(url)` (pass any WAAP), auto-dismiss cookie/consent banners (clicks buttons matching `/accept\|agree\|got it\|מאשר\|אישור\|I understand/i`), wait for load, snapshot | `Snapshot` |
 | `snapshot(**kw)` | `take_snapshot(page, **kw)`, store as `.last_snapshot` | `Snapshot` |
 | `click(index)` | click `[data-wraith-index="index"]`, re-snapshot | `Snapshot` |
-| `type(index, text, *, clear=True, enter=False)` | fill/`human_type` the field, optional Enter, re-snapshot | `Snapshot` |
+| `type(index, text, *, clear=True, enter=False)` | refuse a non-text target before any click; click the field, then send keys to the focused control (they follow a field that replaces its node); verified clear; optional Enter waits for a navigation it starts; re-snapshot | `Snapshot` |
 | `scroll(direction="down", amount=700)` | scroll, re-snapshot | `Snapshot` |
 | `read()` | readable markdown of the page (markdownify on `page.content()`, else `inner_text('body')`) | `str` |
 | `get_text(index=None)` | text of one element, or the whole page | `str` |

@@ -152,8 +152,9 @@ def _no_real_snapshot(monkeypatch):
 def _fast_human_type(monkeypatch):
     """Skip human_type's real per-key sleeps: deterministic and instant."""
 
-    def _fake(locator, text, **kw):
-        locator.click()
+    def _fake(locator, text, click=True, **kw):
+        if click:
+            locator.click()
         for ch in text:
             locator.press_sequentially(ch, delay=0)
 
@@ -305,18 +306,7 @@ class _FocusedPage(_FakePage):
         return {}
 
 
-@pytest.fixture
-def _human_type_without_click(monkeypatch):
-    def _human_type(locator, text, click=True, **kw):
-        if click:
-            locator.click()
-        for ch in text:
-            locator.press_sequentially(ch, delay=0)
-
-    monkeypatch.setattr(behavior_mod, "human_type", _human_type)
-
-
-def test_type_follows_focus_when_the_field_is_replaced(_human_type_without_click):
+def test_type_follows_focus_when_the_field_is_replaced():
     field = _SwapOnFirstKeyField()
     page = _FocusedPage(field)
     a = AgentBrowser(session=_FakeSession(page))
@@ -328,7 +318,7 @@ def test_type_follows_focus_when_the_field_is_replaced(_human_type_without_click
     assert field.value == ""  # no key went to the detached handle
 
 
-def test_focused_clear_uses_keys_and_verifies(_human_type_without_click):
+def test_focused_clear_uses_keys_and_verifies():
     field = _SwapOnFirstKeyField()
     page = _FocusedPage(field, value="old query")
     a = AgentBrowser(session=_FakeSession(page))
@@ -339,7 +329,7 @@ def test_focused_clear_uses_keys_and_verifies(_human_type_without_click):
     assert page.keyboard.pressed == ["ControlOrMeta+a", "Backspace"]
 
 
-def test_focused_clear_refuses_unverified_content(_human_type_without_click):
+def test_focused_clear_refuses_unverified_content():
     class _StickyKeyboard(_FocusedPageKeyboard):
         def press(self, key: str) -> None:
             self.pressed.append(key)  # select-all + delete has no effect
@@ -394,7 +384,7 @@ class _NavigatingPage(_FocusedPage):
 
 
 @pytest.mark.parametrize("navigates", [True, False])
-def test_enter_waits_only_for_a_navigation_it_starts(_human_type_without_click, navigates):
+def test_enter_waits_only_for_a_navigation_it_starts(navigates):
     page = _NavigatingPage(_SwapOnFirstKeyField(), navigates=navigates)
     a = AgentBrowser(session=_FakeSession(page))
 

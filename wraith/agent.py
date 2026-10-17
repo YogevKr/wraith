@@ -147,6 +147,65 @@ class ClearFailedError(RuntimeError):
     """
 
 
+def _has_focus(target: Any) -> bool:
+    """Whether keyboard focus is on ``target`` or inside it."""
+    with contextlib.suppress(Exception):
+        return bool(target.evaluate(_HAS_FOCUS_JS))
+    return False
+
+
+def _focused_value(page: Any) -> Optional[str]:
+    """The focused control's text, or ``None`` when it is not editable."""
+    with contextlib.suppress(Exception):
+        value = page.evaluate(_FOCUSED_VALUE_JS)
+        return value if isinstance(value, str) else None
+    return None
+
+
+def _clear_focused(page: Any) -> None:
+    """Clear the focused control with keys, then verify it is empty."""
+    value = _focused_value(page)
+    if value is not None and value.strip() == "":
+        return
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.press("Backspace")
+    value = _focused_value(page)
+    if value is not None and value.strip() == "":
+        return
+    raise ClearFailedError(
+        "could not verify the focused field was cleared before typing — "
+        "a keyboard select-all+delete left it non-empty (or its content "
+        "could not be read back); refusing to type on top of unknown "
+        "existing content"
+    )
+
+
+def _press_enter(page: Any, keys: Any) -> None:
+    """Press Enter; when it starts a page navigation, wait for the commit.
+
+    A form submit sends its request at once, but the new page commits later,
+    so the snapshot would show the old page. An Enter that starts no
+    navigation (search-as-you-type, chat boxes) costs at most
+    ``_ENTER_NAVIGATION_START_MS``.
+    """
+    main = getattr(page, "main_frame", None)
+    if not hasattr(page, "expect_event"):
+        with contextlib.suppress(Exception):
+            keys.press("Enter")
+        return
+    with contextlib.suppress(Exception):
+        with page.expect_event(
+            "framenavigated",
+            predicate=lambda frame: frame == main,
+            timeout=_ENTER_NAVIGATION_COMMIT_MS,
+        ):
+            with page.expect_request(
+                lambda request: request.is_navigation_request() and request.frame == main,
+                timeout=_ENTER_NAVIGATION_START_MS,
+            ):
+                keys.press("Enter")
+
+
 @dataclass
 class _SecretSessionState:
     """Secret policy state shared by all wrappers for one browser context."""
@@ -548,10 +607,10 @@ class AgentBrowser:
         # Keys follow focus, as they do for a person. Some fields replace their
         # node on input (Wikipedia's search box), which detaches the pinned
         # handle while focus moves to the new node.
-        focused = self._has_focus(locator)
+        focused = _has_focus(locator)
         if clear:
             if focused:
-                self._clear_focused()
+                _clear_focused(self.page)
             else:
                 self._clear_verified(locator)
         keys = _FocusedKeyboard(self.page.keyboard) if focused else locator
@@ -576,7 +635,7 @@ class AgentBrowser:
                 raise fill_error
 
         if enter:
-            self._press_enter(keys)
+            _press_enter(self.page, keys)
 
         self._wait_for_settle()
         snap = self.snapshot()
@@ -1020,63 +1079,6 @@ class AgentBrowser:
                 f"[{index}] is a {kind}, not a text field. Take a fresh "
                 "snapshot and use the index of the field."
             )
-
-    def _press_enter(self, keys: Any) -> None:
-        """Press Enter; when it starts a page navigation, wait for the commit.
-
-        A form submit sends its request at once, but the new page commits
-        later, so the snapshot would show the old page. An Enter that starts
-        no navigation (search-as-you-type, chat boxes) costs at most
-        ``_ENTER_NAVIGATION_START_MS``.
-        """
-        page = self.page
-        main = getattr(page, "main_frame", None)
-        if not hasattr(page, "expect_event"):
-            with contextlib.suppress(Exception):
-                keys.press("Enter")
-            return
-        with contextlib.suppress(Exception):
-            with page.expect_event(
-                "framenavigated",
-                predicate=lambda frame: frame == main,
-                timeout=_ENTER_NAVIGATION_COMMIT_MS,
-            ):
-                with page.expect_request(
-                    lambda request: request.is_navigation_request() and request.frame == main,
-                    timeout=_ENTER_NAVIGATION_START_MS,
-                ):
-                    keys.press("Enter")
-
-    def _has_focus(self, target: Any) -> bool:
-        """Whether keyboard focus is on ``target`` or inside it."""
-        with contextlib.suppress(Exception):
-            return bool(target.evaluate(_HAS_FOCUS_JS))
-        return False
-
-    def _focused_value(self) -> Optional[str]:
-        """The focused control's text, or ``None`` when it is not editable."""
-        with contextlib.suppress(Exception):
-            value = self.page.evaluate(_FOCUSED_VALUE_JS)
-            return value if isinstance(value, str) else None
-        return None
-
-    def _clear_focused(self) -> None:
-        """Clear the focused control with keys, then verify it is empty."""
-        value = self._focused_value()
-        if value is not None and value.strip() == "":
-            return
-        keyboard = self.page.keyboard
-        keyboard.press("ControlOrMeta+a")
-        keyboard.press("Backspace")
-        value = self._focused_value()
-        if value is not None and value.strip() == "":
-            return
-        raise ClearFailedError(
-            "could not verify the focused field was cleared before typing — "
-            "a keyboard select-all+delete left it non-empty (or its content "
-            "could not be read back); refusing to type on top of unknown "
-            "existing content"
-        )
 
     def _read_field_value(self, locator: Any) -> Optional[str]:
         """Best-effort read of ``locator``'s current text, for clear-verification.

@@ -6,6 +6,23 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-17
+
+### Fixed
+
+- `type()` works on fields that replace their node on input, such as the
+  Wikipedia search box. Keys follow focus, the clear uses keys, and the check
+  reads the focused control.
+- `type(..., enter=True)` waits for a navigation that Enter starts, so the
+  snapshot shows the new page.
+- `type()` refuses a target that does not take text before it clicks. A stale
+  index no longer clicks a link or a button.
+- `navigate()` raises `NavigationFailedError` when the URL cannot load (for
+  example a DNS or connection error). It no longer reports the previous page
+  as cleared.
+- MCP tool errors reach the client with their reason on mcp 2.x. Before, the
+  client got only "Error executing tool <name>".
+
 ## [0.7.0] - 2026-10-17
 
 ### Added

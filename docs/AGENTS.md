@@ -340,6 +340,15 @@ script in your environment and drop the `uv run --directory` args.)
 > Use `borrow(domain, profile)` *before* navigating into an authenticated area
 > to inject a warmed identity.
 
+### Keeping the MCP browser on trusted hosts
+
+Set `WRAITH_ALLOWED_DOMAINS="example.com,*.example.com"` on the server entry
+(or pass `--allowed-domains` to `wraith mcp`). Navigation, `fetch`, and
+`detect_waap` then fail with `DomainNotAllowedError` for other hosts, and the
+browser aborts their requests. Page text in tool results is wrapped in
+`<untrusted-page-content id="…">` markers; `WRAITH_CONTENT_BOUNDARIES=0` turns
+them off.
+
 ### Routing the MCP browser through a residential proxy
 
 The server's browser takes the same proxy configuration as the CLI. Either

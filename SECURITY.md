@@ -119,6 +119,27 @@ Wraith cannot directly use Instinct Vault today. Instinct must supply a provider
 or broker adapter that Wraith can reach. That adapter should return an opaque
 handle to the agent and resolve it only inside the trusted fill path.
 
+## Domain Allowlist
+
+`AgentBrowser(allowed_domains=...)` and `WRAITH_ALLOWED_DOMAINS` keep the agent
+browser on listed hosts. They reduce what a prompt injection can do. They do
+not make an untrusted page safe.
+
+Limits:
+
+- A server redirect is not routed. The redirect target receives one request
+  before Wraith closes the page. The allowed site controls that redirect and
+  its URL.
+- Routing turns off the browser's HTTP cache.
+- Wraith does not block WebRTC, and it does not verify service-worker traffic.
+- Wraith's own flows also obey the list. Add challenge hosts (for example
+  `challenges.cloudflare.com`) and Google hosts for reCAPTCHA borrowing when
+  you use them.
+- `receive_profile` contacts the relay in the pairing code; the allowlist does
+  not check it.
+- Content markers help the model tell page text from instructions. They do
+  not enforce anything.
+
 ## Profile Sync Dead-Drop
 
 `wraith profile sync` moves a cookie jar from a laptop to a remote Wraith over a

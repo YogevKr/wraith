@@ -515,6 +515,8 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     mcp = _lazy("mcp")
     if _proxy_flags_given(args):
         mcp.configure(proxy=_resolve_proxy(args))
+    if args.allowed_domains:
+        mcp.set_allowed_domains(args.allowed_domains)
     print("wraith: starting MCP server (stdio)", file=sys.stderr)
     mcp.main()
     return 0
@@ -1082,6 +1084,13 @@ def build_parser() -> argparse.ArgumentParser:
         "server's browser.",
     )
     _add_proxy_flags(p_mcp)
+    p_mcp.add_argument(
+        "--allowed-domains",
+        metavar="HOSTS",
+        default=None,
+        help="comma-separated host allowlist, e.g. 'example.com,*.example.com' "
+        "(or WRAITH_ALLOWED_DOMAINS). The browser refuses other hosts.",
+    )
     p_mcp.set_defaults(func=cmd_mcp)
 
     # profile (sync / receive)

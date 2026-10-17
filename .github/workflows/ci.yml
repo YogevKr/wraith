@@ -94,3 +94,4 @@ jobs:
           tests/test_live_clawd.py
           tests/test_live_secret_policy.py
           tests/test_live_handoff.py
+          tests/test_live_domains.py

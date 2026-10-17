@@ -6,6 +6,18 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-18
+
+### Fixed
+
+- `clear_challenge` (and `navigate`) no longer reports a hard block for a
+  HUMAN Press & Hold challenge that a hold just cleared. Firefox can deliver
+  the cleared page's commit before the redirect's response event, so the
+  "access denied" text read before the hold looked current. For 5 seconds
+  after a poll that saw the challenge, that text is not a hard block; a
+  denied page that stays after that still fails fast. CI hit this twice in
+  the live Press & Hold tests.
+
 ## [0.14.2] - 2026-10-17
 
 ### Changed

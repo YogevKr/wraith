@@ -132,6 +132,10 @@ _DEFAULT_CLEARANCE_COOKIES = (
 # Reblaze status tiers that are NOT solvable challenges.
 _WAAP_RATE_LIMIT_STATUSES = frozenset({474, 481})
 _WAAP_HARD_BLOCK_STATUS = 492
+# After a press-and-hold challenge was on screen, its "access denied" text is
+# not a hard block for this long: a hold that worked redirects the page, and
+# the new page can commit before Wraith sees the redirect's response.
+_HOLD_SETTLE_S = 5.0
 
 # The Camoufox launch kwarg through which Firefox ``about:config`` prefs are set.
 # A caller may pass their own ``firefox_user_prefs`` (e.g. the un-partition prefs
@@ -1211,6 +1215,16 @@ def _raise_if_not_loaded(url: str, error: Optional[Exception], status: Any) -> N
     raise NavigationFailedError(f"Navigation to {url} failed: {reason}")
 
 
+def _hold_settling(holding: bool, seen_at: Optional[float]) -> bool:
+    """True while a press-and-hold challenge is on screen, or was at
+    ``seen_at`` and may still be redirecting (see ``_HOLD_SETTLE_S``)."""
+    import time
+
+    if holding:
+        return True
+    return seen_at is not None and time.monotonic() - seen_at < _HOLD_SETTLE_S
+
+
 def clear_challenge(
     url: str,
     *,
@@ -1416,6 +1430,7 @@ def clear_challenge(
         clean_since: Optional[float] = None
         hold_handler = PressHoldHandler(enabled=press_hold, deadline=deadline)
         challenge_generation: Optional[int] = None
+        challenge_seen_at: Optional[float] = None
 
         while True:
             # Read the rendered page once per iteration (reused below).
@@ -1426,6 +1441,8 @@ def clear_challenge(
 
             generation_before_poll = nav_status["generation"]
             holding = hold_handler.poll(page, content)
+            if holding:
+                challenge_seen_at = _time.monotonic()
             if holding and challenge_generation is None:
                 challenge_generation = generation_before_poll
 
@@ -1457,7 +1474,8 @@ def clear_challenge(
                         block_reason = _is_blocked(content, title)
                     except Exception:
                         block_reason = None
-                    if holding and block_reason == "PerimeterX/HUMAN access denied":
+                    settling = _hold_settling(holding, challenge_seen_at)
+                    if settling and block_reason == "PerimeterX/HUMAN access denied":
                         block_reason = None
                     if block_reason:
                         raise WaapHardBlockError(

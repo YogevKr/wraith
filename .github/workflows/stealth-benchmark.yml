@@ -1,0 +1,128 @@
+name: stealth benchmark
+
+# Weekly: run the stealth benchmark for each OS and engine, compare it with the
+# previous successful run on main, and open (or update) an issue labeled
+# stealth-regression when a check that passed now warns or fails. Results that
+# could not be measured ("unknown") never open an issue.
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/stealth-benchmark.yml"
+      - "wraith/benchmark.py"
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: ${{ matrix.os }} ${{ matrix.engine }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        engine: [camoufox, chromium]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Sync dependencies
+        # dev includes curl_cffi, so the fast path is measured too.
+        run: uv sync --extra dev
+
+      - name: Fetch pinned Camoufox
+        if: matrix.engine == 'camoufox'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run camoufox fetch official/152.0.4-beta.30
+
+      - name: Install Camoufox system libraries
+        if: matrix.engine == 'camoufox' && runner.os == 'Linux'
+        run: uv run playwright install-deps firefox
+
+      - name: Install patched Chromium
+        # Wraith prefers the runner's Google Chrome; this is the fallback.
+        if: matrix.engine == 'chromium'
+        run: uv run patchright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
+
+      - name: Benchmark
+        run: >-
+          uv run wraith benchmark run
+          --engine ${{ matrix.engine }}
+          --out results/${{ matrix.os }}-${{ matrix.engine }}.json
+
+      - name: Upload the record
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: stealth-${{ matrix.os }}-${{ matrix.engine }}
+          path: results/
+
+  report:
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Download this run's records
+        uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: stealth-*
+          path: current
+
+      - name: Download the previous run's records
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous=$(gh run list --workflow stealth-benchmark.yml --branch main \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$previous" ]; then
+            gh run download "$previous" --pattern 'stealth-*' --dir previous || true
+          fi
+
+      - name: Compare
+        run: |
+          uv run wraith benchmark compare current --previous previous \
+            --summary summary.md --issue regression.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the regression issue
+        if: github.event_name == 'schedule' && hashFiles('regression.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          printf '\nRun: %s\n' "$RUN_URL" >> regression.md
+          gh label create stealth-regression --color B60205 \
+            --description "A weekly stealth check got worse" 2>/dev/null || true
+          existing=$(gh issue list --label stealth-regression --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file regression.md
+          else
+            gh issue create --title "Stealth benchmark regression ($(date -u +%F))" \
+              --label stealth-regression --body-file regression.md
+          fi

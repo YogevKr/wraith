@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -23,6 +25,24 @@ from tests._local_server import html_pages, serve
 PAGE = (
     "<!doctype html><title>Loop</title><button>Still here</button>" + "<p>text</p>" * 40
 )
+
+
+def _exited(pid: int, wait: float = 10.0) -> bool:
+    """True once ``pid`` has exited.
+
+    A killed child stays in the process table as a zombie until its parent
+    reaps it, and ``os.kill(pid, 0)`` still succeeds on a zombie.
+    """
+    deadline = time.monotonic() + wait
+    while True:
+        state = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
+        ).stdout.strip()
+        if not state or state.startswith("Z"):
+            return True
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.2)
 
 
 def test_a_stuck_page_does_not_freeze_the_server(monkeypatch):
@@ -45,8 +65,7 @@ def test_a_stuck_page_does_not_freeze_the_server(monkeypatch):
                         )
                     )
                 )
-            with pytest.raises(OSError):
-                os.kill(driver, 0)  # the stuck browser's driver is gone
+            assert _exited(driver)  # the stuck browser's driver is gone
             monkeypatch.setenv(m.ENV_TOOL_TIMEOUT, "120")
             snap = asyncio.run(m._run(lambda: m._get_browser().navigate(url)))
             assert any(el.text == "Still here" for el in snap.elements)

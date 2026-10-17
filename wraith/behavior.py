@@ -41,6 +41,15 @@ _CLICK_HOLD_MS = (45.0, 110.0)
 _KEY_HOLD_MS = (35.0, 95.0)
 
 
+def key_gap_seconds() -> float:
+    """Seconds between two keystrokes of a quick typist.
+
+    Short enough for a ``<select>`` list's type-ahead, which forgets the typed
+    prefix after about one second without a key.
+    """
+    return random.uniform(0.03, 0.09)
+
+
 def click_hold_ms() -> float:
     """Milliseconds to hold the mouse button down during one click."""
     return random.uniform(*_CLICK_HOLD_MS)

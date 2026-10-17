@@ -6,6 +6,17 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-10-17
+
+### Fixed
+
+- `select_option` chooses like a keyboard user: it focuses the list and types
+  the option's label, so the page gets trusted key, `input` and `change`
+  events. Playwright's `select_option` fired `input` and `change` with
+  `isTrusted=false` in Chromium. It is still the fallback for a `multiple`
+  list, a label with a character that has no key, or two options with one
+  label.
+
 ## [0.12.1] - 2026-10-17
 
 ### Fixed

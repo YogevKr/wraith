@@ -53,12 +53,13 @@ Reusing an existing stealth session (identity already borrowed, etc.)::
 from __future__ import annotations
 
 import contextlib
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Optional
 
 from . import engine as _engine
-from .behavior import click_hold_ms, key_hold_ms
+from .behavior import click_hold_ms, key_gap_seconds, key_hold_ms
 from .identity import export_storage_state
 from .domains import DomainPolicy
 from .netlog import NetworkLog
@@ -128,13 +129,18 @@ _FOCUSED_VALUE_JS = """() => {
 
 
 _SELECT_TIMEOUT_MS = 3000
+# A <select> forgets the typed prefix about one second after the last key.
+_TYPE_AHEAD_RESET_S = 1.2
 _FILE_CHOOSER_TIMEOUT_MS = 5000
 _WAIT_MAX_SECONDS = 60.0
 
 # [value, label] for each option of a <select>, or null for another element.
-_SELECT_OPTIONS_JS = """el => el.tagName === 'SELECT'
-    ? Array.from(el.options).map(o => [o.value, o.label.trim()])
-    : null"""
+# The state of a <select>, or null for another element. Options are
+# [value, label] pairs.
+_SELECT_OPTIONS_JS = """el => el.tagName === 'SELECT' ? {
+    value: el.value, multiple: el.multiple, disabled: el.disabled,
+    options: Array.from(el.options).map(o => [o.value, o.label.trim()]),
+} : null"""
 
 _TEXT_SHOWN_JS = "text => !!document.body && document.body.innerText.includes(text)"
 
@@ -406,6 +412,7 @@ class AgentBrowser:
         self._domains_installed: bool = False
         self.uploads: Optional[UploadPolicy] = UploadPolicy.parse(upload_dirs)
         self.network_log = NetworkLog()
+        self._typed_at: float = 0.0  # last type-ahead key, time.monotonic()
         self._network_installed: bool = False
 
         # When we self-launch with a reputation source, the Camoufox engine must
@@ -1073,6 +1080,12 @@ class AgentBrowser:
     def select_option(self, index: int, option: str) -> Snapshot:
         """Choose ``option`` (its value or its visible label) in a ``<select>``.
 
+        Like a keyboard user, Wraith focuses the list and types the option's
+        label: the browser's type-ahead picks it and fires trusted ``input``
+        and ``change`` events. When typing cannot reach the option (a
+        ``multiple`` list, a character with no key, two options with one
+        label), Playwright's ``select_option`` sets it, with untrusted events.
+
         Raises when ``index`` is not a ``<select>`` or no option matches; the
         error lists the options.
         """
@@ -1082,13 +1095,43 @@ class AgentBrowser:
         handle = self._locator(index).element_handle()
         if handle is None:
             raise RuntimeError("The indexed element is no longer on the page")
-        labels = handle.evaluate(_SELECT_OPTIONS_JS)
-        if labels is None:
+        state = handle.evaluate(_SELECT_OPTIONS_JS)
+        if state is None:
             raise RuntimeError(f"[{index}] is not a <select> list")
-        if not any(option in pair for pair in labels):
-            choices = ", ".join(label or value for value, label in labels[:30])
+        target = next((pair for pair in state["options"] if option in pair), None)
+        if target is None:
+            choices = ", ".join(
+                label or value for value, label in state["options"][:30]
+            )
             raise ValueError(f"No option {option!r} in [{index}]. Options: {choices}")
-        handle.select_option(option, timeout=_SELECT_TIMEOUT_MS)
+        value, label = target
+        if state["value"] == value:
+            return  # already chosen: a person would not touch it
+        typeable = not (state["multiple"] or state["disabled"])
+        if typeable and self._type_ahead(handle, label):
+            if handle.evaluate("el => el.value") == value:
+                return
+        handle.select_option(value=value, timeout=_SELECT_TIMEOUT_MS)
+
+    def _type_ahead(self, handle: Any, label: str) -> bool:
+        """Focus ``handle`` and type ``label``; ``False`` when a key is missing."""
+        if not label:
+            return False
+        # Text typed into a list less than a second ago would prefix this label.
+        pause = _TYPE_AHEAD_RESET_S - (time.monotonic() - self._typed_at)
+        if pause > 0:
+            time.sleep(pause)
+        handle.focus()
+        for char in label:
+            try:
+                self.page.keyboard.press(char, delay=key_hold_ms())
+            except Exception as exc:
+                if "Unknown key" in str(exc):
+                    return False
+                raise
+            time.sleep(key_gap_seconds())
+            self._typed_at = time.monotonic()
+        return True
 
     def upload_file(self, index: int, paths: Any) -> Snapshot:
         """Put local files into the file input or upload button at ``index``.

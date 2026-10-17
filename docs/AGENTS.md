@@ -186,7 +186,7 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | `type(index, text, *, clear=True, enter=False)` | refuse a non-text target before any click; click the field, then send keys to the focused control (they follow a field that replaces its node); verified clear; optional Enter waits the same way as `click`; re-snapshot | `Snapshot` |
 | `scroll(direction="down", amount=700)` | scroll, re-snapshot | `Snapshot` |
 | `press_key(key)` | press a key or chord (`Escape`, `Tab`, `Shift+Tab`, `ArrowDown`) on the focused element, held for 35–95 ms; re-snapshot | `Snapshot` |
-| `select_option(index, option)` | choose an option of a `<select>` by value or label; an unknown option raises with the option list | `Snapshot` |
+| `select_option(index, option)` | choose an option of a `<select>` by value or label: focus the list and type the label (trusted events), else Playwright's `select_option`; an unknown option raises with the option list | `Snapshot` |
 | `upload_file(index, paths)` | set files on a file input, or click an upload button and fill its file chooser; each file must be inside `upload_dirs` (off by default) | `Snapshot` |
 | `go_back()` / `go_forward()` | move through the tab's history | `Snapshot` |
 | `network(contains="", resource_type="", limit=50)` | the last requests of the context (`id`, `method`, `url`, `type`, `status`, `content_type`, `failure`); no query strings after a secret fill | `list[dict]` |

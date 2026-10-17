@@ -119,6 +119,7 @@ __all__ = [
     "WaapRateLimitedError",
     "WaapHardBlockError",
     "WaapChallengeTimeout",
+    "NavigationFailedError",
     "launch",
     "browser",
     "clear_challenge",
@@ -169,6 +170,15 @@ class WaapHardBlockError(WraithEngineError):
 
     Fix the identity leak (use Camoufox/Firefox, drop ``HeadlessChrome`` from
     the UA, avoid automation tells) rather than retrying.
+    """
+
+
+class NavigationFailedError(WraithEngineError):
+    """The browser could not load the URL at all.
+
+    ``goto()`` failed and no main-frame response arrived, for example a DNS,
+    TLS, or connection error. The page still shows the previous document, so
+    Wraith reports the failure instead of treating that document as cleared.
     """
 
 
@@ -1082,16 +1092,24 @@ def clear_challenge(
         # Navigate. Capture the goto() response too — it is the most reliable
         # source of the top-level status across engines.
         goto_status: Any = None
+        goto_error: Optional[Exception] = None
         try:
             resp = page.goto(url)
             if resp is not None:
                 goto_status = getattr(resp, "status", None)
-        except Exception:
+        except Exception as exc:
             # A navigation that throws (e.g. interstitial abort) is not fatal on
             # its own; fall through to status/cookie polling.
+            goto_error = exc
             resp = None
 
         main_status = goto_status if goto_status is not None else nav_status["status"]
+
+        # No main-frame response at all: the page still shows the previous
+        # document, which must not pass as a cleared target.
+        if goto_error is not None and main_status is None:
+            reason = (str(goto_error).strip().splitlines() or [type(goto_error).__name__])[0]
+            raise NavigationFailedError(f"Navigation to {url} failed: {reason}")
 
         # Hard, non-solvable tiers — bail immediately with actionable guidance.
         if main_status in _WAAP_RATE_LIMIT_STATUSES:

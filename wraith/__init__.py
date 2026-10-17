@@ -81,6 +81,7 @@ _reexport(
         "WaapRateLimitedError",
         "WaapHardBlockError",
         "WaapChallengeTimeout",
+        "NavigationFailedError",
         "playwright_version",
     ],
 )

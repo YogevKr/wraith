@@ -222,8 +222,11 @@ def test_mcp_read_and_snapshot_outputs_are_marked(monkeypatch):
     monkeypatch.delenv(m.ENV_CONTENT_BOUNDARIES, raising=False)
 
     class FakeBrowser:
-        def read(self):
+        def read(self, full=False, links=False):
             return "page text"
+
+        def find(self, term):
+            return [f"a passage with {term}"]
 
         def snapshot(self):
             return Snapshot("https://a.com/", "A", [])
@@ -231,6 +234,8 @@ def test_mcp_read_and_snapshot_outputs_are_marked(monkeypatch):
     monkeypatch.setattr(m, "_get_browser", lambda: FakeBrowser())
     for result in (asyncio.run(m.read()), asyncio.run(m.snapshot())):
         assert result.startswith("<untrusted-page-content id=")
+    found = asyncio.run(m.read(find="population"))
+    assert found.startswith('1 passage(s) with "population":\n<untrusted-page-content id=')
 
 
 def test_mcp_no_browser_tools_check_the_allowlist(monkeypatch):

@@ -86,8 +86,8 @@ app = _MCPServer(
         "`fill_vault_item(index, item_id, field_kind)` for a vault-backed "
         "opaque fill that returns only success or failure. "
         "Use `snapshot()` to re-perceive after a change, "
-        "`scroll()` to reveal more, `read()` for the page as markdown (in pages; "
-        "follow its `read(start=...)` hint), and `screenshot()` to capture an image. "
+        "`scroll()` to reveal more, `read()` for the page's main content as markdown (in pages; "
+        "follow its `read(start=...)` hint; `read(find=...)` returns only the passages with those words), and `screenshot()` to capture an image. "
         "`press_key(key)` sends Escape, Tab, arrow keys or Enter; "
         "`drag(dx, index=... or x=..., y=...)` drags a slider knob along a human path; "
         "`select_option(index, option)` picks from a <select>; "
@@ -643,14 +643,30 @@ async def save_state(path: str, for_chromium: bool = False) -> str:
 
 
 @app.tool()
-async def read(start: int = 0, max_chars: int = _READ_DEFAULT_CHARS) -> str:
+async def read(
+    start: int = 0,
+    max_chars: int = _READ_DEFAULT_CHARS,
+    find: str = "",
+    full: bool = False,
+    links: bool = False,
+) -> str:
     """Return the current page's readable content as markdown (for extraction /
     summarisation, as opposed to acting on elements).
 
-    A long page comes in slices of ``max_chars`` characters (at most 100000).
-    The last line says where the slice ends; call ``read(start=<end>)`` for
-    the next one."""
-    text = await _run(lambda: _get_browser().read())
+    By default only the main content (no site menus or footers); ``full=true``
+    returns the whole page; ``links=true`` keeps link URLs (by default links
+    are plain text). ``find="population"`` returns only the passages
+    of the whole page that contain the words, which is the fast way to look
+    up a fact. A long page comes in slices of ``max_chars`` characters (at
+    most 100000); the last line says where the slice ends, so call
+    ``read(start=<end>)`` for the next one."""
+    if find.strip():
+        passages = await _run(lambda: _get_browser().find(find))
+        head = f'{len(passages)} passage(s) with "{find.strip()}"'
+        if not passages:
+            return head + "."
+        return head + ":\n" + _untrusted("\n\n".join(passages))
+    text = await _run(lambda: _get_browser().read(full=full, links=links))
     return _read_slice(text, start, max_chars)
 
 

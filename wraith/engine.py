@@ -470,6 +470,14 @@ def _launch_camoufox(
 
     if locale:
         opts["locale"] = locale
+    elif geoip and not extra.get("proxy"):
+        # geoip draws a random language for the IP's country on every launch
+        # (Israel: Hebrew, English, Arabic, Russian, ...), so pages switch
+        # language between runs. Without a proxy the IP is this computer's,
+        # and its own locale is stable and what its real browsers show.
+        own = _system_locale()
+        if own:
+            opts["locale"] = own
 
     # Camoufox takes timezone via its fingerprint `config` dict, not a top-level
     # kwarg. geoip already derives a coherent timezone; only override when the
@@ -845,6 +853,28 @@ def _merge_firefox_prefs(
     if isinstance(incoming, Mapping):
         merged.update(incoming)
     return merged
+
+
+def _system_locale() -> Optional[str]:
+    """This computer's language tag (``en-US``), or ``None`` when unknown."""
+    for name in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        tag = os.environ.get(name, "").split(".")[0].split("@")[0]
+        if tag and tag not in ("C", "POSIX"):
+            return tag.replace("_", "-")
+    if sys.platform.startswith("darwin"):
+        import subprocess
+
+        with contextlib.suppress(Exception):
+            out = subprocess.run(
+                ["defaults", "read", "-g", "AppleLocale"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            ).stdout.strip()
+            tag = out.split("@")[0]
+            if tag:
+                return tag.replace("_", "-")
+    return None
 
 
 def _host_os_family() -> str:

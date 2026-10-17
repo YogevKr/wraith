@@ -6,6 +6,19 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-10-17
+
+### Fixed
+
+- Camoufox pages no longer switch language between launches. With `geoip`,
+  Camoufox draws a random language for the IP's country on each launch (for
+  an Israeli IP: Hebrew, English, Arabic, Russian, and more), so Cloudflare
+  showed its widget in Arabic in one run and Hebrew in the next. On a direct
+  connection with no `locale` given, Wraith now uses this computer's locale
+  (`LC_ALL`, `LC_MESSAGES`, `LANG`, then macOS `AppleLocale`): stable, and what
+  its real browsers show on the same IP. With a proxy, the proxy country's
+  language draw stays.
+
 ## [0.13.1] - 2026-10-17
 
 ### Fixed

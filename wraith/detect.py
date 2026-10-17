@@ -75,6 +75,7 @@ __all__ = [
     "browser_family",
     "network_checks",
     "network_fingerprint",
+    "bot_detector_notes",
 ]
 
 # Public test endpoints used by the JS-rendered probes.
@@ -687,6 +688,31 @@ _BOT_DETECTOR_SCRAPE_JS = r"""
   return out;
 }
 """
+
+
+# The full table row (status, test, time, explanation, data) of each named
+# test, so a warn or fail comes with the detector's own reason.
+_BOT_DETECTOR_NOTES_JS = r"""
+(names) => {
+  const out = {};
+  document.querySelectorAll('table tr').forEach((row) => {
+    const cells = row.querySelectorAll('th, td');
+    if (cells.length < 2) return;
+    const match = (cells[0].textContent || '').trim().match(/^[^A-Za-z0-9]*([A-Za-z][A-Za-z0-9_-]*)/);
+    if (match && names.includes(match[1])) {
+      out[match[1]] = (row.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    }
+  });
+  return out;
+}
+"""
+
+
+def bot_detector_notes(page: Any, names: list[str]) -> dict:
+    """The detector's own text for each test in ``names`` on the open page."""
+    if not names:
+        return {}
+    return page.evaluate(_BOT_DETECTOR_NOTES_JS, list(names)) or {}
 
 
 def bot_detector(page: Any) -> dict:

@@ -64,7 +64,7 @@ def run(engine: str, *, headless: bool = True, runner: Optional[str] = None) -> 
         record["details"]["user_agent"] = session.page.evaluate(
             "() => navigator.userAgent"
         )
-        _collect(record, "bot", lambda: _bot_checks(detect.selftest(session.page)))
+        _collect(record, "bot", lambda: _bot_checks(detect, session.page))
         _collect(record, "net", lambda: detect.network_fingerprint(session.page))
     _collect(record, "fastpath", lambda: _fast_path_checks(detect))
     browser = record["details"].get("net")
@@ -72,10 +72,15 @@ def run(engine: str, *, headless: bool = True, runner: Optional[str] = None) -> 
     return record
 
 
-def _bot_checks(result: dict) -> dict:
-    return {
-        "checks": {name: check["status"] for name, check in result["checks"].items()}
-    }
+def _bot_checks(detect: Any, page: Any) -> dict:
+    result = detect.selftest(page)
+    checks = {name: check["status"] for name, check in result["checks"].items()}
+    bad = [name for name, status in checks.items() if status in _BAD]
+    try:
+        notes = detect.bot_detector_notes(page, bad)
+    except Exception as exc:  # the reason is extra; the statuses still count
+        notes = {name: f"no note ({type(exc).__name__})" for name in bad}
+    return {"checks": checks, "notes": notes} if notes else {"checks": checks}
 
 
 def _fast_path_checks(detect: Any) -> Optional[dict]:
@@ -169,9 +174,12 @@ def render(records: Iterable[dict]) -> str:
         cells = [r.get("checks", {}).get(name, "—") for r in records]
         lines.append(f"| `{name}` | " + " | ".join(cells) + " |")
     for record in records:
-        for key, note in sorted(record.get("details", {}).items()):
+        details = record.get("details", {})
+        for key, note in sorted(details.items()):
             if key.endswith("_error"):
                 lines.append(f"\n- {record['runner']} `{key}`: {note}")
+        for name, note in sorted((details.get("bot") or {}).get("notes", {}).items()):
+            lines.append(f"\n- {record['runner']} `bot.{name}`: {note}")
     return "\n".join(lines)
 
 

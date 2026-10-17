@@ -6,6 +6,20 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-10-17
+
+### Added
+
+- The stealth benchmark keeps the bot detector's own text for each check that
+  warns or fails, and `wraith benchmark compare` prints it under the table.
+  `wraith.detect.bot_detector_notes(page, names)` reads it.
+
+### Documentation
+
+- The playbook explains the Linux `bot.headless` warning: without a GPU,
+  Chrome draws WebGL with SwiftShader, which only headless Chrome does. Use
+  Camoufox on such hosts.
+
 ## [0.12.3] - 2026-10-17
 
 ### Fixed

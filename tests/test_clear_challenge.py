@@ -253,3 +253,45 @@ def test_aborted_navigation_after_response_keeps_polling():
     sess = _FakeSession(_FailingPage(error, respond_first=200), _FakeContext([[]]))
 
     assert clear_challenge(URL, session=sess, timeout=5.0, settle=0.0) is sess
+
+
+# --------------------------------------------------------------------------- #
+# A hold that clears while the loop still holds the old page's content
+# --------------------------------------------------------------------------- #
+DENIED = (
+    "<title>Access to this page has been denied</title>"
+    "<p>Press &amp; Hold to confirm you are a human (and not a bot).</p>"
+    '<div id="px-captcha"></div>'
+)
+
+
+def test_a_hold_that_clears_mid_poll_is_not_called_a_hard_block(monkeypatch):
+    """CI flake: the cleared page committed between the content read and the
+    hold check, so the stale denied content was reported as a hard block."""
+    from wraith import _press_hold
+
+    sess = _make_session(403, URL, cookies_sequence=[[]], content=DENIED)
+    page = sess.page
+    page.title = lambda: "Access to this page has been denied" if "denied" in page._content else ""
+    polls = []
+
+    def poll(self, page_, html):
+        polls.append(html)
+        if len(polls) == 1:
+            self.seen = True
+            return True  # the hold happens on this poll
+        if len(polls) == 2:
+            # The cleared page answers while this poll runs.
+            page._content = "<h1>Verified catalog</h1>" + "<p>Product</p>" * 40
+            cleared = _FakeResponse(200, URL + "cleared")
+            cleared.request = type(
+                "Req", (), {"frame": None, "is_navigation_request": lambda self: True}
+            )()
+            for cb in page._listeners.get("response", []):
+                cb(cleared)
+        return False
+
+    monkeypatch.setattr(_press_hold.PressHoldHandler, "poll", poll)
+
+    assert clear_challenge(URL, session=sess, timeout=5.0, settle=0.0) is sess
+    assert polls[1] == DENIED  # the stale read that used to raise

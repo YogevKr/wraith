@@ -1412,7 +1412,11 @@ def clear_challenge(
 
             # (a2) Hard block? Fail fast — don't burn the whole timeout on a
             # page that will never clear (rotate identity + proxy instead).
-            if detect is not None and content:
+            # Skip it when a navigation answered after `content` was read (a
+            # hold that just cleared): the next poll reads the new page, and
+            # stale content must never count as a block.
+            fresh = nav_status["generation"] == generation_before_poll
+            if detect is not None and content and fresh:
                 _is_blocked = getattr(detect, "is_blocked", None)
                 if callable(_is_blocked):
                     try:

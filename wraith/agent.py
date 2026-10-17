@@ -104,6 +104,7 @@ _CONSENT_SELECTORS = (
 
 
 _NAVIGATION_START_MS = 500
+_NAVIGATION_POLL_MS = 25
 _FRAME_CLICK_TIMEOUT_MS = 3000
 _NAVIGATION_COMMIT_MS = 10000
 _HAS_FOCUS_JS = "t => t === document.activeElement || t.contains(document.activeElement)"
@@ -292,38 +293,54 @@ def _await_navigation(
     """Run ``action``; when it starts a page navigation, wait for the commit.
 
     A click or a form submit sends its request at once, but the new page
-    commits later, so a snapshot taken right away shows the old page. An
-    action that starts no navigation costs at most ``_NAVIGATION_START_MS``.
+    commits later, so a snapshot taken right away shows the old page. A
+    navigation counts when its request starts during ``action`` or within
+    ``_NAVIGATION_START_MS`` after it ends. The window starts when the action
+    ends, because a human-like click or a slow machine can take longer than
+    that. An action that starts no navigation costs at most that window.
     Errors from ``action`` propagate; a wait that times out does not.
     """
-    if not hasattr(page, "expect_event"):
+    if not hasattr(page, "on"):
         action()
         return
     main = getattr(page, "main_frame", None)
-    error: Optional[BaseException] = None
+    started: list[Any] = []
+    committed: list[Any] = []
 
-    def _run() -> None:
-        nonlocal error
-        try:
-            action()
-        except Exception as exc:
-            error = exc
-
-    with contextlib.suppress(Exception):
-        with page.expect_event(
-            "framenavigated",
-            predicate=lambda frame: frame == main,
-            timeout=_NAVIGATION_COMMIT_MS,
-        ):
-            with page.expect_request(
-                lambda request: request.is_navigation_request()
+    def on_request(request: Any) -> None:
+        with contextlib.suppress(Exception):
+            if (
+                request.is_navigation_request()
                 and request.frame == main
-                and (allows is None or allows(request.url)),
-                timeout=_NAVIGATION_START_MS,
+                and (allows is None or allows(request.url))
             ):
-                _run()
-    if error is not None:
-        raise error
+                started.append(request)
+
+    def on_navigated(frame: Any) -> None:
+        if frame == main and started:
+            committed.append(frame)
+
+    page.on("request", on_request)
+    page.on("framenavigated", on_navigated)
+    try:
+        action()
+        _wait_until(page, lambda: bool(started), _NAVIGATION_START_MS)
+        if started:
+            _wait_until(page, lambda: bool(committed), _NAVIGATION_COMMIT_MS)
+    finally:
+        with contextlib.suppress(Exception):
+            page.remove_listener("request", on_request)
+            page.remove_listener("framenavigated", on_navigated)
+
+
+def _wait_until(page: Any, done: Callable[[], bool], timeout_ms: float) -> None:
+    """Let Playwright deliver events until ``done()`` or ``timeout_ms`` passes."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    while not done() and time.monotonic() < deadline:
+        try:
+            page.wait_for_timeout(_NAVIGATION_POLL_MS)
+        except Exception:  # the page closed: nothing left to wait for
+            return
 
 
 @dataclass

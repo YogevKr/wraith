@@ -6,6 +6,17 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-17
+
+### Fixed
+
+- `click_frame(frame, x, y)` aims in the frame's own coordinates. Before, the
+  fractions applied to the frame's on-screen box, which is larger than the
+  frame when the frame is rotated or tilted in 3D, so the click missed. Wraith
+  now reads where the cursor lands inside the frame and corrects the aim with
+  Newton steps before it clicks. A 40 px button in a 3D-tilted frame: 0 of 3
+  hits before, 3 of 3 after, on Camoufox and Chromium.
+
 ## [0.14.0] - 2026-10-17
 
 ### Added

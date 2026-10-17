@@ -115,3 +115,44 @@ def test_frames_are_indexed_and_actionable():
                 "allowed_origins": ["https://parent.test"],
                 "field_kind": "text",
             })
+
+
+TILT_PAGES = {
+    "https://tilt.test/": f"""<!doctype html><title>Tilt</title><body style="margin:0">{PAD}
+<div style="perspective: 600px; width: 520px; margin: 60px auto">
+  <div style="transform: rotateY(38deg) rotateX(18deg) rotateZ(-6deg); transform-origin: 30% 50%">
+    <iframe src="https://widget.test/" width=480 height=90 style="border: 0"></iframe>
+  </div>
+</div></body>""",
+    "https://widget.test/": """<!doctype html><body style="margin:0; background: #eee">
+<div id=host style="width: 480px; height: 90px; position: relative"></div>
+<script>
+  const root = host.attachShadow({mode: 'closed'});
+  root.innerHTML = '<button style="position: absolute; left: 420px; top: 25px; width: 40px; height: 40px">ok</button>';
+  root.querySelector('button').onclick = () => { document.body.dataset.clicked = 'yes'; };
+</script></body>""",
+}
+
+
+@pytest.mark.parametrize("engine", ["camoufox", "chromium"])
+def test_click_frame_hits_a_button_in_a_3d_tilted_frame(engine):
+    # The on-screen box of a tilted frame is far larger than the frame, so
+    # box fractions miss the 40 px button; frame fractions must hit it.
+    with launch(engine=engine, headless=True, geoip=False) as session:
+        session.context.route(
+            "**/*",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/html",
+                body=TILT_PAGES.get(route.request.url, ""),
+            ),
+        )
+        ab = AgentBrowser(session=session)
+        ab.navigate("https://tilt.test/")
+        session.page.wait_for_timeout(300)
+        number = ab.snapshot().frames[0].number
+
+        ab.click_frame(number, 440 / 480, 45 / 90)  # the button's centre
+
+        widget = _frame(session.page, "https://widget.test/")
+        assert widget.evaluate("document.body.dataset.clicked === 'yes'")

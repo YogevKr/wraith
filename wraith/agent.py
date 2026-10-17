@@ -362,17 +362,148 @@ def _click_in_frame(target: Any) -> None:
     target.click(timeout=_FRAME_CLICK_TIMEOUT_MS, delay=click_hold_ms())
 
 
-def _human_click(page: Any, aim: Callable[[], tuple[float, float]]) -> None:
+def _human_click(
+    page: Any,
+    aim: Callable[[], tuple[float, float]],
+    refine: Optional[Callable[[Any, tuple[float, float]], tuple[float, float]]] = None,
+) -> None:
     """Move along a human-like path to ``aim()``, re-aim, then click once.
 
-    The second ``aim()`` follows a target that moved during the travel.
+    The second ``aim()`` follows a target that moved during the travel;
+    ``refine`` can then correct the point (see :func:`_frame_target`).
     """
     with contextlib.suppress(Exception):
         from .behavior import human_move
 
         human_move(page, target=aim())
     x, y = aim()
+    if refine is not None:
+        x, y = refine(page, (x, y))
     page.mouse.click(x, y, delay=click_hold_ms())
+
+
+def _frame_target(
+    snap: Optional[Snapshot], frame: int, x: float, y: float
+) -> tuple[
+    Callable[[], tuple[float, float]],
+    Callable[[Any, tuple[float, float]], tuple[float, float]],
+]:
+    """Return ``(aim, refine)`` for frame fractions ``(x, y)``.
+
+    ``aim`` maps the fractions into the frame's on-screen box (rough on a
+    rotated or 3D-transformed frame). ``refine`` then moves the cursor until
+    the frame itself reports it at the fractions of its own width and height.
+    """
+    aim = _frame_aim(snap, frame, x, y)
+    center = _frame_aim(snap, frame, 0.5, 0.5)
+    handle = snap.frame_handle(int(frame))  # _frame_aim checked it exists
+
+    def refine(page: Any, point: tuple[float, float]) -> tuple[float, float]:
+        return _refine_in_frame(page, handle, (float(x), float(y)), point, center)
+
+    return aim, refine
+
+
+# Inside a frame, in Wraith's isolated world: remember where the last mouse
+# move landed, in the frame's own coordinates (the browser undoes any CSS
+# transform of the <iframe> when it computes clientX/clientY).
+_POINTER_PROBE_JS = """() => {
+    if (!window.__wraithPointerProbe) {
+        window.__wraithPointerProbe = true;
+        document.addEventListener('mousemove', (e) => {
+            window.__wraithPointer = [e.clientX, e.clientY];
+        }, true);
+    }
+    window.__wraithPointer = null;
+    return [innerWidth, innerHeight];
+}"""
+_POINTER_READ_JS = "() => window.__wraithPointer || null"
+_POINTER_RESET_JS = "() => { window.__wraithPointer = null; }"
+
+
+def _refine_in_frame(
+    page: Any,
+    frame: Any,
+    fraction: tuple[float, float],
+    start: tuple[float, float],
+    center: Optional[Callable[[], tuple[float, float]]] = None,
+) -> tuple[float, float]:
+    """Move the cursor until it sits at ``fraction`` of the frame's own size.
+
+    Each step reads where the cursor landed inside the frame. Two small
+    probes measure how page pixels map to frame pixels there; Newton steps
+    then correct the aim (a perspective transform is not linear). On a
+    rotated frame ``start`` can miss the frame; the steps then begin at
+    ``center()``, the middle of the on-screen box. Returns ``start`` when
+    the frame cannot be read.
+    """
+    try:
+        width, height = frame.evaluate(_POINTER_PROBE_JS)
+    except Exception:
+        return start
+    goal = (fraction[0] * width, fraction[1] * height)
+    point = start
+    here = _frame_point(page, frame, point)
+    if here is None and center is not None:
+        point = center()
+        here = _frame_point(page, frame, point)
+    if here is None:
+        return start
+    for _ in range(6):
+        ex, ey = goal[0] - here[0], goal[1] - here[1]
+        if abs(ex) <= 1.5 and abs(ey) <= 1.5:
+            return point
+        across = _probe(page, frame, point, (_PROBE_PX, 0.0))
+        along = _probe(page, frame, point, (0.0, _PROBE_PX))
+        if across is None or along is None:
+            return point
+        (sx, ax), (sy, ay) = across, along
+        a, b = (ax[0] - here[0]) / sx, (ay[0] - here[0]) / sy
+        c, d = (ax[1] - here[1]) / sx, (ay[1] - here[1]) / sy
+        det = a * d - b * c
+        if abs(det) < 1e-6:
+            return point
+        step = (point[0] + (d * ex - b * ey) / det, point[1] + (a * ey - c * ex) / det)
+        seen = _frame_point(page, frame, step)
+        if seen is None:  # the step left the frame; keep the last good aim
+            return point
+        point, here = step, seen
+    return point
+
+
+_PROBE_PX = 4.0
+
+
+def _probe(
+    page: Any, frame: Any, point: tuple[float, float], step: tuple[float, float]
+) -> Optional[tuple[float, tuple[float, float]]]:
+    """Frame point a small step away; the other side when that leaves the frame.
+
+    Returns ``(signed step length, frame point)``.
+    """
+    for sign in (1.0, -1.0):
+        seen = _frame_point(
+            page, frame, (point[0] + sign * step[0], point[1] + sign * step[1])
+        )
+        if seen is not None:
+            return sign * (step[0] or step[1]), seen
+    return None
+
+
+def _frame_point(
+    page: Any, frame: Any, point: tuple[float, float]
+) -> Optional[tuple[float, float]]:
+    """Move the cursor to ``point``; where the frame saw it, or ``None``."""
+    try:
+        # Firefox fires no mousemove for a move to where the cursor already
+        # is, so step one pixel aside first.
+        page.mouse.move(point[0] + 1, point[1])
+        frame.evaluate(_POINTER_RESET_JS)
+        page.mouse.move(point[0], point[1])
+        seen = frame.evaluate(_POINTER_READ_JS)
+    except Exception:
+        return None
+    return (float(seen[0]), float(seen[1])) if seen else None
 
 
 def _frame_aim(
@@ -812,14 +943,16 @@ class AgentBrowser:
     def click_frame(self, frame: int, x: float, y: float) -> Snapshot:
         """Click a point of child frame ``frame`` from the last snapshot.
 
-        ``x`` and ``y`` are fractions (0 to 1) of the frame's on-screen box,
-        so a checkbox at the left middle is ``(0.1, 0.5)``. Wraith reads the
-        box at click time, and again after the mouse travel, so a frame that
-        moves (a CSS animation) is still hit. Use it for a frame with no
-        indexed elements, such as Cloudflare Turnstile.
+        ``x`` and ``y`` are fractions (0 to 1) of the frame's own width and
+        height, so a checkbox at the left middle is ``(0.1, 0.5)``, also when
+        the frame is rotated or tilted in 3D. Wraith aims at the frame's
+        on-screen box, then reads where the cursor lands inside the frame and
+        corrects the aim before it clicks, so a frame that moves (a CSS
+        animation) is still hit. Use it for a frame with no indexed elements,
+        such as Cloudflare Turnstile.
         """
-        aim = _frame_aim(self.last_snapshot, frame, x, y)
-        return self._act(lambda: _human_click(self.page, aim))
+        aim, refine = _frame_target(self.last_snapshot, frame, x, y)
+        return self._act(lambda: _human_click(self.page, aim, refine))
 
     def _act(self, action: Callable[[], Any]) -> Snapshot:
         """Run ``action``, wait for a navigation it starts, and re-snapshot."""

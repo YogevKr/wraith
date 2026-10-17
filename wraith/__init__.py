@@ -30,7 +30,7 @@ namespace and ``__all__``; ``wraith.missing_imports`` records why.
 
 from __future__ import annotations
 
-__version__ = "0.13.3"
+__version__ = "0.14.0"
 
 # Names that imported cleanly, assembled into __all__ at the end.
 __all__: list[str] = []

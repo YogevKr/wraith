@@ -53,6 +53,7 @@ Reusing an existing stealth session (identity already borrowed, etc.)::
 from __future__ import annotations
 
 import contextlib
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -158,6 +159,22 @@ _UPLOAD_TARGET_JS = """el => {
     return 'trigger';
 }"""
 
+# The page's main content element, when one holds most of the reading text:
+# {html, text}, or null to read the whole page.
+_MAIN_CONTENT_JS = """() => {
+    const body = document.body;
+    if (!body) return null;
+    const total = (body.innerText || '').length;
+    for (const selector of ['main', '[role="main"]', 'article', '#content']) {
+        const el = document.querySelector(selector);
+        const text = el ? (el.innerText || '') : '';
+        if (el && text.length >= Math.min(400, total * 0.3)) {
+            return {html: `<h1>${document.title}</h1>` + el.outerHTML, text};
+        }
+    }
+    return null;
+}"""
+
 _TEXT_SHOWN_JS = "text => !!document.body && document.body.innerText.includes(text)"
 
 # Before/after an action: URL, control count, a hash of the visible text, the
@@ -194,6 +211,32 @@ _PAGE_SIGNATURE_JS = """() => {
         controls,
     };
 }"""
+
+
+def find_passages(text: str, term: str, limit: int = 8, width: int = 400) -> list[str]:
+    """Paragraphs or lines of ``text`` that contain ``term``, clipped around it."""
+    needle = term.casefold()
+    found: list[str] = []
+    blocks = re.split(r"\n\s*\n|\n(?=\|)", text)
+    for i, block in enumerate(blocks):
+        if block.lstrip().startswith("|") and needle in block.casefold():
+            # A table row: its value is often on the rows that follow.
+            rows = [b for b in blocks[i + 1 : i + 3] if b.lstrip().startswith("|")]
+            block = "\n".join([block, *rows])
+        flat = " ".join(block.split())
+        at = flat.casefold().find(needle)
+        if at < 0:
+            continue
+        start = max(0, at - width // 2)
+        clip = flat[start : start + width]
+        clip = (
+            ("…" if start else "") + clip + ("…" if start + width < len(flat) else "")
+        )
+        if clip not in found:
+            found.append(clip)
+        if len(found) >= limit:
+            break
+    return found
 
 
 def _control_changes(before: Any, after: Any) -> list[str]:
@@ -1329,28 +1372,52 @@ class AgentBrowser:
     # ------------------------------------------------------------------ #
     # Reading
     # ------------------------------------------------------------------ #
-    def read(self) -> str:
+    def read(self, *, full: bool = False, links: bool = False) -> str:
         """Return the page's readable content as markdown (or plain text).
 
-        Uses :mod:`markdownify` to convert the rendered HTML to markdown when it
-        is importable; otherwise falls back to the page body's visible text.
-
-        Returns:
-            A markdown (or plain-text) rendering of the current page.
+        By default only the main content: the first of ``<main>``,
+        ``[role=main]``, ``<article>``, ``#content`` that holds real text, so
+        site menus and footers do not fill the result. ``full=True`` (or a page
+        without such an element) returns the whole page. Links and images
+        become their text unless ``links=True``: their URLs can triple a page's
+        size, and agents follow links by snapshot index. Uses
+        :mod:`markdownify` when it is importable; otherwise the visible text.
         """
         self._enforce_location()
+        main = None if full else self._main_content()
         try:
-            from markdownify import markdownify as _md  # type: ignore
+            from markdownify import markdownify  # type: ignore
 
-            html = self.page.content()
-            return _md(html)
+            strip = [] if links else ["a", "img"]
+            html = main["html"] if main is not None else self.page.content()
+            return markdownify(html, strip=strip)
         except Exception:
             # markdownify missing, or content()/conversion failed — fall back to
-            # the visible body text, which is always available.
+            # the visible text, which is always available.
+            if main is not None:
+                return main["text"]
             try:
                 return self.page.inner_text("body")
             except Exception:
                 return ""
+
+    def find(self, term: str, limit: int = 8) -> list[str]:
+        """Passages of the whole page that contain ``term`` (case-insensitive).
+
+        Each passage is a paragraph or table row, clipped to about 400
+        characters around the first match. Use it to look up a fact without
+        reading a long page slice by slice.
+        """
+        needle = str(term or "").strip()
+        if not needle:
+            raise ValueError("find needs a word or phrase to look for")
+        return find_passages(self.read(full=True), needle, limit)
+
+    def _main_content(self) -> Optional[dict]:
+        try:
+            return self.page.evaluate(_MAIN_CONTENT_JS)
+        except Exception:
+            return None
 
     def get_text(self, index: Optional[int] = None) -> str:
         """Return the text of a single element, or the whole page body.

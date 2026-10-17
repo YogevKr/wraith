@@ -6,6 +6,25 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-17
+
+### Added
+
+- `read(find="population")` (MCP) and `AgentBrowser.find(term)`: the passages
+  of the whole page that contain the words, each clipped around the match; a
+  table row comes with the rows that follow it. On the Wikipedia "Tel Aviv"
+  article it returns `| Population (2024) | | • City | 494,900 |` and the
+  lead's "with a population of 494,900" in one call.
+
+### Changed
+
+- `read()` returns the main content by default (the first of `<main>`,
+  `[role=main]`, `<article>`, `#content` that holds real text); `full=True`
+  returns the whole page.
+- `read()` renders links and images as their text unless `links=True`. Link
+  URLs more than doubled a page: the Tel Aviv article was 334,002 characters
+  (17 slices) and is now 138,524.
+
 ## [0.13.3] - 2026-10-17
 
 ### Fixed

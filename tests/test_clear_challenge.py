@@ -295,3 +295,67 @@ def test_a_hold_that_clears_mid_poll_is_not_called_a_hard_block(monkeypatch):
 
     assert clear_challenge(URL, session=sess, timeout=5.0, settle=0.0) is sess
     assert polls[1] == DENIED  # the stale read that used to raise
+
+
+def _hold_then(page, on_poll):
+    """A poll that holds on the first call, then runs ``on_poll(n)``."""
+    polls = []
+
+    def poll(self, page_, html):
+        polls.append(html)
+        if len(polls) == 1:
+            self.seen = True
+            return True
+        on_poll(len(polls))
+        return False
+
+    return poll, polls
+
+
+def _navigation_response(page, url):
+    response = _FakeResponse(200, url)
+    response.request = type(
+        "Req", (), {"frame": None, "is_navigation_request": lambda self: True}
+    )()
+    for cb in page._listeners.get("response", []):
+        cb(response)
+
+
+def test_a_cleared_page_that_commits_before_its_response_is_not_a_hard_block(
+    monkeypatch,
+):
+    """CI flake: Firefox delivered the cleared page's commit before the
+    redirect's response event, so the stale denied content looked fresh."""
+    from wraith import _press_hold
+
+    sess = _make_session(403, URL, cookies_sequence=[[]], content=DENIED)
+    page = sess.page
+    page.title = lambda: (
+        "Access to this page has been denied" if "denied" in page._content else ""
+    )
+
+    def on_poll(n):
+        if n == 2:  # the cleared page commits; its response is not seen yet
+            page._content = "<h1>Verified catalog</h1>" + "<p>Product</p>" * 40
+        if n == 3:
+            _navigation_response(page, URL + "cleared")
+
+    poll, polls = _hold_then(page, on_poll)
+    monkeypatch.setattr(_press_hold.PressHoldHandler, "poll", poll)
+
+    assert clear_challenge(URL, session=sess, timeout=5.0, settle=0.0) is sess
+    assert polls[1] == DENIED  # the stale read that used to raise
+
+
+def test_denied_text_after_the_settle_window_is_still_a_hard_block(monkeypatch):
+    from wraith import _press_hold, engine
+
+    monkeypatch.setattr(engine, "_HOLD_SETTLE_S", 0.0)
+    sess = _make_session(403, URL, cookies_sequence=[[]], content=DENIED)
+    sess.page.title = lambda: "Access to this page has been denied"
+    poll, polls = _hold_then(sess.page, lambda n: None)
+    monkeypatch.setattr(_press_hold.PressHoldHandler, "poll", poll)
+
+    with pytest.raises(WaapHardBlockError, match="PerimeterX"):
+        clear_challenge(URL, session=sess, timeout=5.0, settle=0.0)
+    assert len(polls) == 2  # not while holding; on the first poll after it

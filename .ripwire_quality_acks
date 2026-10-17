@@ -1,5 +1,7 @@
 # ripwire quality acks v1 — written by --quality-ack; a finding stays suppressed until it worsens past its acked magnitude
 # format: ack <kind> <16-hex-key> <ackNow> [cid=<16-hex-content-id>] [by=<scope that acked it>] <reason to end of line> — one per line, kept SORTED by (kind,key) on every write (merge-friendly)
+ack complexity a2f3bb42396296c9 125 cid=61f64046db092089 press-hold settle window; version bump
+ack complexity a5bd311fd1843aaa 94 cid=a9b7b08510b3e29c press-hold settle window; version bump
 ack dead-code:preexisting 5aed49639147ed89 0 cid=dd657acbf30ab68a version bump; test fake click that must never run (proves upload refuses before clicking)
 ack duplication 0143618d7f58fc33 18 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication 03445361d44d1ed5 21 read main content and find; small test cases; version bump
@@ -55,6 +57,7 @@ ack short-horizon-churn 1add6568edcf07cb 5 cid=f4283b559c3c96cb race fixes: navi
 ack short-horizon-churn 1ced20c4bd86493f 15 cid=6c8177915ec7ddb5 click_frame aims in frame coordinates; version bump; test fake update | prior: read main content and find; small test cases; version bump
 ack short-horizon-churn 20e879d1c56f02ca 3 cid=43eed133900556f2 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 2914b9057f29d5a5 2 cid=59a83e36c094e5de stacked fix: click and key hold times reach the input helpers and their test stubs
+ack short-horizon-churn 291fa9f1d234f5c9 2 cid=4f578c7b4df5d828 press-hold settle window; version bump
 ack short-horizon-churn 2fb7a255f6fdf320 13 cid=12481cbbc1b17ce5 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack short-horizon-churn 366c1ca61e6eff5a 8 cid=ab5a436bcdf46257 read main content and find; small test cases; version bump | prior: stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
 ack short-horizon-churn 38a15c38fc7d912f 2 cid=948dd4a2066d653a snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
@@ -72,7 +75,7 @@ ack short-horizon-churn 629ef977fc849573 3 cid=c89bf676baadfe09 stacked fix: cli
 ack short-horizon-churn 632aaab4efcd4687 4 cid=103e7da84e6ad3d1 click_frame aims in frame coordinates; version bump; test fake update
 ack short-horizon-churn 6572f30e9932a654 4 cid=37c0b0fd22026597 stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 65a07f4196ef06c9 3 cid=cebbdba602618616 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
-ack short-horizon-churn 66237ee2e6eeadce 21 cid=a39110cc02845cdf click_frame aims in frame coordinates; version bump; test fake update | prior: read main content and find; small test cases; version bump
+ack short-horizon-churn 66237ee2e6eeadce 23 cid=b5cb22cc0d18b7e5 press-hold settle window; version bump | prior: click_frame aims in frame coordinates; version bump; test fake update
 ack short-horizon-churn 663387691dbed52d 4 cid=18d774624128b83d stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 6909ddc7ad6aff71 2 cid=b91a23de4ee9a3ee snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack short-horizon-churn 6bc9443f2681c693 4 cid=432f893720cdd97e stacked fix: snapshot index map in the isolated world; fakes answer the index lookup | prior: stacked fix: click and key hold times reach the input helpers and their test stubs
@@ -85,7 +88,7 @@ ack short-horizon-churn 8041d2adab8608ec 3 cid=27b37c4439d0c8f4 stacked fix: cli
 ack short-horizon-churn 8145fd4be9c160bd 2 cid=658b1d6470295591 follow-up fix: no_viewport for Chromium contexts; version bump; headed case in live fingerprint test
 ack short-horizon-churn 85ac0208c1882f83 4 cid=511597afe97317a6 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 89e53f399b4b5922 4 cid=81d22f0570649198 stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
-ack short-horizon-churn 8c57d66d83c05660 20 cid=de4bf1dad2731757 click_frame aims in frame coordinates; version bump; test fake update | prior: read main content and find; small test cases; version bump
+ack short-horizon-churn 8c57d66d83c05660 23 cid=772cc461146057fd press-hold settle window; version bump | prior: click_frame aims in frame coordinates; version bump; test fake update
 ack short-horizon-churn 8c58adf72c0ea5d0 10 cid=f780a3a8c3badecb follow-up fix: select_option types the label for trusted events; version bump
 ack short-horizon-churn 8e0b617291abd8cf 3 cid=208a24687c043a9a stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 914f2c0ebfa44719 5 cid=c2c930fcc6cb1b03 race fixes: navigation wait after the action; test fakes for request/commit events; version bump
@@ -96,8 +99,8 @@ ack short-horizon-churn 9aa8a49f854cf41e 2 cid=14a2dcb7c21753d6 snapshot shows c
 ack short-horizon-churn 9c67fe694a3f1cf4 4 cid=c21f62ade26dfe9e follow-up fix: no_viewport for Chromium contexts; version bump; headed case in live fingerprint test
 ack short-horizon-churn 9f49222024afa625 6 cid=8e7d4483b8ec3ee7 version bump; test fake click that must never run (proves upload refuses before clicking)
 ack short-horizon-churn a13067fef08ccb35 3 cid=a05142cd8868dfe8 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
-ack short-horizon-churn a2f3bb42396296c9 5 cid=b7ad3190b7c0241e race fixes: navigation wait after the action; test fakes for request/commit events; version bump
-ack short-horizon-churn a5bd311fd1843aaa 5 cid=45a7c6bfb3339b5d race fixes: navigation wait after the action; test fakes for request/commit events; version bump
+ack short-horizon-churn a2f3bb42396296c9 7 cid=61f64046db092089 press-hold settle window; version bump | prior: race fixes: navigation wait after the action; test fakes for request/commit events; version bump
+ack short-horizon-churn a5bd311fd1843aaa 7 cid=a9b7b08510b3e29c press-hold settle window; version bump | prior: race fixes: navigation wait after the action; test fakes for request/commit events; version bump
 ack short-horizon-churn a654bd35577ac57f 6 cid=2eb0ff91c920a0c9 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn a818011941138cc4 5 cid=17e2bebe5330e09b race fixes: navigation wait after the action; test fakes for request/commit events; version bump
 ack short-horizon-churn a96a513b582fcea7 6 cid=146e5551b19e4a07 stacked fix: click and key hold times reach the input helpers and their test stubs
@@ -139,7 +142,9 @@ ack verbosity 1ced20c4bd86493f 1470 cid=6c8177915ec7ddb5 click_frame aims in fra
 ack verbosity 3e588b25ed647845 111 cid=16114520dd9efb26 CLI parser grows one block per subcommand (benchmark run/compare); weekly workflow config
 ack verbosity 5946208a68814ef1 271 cid=540b9c6912bc31f6 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack verbosity 719e8441be665024 92 cid=6d6d8e89a3d99229 new public API: drag; version bump; small test fakes | prior: new public API: network, network_response; shared secret-fill guard
+ack verbosity a2f3bb42396296c9 402 cid=61f64046db092089 press-hold settle window; version bump
 ack verbosity a3aec02e7a971455 80 cid=055961c07c04785a new public API: network, network_response; shared secret-fill guard
+ack verbosity a5bd311fd1843aaa 204 cid=a9b7b08510b3e29c press-hold settle window; version bump
 ack verbosity af13e8dd18fb29c3 61 cid=4a37d089ce5be27d CLI parser grows one block per subcommand (benchmark run/compare); weekly workflow config
 ack verbosity c2289e21d7daac74 68 cid=f5b98582427fb70c snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack verbosity e29bc3595e28cb82 395 cid=a21e8b9598964f3e CLI parser grows one block per subcommand (benchmark run/compare); weekly workflow config | prior: new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs

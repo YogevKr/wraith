@@ -6,6 +6,18 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-10-17
+
+### Fixed
+
+- One stuck browser call no longer freezes the MCP server. A page can block a
+  Playwright call that has no timeout (during dogfooding, `navigate` hung and
+  every later tool waited behind it on the single browser worker). Each tool
+  call now has a deadline (`WRAITH_TOOL_TIMEOUT`, default 180 s). When it
+  passes, the tool reports `BrowserStuck`, Wraith kills that browser's
+  Playwright driver and its child processes, and the next call starts a new
+  browser on a new worker. Open pages and tabs are lost.
+
 ## [0.13.2] - 2026-10-17
 
 ### Fixed

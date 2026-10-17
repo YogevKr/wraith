@@ -103,3 +103,4 @@ jobs:
           tests/test_live_input_tools.py
           tests/test_live_netlog.py
           tests/test_live_drag.py
+          tests/test_live_mcp_watchdog.py

@@ -472,8 +472,10 @@ async def click_frame(frame: int, x: float, y: float, include_snapshot: bool = T
     """Click a point inside frame ``frame`` (the number under "Frames:").
 
     ``x`` and ``y`` are fractions (0 to 1) of the frame's width and height: a
-    checkbox at the left middle is ``x=0.1, y=0.5``. Aim with `screenshot()`.
-    Wraith measures the frame at click time, so an animated frame is still hit.
+    checkbox at the left middle is ``x=0.1, y=0.5``, also when the frame is
+    rotated or tilted in 3D. Aim with `screenshot()`. Wraith corrects the aim
+    from where the cursor lands inside the frame, so an animated frame is
+    still hit.
     Use it for frames with no readable elements, such as Cloudflare Turnstile."""
     return await _step(lambda b: b.click_frame(frame, x, y), include_snapshot)
 

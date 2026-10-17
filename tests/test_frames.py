@@ -197,7 +197,7 @@ def test_click_frame_aims_at_a_fraction_of_the_live_frame_box(browser, monkeypat
     opaque.handle.iframe.bounding_box = lambda: next(boxes)
     clicks = []
     monkeypatch.setattr(ag, "_await_navigation", lambda p, action, allows=None: action())
-    monkeypatch.setattr(ag, "_human_click", lambda p, aim: (aim(), clicks.append(aim())))
+    monkeypatch.setattr(ag, "_human_click", lambda p, aim, refine=None: (aim(), clicks.append(aim())))
     monkeypatch.setattr(AgentBrowser, "_page_signature", lambda self: None)
 
     a.click_frame(opaque.number, 0.1, 0.5)
@@ -244,7 +244,9 @@ def test_click_frame_works_when_only_an_opaque_frame_is_visible(monkeypatch):
     assert len(snap) == 0 and [f.number for f in snap.frames] == [1]
     clicks = []
     monkeypatch.setattr(ag, "_await_navigation", lambda p, action, allows=None: action())
-    monkeypatch.setattr(ag, "_human_click", lambda p, aim: clicks.append(aim()))
+    monkeypatch.setattr(
+        ag, "_human_click", lambda p, aim, refine=None: clicks.append(aim())
+    )
     monkeypatch.setattr(AgentBrowser, "_page_signature", lambda self: None)
 
     a.click_frame(1, 0.5, 0.5)

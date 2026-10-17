@@ -206,7 +206,7 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | `current_url` / `current_title` | properties | `str` |
 | `save_storage_state(path, *, for_chromium=False)` | write cookies + localStorage as Playwright `storageState`; `for_chromium=True` makes the file loadable by Chromium tools such as agent-browser | `str` (the path) |
 | `click_at(x, y)` | human-like move, then click the page point in CSS pixels; it cannot verify the target | `Snapshot` |
-| `click_frame(frame, x, y)` | click a point of frame `frame` from the last snapshot; `x`/`y` are fractions (0 to 1) of its on-screen box, measured at click time | `Snapshot` |
+| `click_frame(frame, x, y)` | click a point of frame `frame` from the last snapshot; `x`/`y` are fractions (0 to 1) of the frame's own width and height (also when rotated or tilted in 3D); Wraith corrects the aim from where the cursor lands inside the frame | `Snapshot` |
 | `close()` | close the Session **iff** we launched it | — |
 
 `AgentBrowser` is a context manager; `agent_browser(**kw)` is the module-level

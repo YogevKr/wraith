@@ -287,9 +287,11 @@ above an iframe hides its covered elements.
 Some frames cannot be read, for example Cloudflare Turnstile, which renders
 in a closed shadow root. The snapshot lists them under `Frames:` with their
 on-screen box. Aim with a screenshot, then call `click_frame(N, x, y)`. `x`
-and `y` are fractions (0 to 1) of that box. Wraith measures the box at click
-time, so a frame that moves is still hit. `click_at(x, y)` clicks any page
-point in CSS pixels.
+and `y` are fractions (0 to 1) of the frame's own width and height, also
+when the frame is rotated or tilted in 3D. Wraith reads where the cursor
+lands inside the frame and corrects the aim before it clicks, so a frame
+that moves is still hit. `click_at(x, y)` clicks any page point in CSS
+pixels.
 
 Secret fills accept only main-frame fields.
 

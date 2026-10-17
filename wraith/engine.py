@@ -322,6 +322,40 @@ def _camoufox_pinned_executable() -> str:
         raise _camoufox_missing_error() from exc
 
 
+def _ensure_camoufox_bundle_properties() -> None:
+    """Let Camoufox find ``properties.json`` inside a macOS app bundle.
+
+    Camoufox 0.5.6 reads ``properties.json`` beside an explicit executable. A
+    macOS bundle keeps the binary in ``Contents/MacOS`` and the file in
+    ``Contents/Resources``, so every pinned launch fails on macOS. Camoufox
+    0.5.8 has the same fallback; remove this shim with that upgrade.
+    """
+    try:
+        from camoufox import utils as camoufox_utils
+    except ImportError:  # pragma: no cover - package guard
+        return
+
+    original = camoufox_utils._load_properties
+    if getattr(original, "_wraith_bundle_fallback", False):
+        return
+
+    def _load_properties(path: Any = None) -> Any:
+        if path:
+            from pathlib import Path
+
+            path = Path(path)
+            resources = path.parent.parent / "Resources"
+            if (
+                not (path.parent / "properties.json").exists()
+                and (resources / "properties.json").exists()
+            ):
+                path = resources / path.name
+        return original(path=path)
+
+    _load_properties._wraith_bundle_fallback = True  # type: ignore[attr-defined]
+    camoufox_utils._load_properties = _load_properties
+
+
 def _camoufox_missing_error() -> EngineUnavailableError:
     return EngineUnavailableError(
         f"Camoufox browser {_CAMOUFOX_BROWSER_VERSION} is not installed. "
@@ -372,6 +406,7 @@ def _launch_camoufox(
         raise EngineUnavailableError(
             "Camoufox is not installed. Install it with: pip install 'camoufox[geoip]'"
         ) from exc
+    _ensure_camoufox_bundle_properties()
 
     opts: dict[str, Any] = {
         # os="auto" is not a literal Camoufox value; passing os=None makes

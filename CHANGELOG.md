@@ -13,8 +13,9 @@ All notable changes to **Wraith** are documented here. The format is based on
 - `type()` works on fields that replace their node on input, such as the
   Wikipedia search box. Keys follow focus, the clear uses keys, and the check
   reads the focused control.
-- `type(..., enter=True)` waits for a navigation that Enter starts, so the
-  snapshot shows the new page.
+- `click()` and `type(..., enter=True)` wait for a navigation that they start,
+  so the snapshot shows the new page. An action that starts no navigation
+  waits at most 500 ms.
 - `type()` refuses a target that does not take text before it clicks. A stale
   index no longer clicks a link or a button.
 - `navigate()` raises `NavigationFailedError` when the URL cannot load (for

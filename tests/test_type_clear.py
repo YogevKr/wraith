@@ -424,3 +424,23 @@ def test_type_refuses_a_non_editable_target_before_clicking():
 
     assert link.calls == []
     assert a.page.keyboard.pressed == []
+
+
+def test_await_navigation_propagates_action_errors():
+    page = _NavigatingPage(_SwapOnFirstKeyField(), navigates=False)
+
+    def _covered():
+        raise RuntimeError("The visible target is covered or unavailable")
+
+    with pytest.raises(RuntimeError, match="covered"):
+        ag._await_navigation(page, _covered)
+
+
+def test_click_waits_for_the_navigation_it_starts(monkeypatch):
+    page = _NavigatingPage(_SwapOnFirstKeyField(), navigates=True)
+    a = AgentBrowser(session=_FakeSession(page))
+    monkeypatch.setattr(a, "_pointer_click", lambda index: page.events.append(f"click {index}"))
+
+    a.click(4)
+
+    assert page.events == ["expect framenavigated", "expect request", "click 4", "committed"]

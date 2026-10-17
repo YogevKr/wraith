@@ -55,7 +55,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from . import engine as _engine
 from .identity import export_storage_state
@@ -98,8 +98,8 @@ _CONSENT_SELECTORS = (
 )
 
 
-_ENTER_NAVIGATION_START_MS = 1000
-_ENTER_NAVIGATION_COMMIT_MS = 10000
+_NAVIGATION_START_MS = 500
+_NAVIGATION_COMMIT_MS = 10000
 _HAS_FOCUS_JS = "t => t === document.activeElement || t.contains(document.activeElement)"
 _EDITABLE_JS = """el => {
   if (el.isContentEditable) return true;
@@ -180,30 +180,40 @@ def _clear_focused(page: Any) -> None:
     )
 
 
-def _press_enter(page: Any, keys: Any) -> None:
-    """Press Enter; when it starts a page navigation, wait for the commit.
+def _await_navigation(page: Any, action: Callable[[], Any]) -> None:
+    """Run ``action``; when it starts a page navigation, wait for the commit.
 
-    A form submit sends its request at once, but the new page commits later,
-    so the snapshot would show the old page. An Enter that starts no
-    navigation (search-as-you-type, chat boxes) costs at most
-    ``_ENTER_NAVIGATION_START_MS``.
+    A click or a form submit sends its request at once, but the new page
+    commits later, so a snapshot taken right away shows the old page. An
+    action that starts no navigation costs at most ``_NAVIGATION_START_MS``.
+    Errors from ``action`` propagate; a wait that times out does not.
     """
-    main = getattr(page, "main_frame", None)
     if not hasattr(page, "expect_event"):
-        with contextlib.suppress(Exception):
-            keys.press("Enter")
+        action()
         return
+    main = getattr(page, "main_frame", None)
+    error: Optional[BaseException] = None
+
+    def _run() -> None:
+        nonlocal error
+        try:
+            action()
+        except Exception as exc:
+            error = exc
+
     with contextlib.suppress(Exception):
         with page.expect_event(
             "framenavigated",
             predicate=lambda frame: frame == main,
-            timeout=_ENTER_NAVIGATION_COMMIT_MS,
+            timeout=_NAVIGATION_COMMIT_MS,
         ):
             with page.expect_request(
                 lambda request: request.is_navigation_request() and request.frame == main,
-                timeout=_ENTER_NAVIGATION_START_MS,
+                timeout=_NAVIGATION_START_MS,
             ):
-                keys.press("Enter")
+                _run()
+    if error is not None:
+        raise error
 
 
 @dataclass
@@ -528,7 +538,7 @@ class AgentBrowser:
             settles.
         """
         pre = self._page_signature()
-        self._pointer_click(index)
+        _await_navigation(self.page, lambda: self._pointer_click(index))
         self._wait_for_settle()
         snap = self.snapshot()
         self._set_changed(pre, snap)
@@ -635,7 +645,8 @@ class AgentBrowser:
                 raise fill_error
 
         if enter:
-            _press_enter(self.page, keys)
+            with contextlib.suppress(Exception):
+                _await_navigation(self.page, lambda: keys.press("Enter"))
 
         self._wait_for_settle()
         snap = self.snapshot()

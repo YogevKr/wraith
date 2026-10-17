@@ -55,7 +55,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from . import engine as _engine
 from .identity import export_storage_state
@@ -98,6 +98,43 @@ _CONSENT_SELECTORS = (
 )
 
 
+_NAVIGATION_START_MS = 500
+_NAVIGATION_COMMIT_MS = 10000
+_HAS_FOCUS_JS = "t => t === document.activeElement || t.contains(document.activeElement)"
+_EDITABLE_JS = """el => {
+  if (el.isContentEditable) return true;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'textarea') return !el.disabled && !el.readOnly;
+  if (tag === 'input') {
+    const kind = (el.type || 'text').toLowerCase();
+    const noText = ['checkbox', 'radio', 'button', 'submit', 'reset', 'image',
+                    'file', 'hidden', 'range', 'color'];
+    return !noText.includes(kind) && !el.disabled && !el.readOnly;
+  }
+  const role = (el.getAttribute('role') || '').toLowerCase();
+  return ['textbox', 'searchbox', 'combobox', 'spinbutton'].includes(role);
+}"""
+_FOCUSED_VALUE_JS = """() => {
+  const a = document.activeElement;
+  if (!a || a === document.body) return null;
+  if (typeof a.value === 'string') return a.value;
+  return a.isContentEditable ? a.innerText : null;
+}"""
+
+
+class _FocusedKeyboard:
+    """Send key events to whichever control has focus."""
+
+    def __init__(self, keyboard: Any) -> None:
+        self._keyboard = keyboard
+
+    def press_sequentially(self, text: str, delay: float = 0) -> None:
+        self._keyboard.type(text, delay=delay)
+
+    def press(self, key: str) -> None:
+        self._keyboard.press(key)
+
+
 class ClearFailedError(RuntimeError):
     """:meth:`AgentBrowser.type` could not verify a field was actually cleared.
 
@@ -108,6 +145,75 @@ class ClearFailedError(RuntimeError):
     exception while leaving the real document untouched, so "no exception" is
     not sufficient signal that a field is actually empty.
     """
+
+
+def _has_focus(target: Any) -> bool:
+    """Whether keyboard focus is on ``target`` or inside it."""
+    with contextlib.suppress(Exception):
+        return bool(target.evaluate(_HAS_FOCUS_JS))
+    return False
+
+
+def _focused_value(page: Any) -> Optional[str]:
+    """The focused control's text, or ``None`` when it is not editable."""
+    with contextlib.suppress(Exception):
+        value = page.evaluate(_FOCUSED_VALUE_JS)
+        return value if isinstance(value, str) else None
+    return None
+
+
+def _clear_focused(page: Any) -> None:
+    """Clear the focused control with keys, then verify it is empty."""
+    value = _focused_value(page)
+    if value is not None and value.strip() == "":
+        return
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.press("Backspace")
+    value = _focused_value(page)
+    if value is not None and value.strip() == "":
+        return
+    raise ClearFailedError(
+        "could not verify the focused field was cleared before typing — "
+        "a keyboard select-all+delete left it non-empty (or its content "
+        "could not be read back); refusing to type on top of unknown "
+        "existing content"
+    )
+
+
+def _await_navigation(page: Any, action: Callable[[], Any]) -> None:
+    """Run ``action``; when it starts a page navigation, wait for the commit.
+
+    A click or a form submit sends its request at once, but the new page
+    commits later, so a snapshot taken right away shows the old page. An
+    action that starts no navigation costs at most ``_NAVIGATION_START_MS``.
+    Errors from ``action`` propagate; a wait that times out does not.
+    """
+    if not hasattr(page, "expect_event"):
+        action()
+        return
+    main = getattr(page, "main_frame", None)
+    error: Optional[BaseException] = None
+
+    def _run() -> None:
+        nonlocal error
+        try:
+            action()
+        except Exception as exc:
+            error = exc
+
+    with contextlib.suppress(Exception):
+        with page.expect_event(
+            "framenavigated",
+            predicate=lambda frame: frame == main,
+            timeout=_NAVIGATION_COMMIT_MS,
+        ):
+            with page.expect_request(
+                lambda request: request.is_navigation_request() and request.frame == main,
+                timeout=_NAVIGATION_START_MS,
+            ):
+                _run()
+    if error is not None:
+        raise error
 
 
 @dataclass
@@ -432,7 +538,7 @@ class AgentBrowser:
             settles.
         """
         pre = self._page_signature()
-        self._pointer_click(index)
+        _await_navigation(self.page, lambda: self._pointer_click(index))
         self._wait_for_settle()
         snap = self.snapshot()
         self._set_changed(pre, snap)
@@ -495,6 +601,8 @@ class AgentBrowser:
                 verified empty after both the ``fill("")`` and keyboard-driven
                 clear attempts (or its content could not be read back at all).
         """
+        # A stale or wrong index must not click a link or a buy button.
+        self._require_editable(index)
         pre = self._page_signature()
         # The pointer selects the visible target. The locator then sends keys
         # to the focused control without trusting hidden DOM candidates.
@@ -506,8 +614,16 @@ class AgentBrowser:
         if locator is None:
             raise RuntimeError("The browser could not focus the visible target")
 
+        # Keys follow focus, as they do for a person. Some fields replace their
+        # node on input (Wikipedia's search box), which detaches the pinned
+        # handle while focus moves to the new node.
+        focused = _has_focus(locator)
         if clear:
-            self._clear_verified(locator)
+            if focused:
+                _clear_focused(self.page)
+            else:
+                self._clear_verified(locator)
+        keys = _FocusedKeyboard(self.page.keyboard) if focused else locator
 
         typed = False
         # Prefer human-paced typing for reputation-sensitive fields; degrade to
@@ -515,7 +631,7 @@ class AgentBrowser:
         try:
             from .behavior import human_type
 
-            human_type(locator, text, click=False)
+            human_type(keys, text, click=False)
             typed = True
         except Exception:
             typed = False
@@ -530,7 +646,7 @@ class AgentBrowser:
 
         if enter:
             with contextlib.suppress(Exception):
-                locator.press("Enter")
+                _await_navigation(self.page, lambda: keys.press("Enter"))
 
         self._wait_for_settle()
         snap = self.snapshot()
@@ -960,6 +1076,20 @@ class AgentBrowser:
                 focus()
         # Legacy snapshots also support keyboard-only virtual editor inputs.
         return locator
+
+    def _require_editable(self, index: int) -> None:
+        """Refuse to type into an element that does not take text."""
+        try:
+            editable = self._locator(index).evaluate(_EDITABLE_JS)
+        except Exception:
+            return  # unknown: the click and clear checks still apply
+        if editable is False:
+            el = self.last_snapshot.by_index(index) if self.last_snapshot else None
+            kind = f"<{el.tag} role={el.role or '-'}>" if el is not None else "element"
+            raise RuntimeError(
+                f"[{index}] is a {kind}, not a text field. Take a fresh "
+                "snapshot and use the index of the field."
+            )
 
     def _read_field_value(self, locator: Any) -> Optional[str]:
         """Best-effort read of ``locator``'s current text, for clear-verification.

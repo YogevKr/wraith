@@ -119,6 +119,7 @@ __all__ = [
     "WaapRateLimitedError",
     "WaapHardBlockError",
     "WaapChallengeTimeout",
+    "NavigationFailedError",
     "launch",
     "browser",
     "clear_challenge",
@@ -169,6 +170,15 @@ class WaapHardBlockError(WraithEngineError):
 
     Fix the identity leak (use Camoufox/Firefox, drop ``HeadlessChrome`` from
     the UA, avoid automation tells) rather than retrying.
+    """
+
+
+class NavigationFailedError(WraithEngineError):
+    """The browser could not load the URL at all.
+
+    ``goto()`` failed and no main-frame response arrived, for example a DNS,
+    TLS, or connection error. The page still shows the previous document, so
+    Wraith reports the failure instead of treating that document as cleared.
     """
 
 
@@ -922,6 +932,18 @@ def _behavioral_nudge(page: Any) -> None:
         _behavior.dwell(0.1, 0.3)
 
 
+def _raise_if_not_loaded(url: str, error: Optional[Exception], status: Any) -> None:
+    """Raise when ``goto()`` failed and no main-frame response arrived.
+
+    The page then still shows the previous document, which must not pass as a
+    cleared target.
+    """
+    if error is None or status is not None:
+        return
+    reason = (str(error).strip().splitlines() or [type(error).__name__])[0]
+    raise NavigationFailedError(f"Navigation to {url} failed: {reason}")
+
+
 def clear_challenge(
     url: str,
     *,
@@ -1082,16 +1104,20 @@ def clear_challenge(
         # Navigate. Capture the goto() response too — it is the most reliable
         # source of the top-level status across engines.
         goto_status: Any = None
+        goto_error: Optional[Exception] = None
         try:
             resp = page.goto(url)
             if resp is not None:
                 goto_status = getattr(resp, "status", None)
-        except Exception:
+        except Exception as exc:
             # A navigation that throws (e.g. interstitial abort) is not fatal on
             # its own; fall through to status/cookie polling.
+            goto_error = exc
             resp = None
 
         main_status = goto_status if goto_status is not None else nav_status["status"]
+
+        _raise_if_not_loaded(url, goto_error, main_status)
 
         # Hard, non-solvable tiers — bail immediately with actionable guidance.
         if main_status in _WAAP_RATE_LIMIT_STATUSES:

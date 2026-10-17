@@ -43,6 +43,11 @@ try:  # mcp >= 2
 except ImportError:  # pragma: no cover - mcp 1.x
     from mcp.server.fastmcp import FastMCP as _MCPServer
 
+try:  # ToolError carries its message to the client; its module moved in mcp 2.x
+    from mcp.server.mcpserver.exceptions import ToolError as _ToolError
+except ImportError:  # pragma: no cover - mcp 1.x
+    from mcp.server.fastmcp.exceptions import ToolError as _ToolError
+
 try:  # Image content block (vision); its module moved in mcp 2.x
     from mcp.server.mcpserver import Image
 except Exception:  # pragma: no cover
@@ -154,9 +159,19 @@ def _effective_launch_kw() -> "dict[str, Any]":
 
 
 async def _run(fn: "Callable[[], T]") -> T:
-    """Dispatch ``fn`` to the dedicated browser worker thread and await it."""
+    """Dispatch ``fn`` to the dedicated browser worker thread and await it.
+
+    mcp 2.x sends only "Error executing tool <name>" for an unexpected
+    exception. Wraith errors are written for the agent (and redacted where a
+    value could leak), so they go to the client as a ``ToolError``.
+    """
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_EXEC, fn)
+    try:
+        return await loop.run_in_executor(_EXEC, fn)
+    except _ToolError:
+        raise
+    except Exception as exc:
+        raise _ToolError(f"{type(exc).__name__}: {exc}") from exc
 
 
 def _get_browser(reputation: Optional[Any] = None) -> "AgentBrowser":

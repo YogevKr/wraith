@@ -105,3 +105,21 @@ def test_fill_vault_item_returns_only_success(monkeypatch):
 
     monkeypatch.setattr(m, "_get_browser", lambda: FakeBrowser())
     assert asyncio.run(m.fill_vault_item(3, "item-123", "password")) is True
+
+
+def test_tool_errors_reach_the_client_with_their_reason(monkeypatch):
+    import pytest
+
+    from wraith.engine import NavigationFailedError
+
+    class FailingBrowser:
+        def navigate(self, url):
+            raise NavigationFailedError(f"Navigation to {url} failed: NS_ERROR_UNKNOWN_HOST")
+
+    monkeypatch.setattr(m, "_get_browser", lambda: FailingBrowser())
+
+    with pytest.raises(Exception) as info:
+        asyncio.run(m.app.call_tool("navigate", {"url": "https://wraith-test.invalid/"}))
+
+    assert "NS_ERROR_UNKNOWN_HOST" in str(info.value)
+    assert "NavigationFailedError" in str(info.value)

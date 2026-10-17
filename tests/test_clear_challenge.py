@@ -212,3 +212,44 @@ def test_timeout_when_no_cookie_and_no_clean_content():
     with pytest.raises(WaapChallengeTimeout):
         clear_challenge(URL, session=sess, timeout=0.2, settle=10.0)
     assert sess.closed is False
+
+
+# --------------------------------------------------------------------------- #
+# Failed navigation (no main-frame response)
+# --------------------------------------------------------------------------- #
+class _FailingPage(_FakePage):
+    """goto() raises like Playwright; optionally after one response arrived."""
+
+    def __init__(self, error, *, respond_first=None):
+        super().__init__(200, "https://old.example/", content="old page " * 100)
+        self._error = error
+        self._respond_first = respond_first
+
+    def goto(self, url, **kw):
+        self.goto_calls.append(url)
+        if self._respond_first is not None:
+            for cb in self._listeners.get("response", []):
+                cb(_FakeResponse(self._respond_first, url))
+        raise self._error
+
+
+def test_navigation_without_response_raises_with_cause():
+    from wraith.engine import NavigationFailedError
+
+    error = RuntimeError("Page.goto: NS_ERROR_UNKNOWN_HOST\nCall log:\n  - navigating")
+    sess = _FakeSession(_FailingPage(error), _FakeContext([[]]))
+
+    with pytest.raises(NavigationFailedError, match="NS_ERROR_UNKNOWN_HOST") as info:
+        clear_challenge(URL, session=sess, timeout=5.0, settle=0.0)
+
+    assert URL in str(info.value)
+    assert "Call log" not in str(info.value)
+    assert issubclass(NavigationFailedError, WraithEngineError)
+    assert wraith.NavigationFailedError is NavigationFailedError
+
+
+def test_aborted_navigation_after_response_keeps_polling():
+    error = RuntimeError("Page.goto: NS_BINDING_ABORTED")
+    sess = _FakeSession(_FailingPage(error, respond_first=200), _FakeContext([[]]))
+
+    assert clear_challenge(URL, session=sess, timeout=5.0, settle=0.0) is sess

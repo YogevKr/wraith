@@ -152,8 +152,9 @@ def _no_real_snapshot(monkeypatch):
 def _fast_human_type(monkeypatch):
     """Skip human_type's real per-key sleeps: deterministic and instant."""
 
-    def _fake(locator, text, **kw):
-        locator.click()
+    def _fake(locator, text, click=True, **kw):
+        if click:
+            locator.click()
         for ch in text:
             locator.press_sequentially(ch, delay=0)
 
@@ -230,3 +231,216 @@ def test_clear_failed_error_reexported():
 
     assert hasattr(wraith, "ClearFailedError")
     assert wraith.ClearFailedError is ClearFailedError
+
+
+class _SwapOnFirstKeyField:
+    """A focused input that the page replaces after the first key.
+
+    Wikipedia's search box does this: the pinned handle detaches, focus moves
+    to the new input, and the typed text continues there.
+    """
+
+    def __init__(self):
+        self.value = ""
+        self.attached = True
+        self.calls: list[str] = []
+
+    def count(self) -> int:
+        return 1
+
+    def evaluate(self, js, *a):
+        return self.attached  # focus is on this node until it is replaced
+
+    def fill(self, text: str) -> None:
+        if not self.attached:
+            raise RuntimeError("ElementHandle.fill: Element is not attached to the DOM")
+        self.value = text
+
+    def input_value(self) -> str:
+        return self.value
+
+    def focus(self) -> None:
+        self.calls.append("focus()")
+
+    def press(self, key: str) -> None:
+        if not self.attached:
+            raise RuntimeError("ElementHandle.press: Element is not attached to the DOM")
+        self.calls.append(f"press({key!r})")
+
+    def press_sequentially(self, ch: str, delay: float = 0) -> None:
+        if not self.attached:
+            raise RuntimeError("ElementHandle.type: Element is not attached to the DOM")
+        self.value += ch
+        self.attached = False
+
+
+class _FocusedPageKeyboard:
+    """page.keyboard: keys reach the focused input, even after a node swap."""
+
+    def __init__(self, value: str = ""):
+        self.value = value
+        self.pressed: list[str] = []
+        self._selected_all = False
+
+    def type(self, text: str, delay: float = 0) -> None:
+        self.value += text
+
+    def press(self, key: str) -> None:
+        self.pressed.append(key)
+        if key == "ControlOrMeta+a":
+            self._selected_all = True
+        elif key == "Backspace" and self._selected_all:
+            self.value = ""
+
+
+class _FocusedPage(_FakePage):
+    """A page whose focused control is modeled by its keyboard."""
+
+    def __init__(self, field, value: str = ""):
+        super().__init__(field)
+        self.keyboard = _FocusedPageKeyboard(value)
+
+    def evaluate(self, js, *a, **k):
+        if js == ag._FOCUSED_VALUE_JS:
+            return self.keyboard.value
+        return {}
+
+
+def test_type_follows_focus_when_the_field_is_replaced():
+    field = _SwapOnFirstKeyField()
+    page = _FocusedPage(field)
+    a = AgentBrowser(session=_FakeSession(page))
+
+    a.type(2, "Firefox", enter=True)
+
+    assert page.keyboard.value == "Firefox"
+    assert page.keyboard.pressed == ["Enter"]  # empty field: no clear keys
+    assert field.value == ""  # no key went to the detached handle
+
+
+def test_focused_clear_uses_keys_and_verifies():
+    field = _SwapOnFirstKeyField()
+    page = _FocusedPage(field, value="old query")
+    a = AgentBrowser(session=_FakeSession(page))
+
+    a.type(2, "Firefox")
+
+    assert page.keyboard.value == "Firefox"
+    assert page.keyboard.pressed == ["ControlOrMeta+a", "Backspace"]
+
+
+def test_focused_clear_refuses_unverified_content():
+    class _StickyKeyboard(_FocusedPageKeyboard):
+        def press(self, key: str) -> None:
+            self.pressed.append(key)  # select-all + delete has no effect
+
+    field = _SwapOnFirstKeyField()
+    page = _FocusedPage(field)
+    page.keyboard = _StickyKeyboard("old query")
+    a = AgentBrowser(session=_FakeSession(page))
+
+    with pytest.raises(ClearFailedError):
+        a.type(2, "Firefox")
+
+    assert page.keyboard.value == "old query"
+
+
+class _NavigatingPage(_FocusedPage):
+    """Records the Enter press inside Playwright's expect_* contexts."""
+
+    def __init__(self, field, *, navigates: bool):
+        super().__init__(field)
+        self.navigates = navigates
+        self.events: list[str] = []
+        self.main_frame = object()
+
+    def expect_event(self, event, predicate=None, timeout=None):
+        page = self
+
+        class _Ctx:
+            def __enter__(self):
+                page.events.append(f"expect {event}")
+
+            def __exit__(self, exc_type, *exc):
+                if exc_type is None:
+                    page.events.append("committed")
+                return False
+
+        return _Ctx()
+
+    def expect_request(self, predicate, timeout=None):
+        page = self
+
+        class _Ctx:
+            def __enter__(self):
+                page.events.append("expect request")
+
+            def __exit__(self, exc_type, *exc):
+                if exc_type is None and not page.navigates:
+                    raise TimeoutError("no navigation request")
+                return False
+
+        return _Ctx()
+
+
+@pytest.mark.parametrize("navigates", [True, False])
+def test_enter_waits_only_for_a_navigation_it_starts(navigates):
+    page = _NavigatingPage(_SwapOnFirstKeyField(), navigates=navigates)
+    a = AgentBrowser(session=_FakeSession(page))
+
+    a.type(2, "Firefox", enter=True)
+
+    assert page.keyboard.pressed == ["Enter"]
+    assert page.events[:2] == ["expect framenavigated", "expect request"]
+    assert ("committed" in page.events) is navigates
+
+
+def test_type_refuses_a_non_editable_target_before_clicking():
+    class _DonateLink:
+        def __init__(self):
+            self.calls: list[str] = []
+
+        def count(self) -> int:
+            return 1
+
+        def evaluate(self, js, *a):
+            return False if js == ag._EDITABLE_JS else True
+
+        def element_handle(self):
+            self.calls.append("element_handle()")
+            return self
+
+        def click(self, *a, **k):
+            self.calls.append("click()")
+
+        def focus(self):
+            self.calls.append("focus()")
+
+    link = _DonateLink()
+    a = AgentBrowser(session=_FakeSession(_FocusedPage(link)))
+
+    with pytest.raises(RuntimeError, match="not a text field"):
+        a.type(2, "Firefox", enter=True)
+
+    assert link.calls == []
+    assert a.page.keyboard.pressed == []
+
+
+def test_await_navigation_propagates_action_errors():
+    page = _NavigatingPage(_SwapOnFirstKeyField(), navigates=False)
+
+    def _covered():
+        raise RuntimeError("The visible target is covered or unavailable")
+
+    with pytest.raises(RuntimeError, match="covered"):
+        ag._await_navigation(page, _covered)
+
+
+def test_click_waits_for_the_navigation_it_starts(monkeypatch):
+    page = _NavigatingPage(_SwapOnFirstKeyField(), navigates=True)
+    a = AgentBrowser(session=_FakeSession(page))
+    monkeypatch.setattr(a, "_pointer_click", lambda index: page.events.append(f"click {index}"))
+
+    a.click(4)
+
+    assert page.events == ["expect framenavigated", "expect request", "click 4", "committed"]

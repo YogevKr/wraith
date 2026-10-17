@@ -460,7 +460,7 @@ A cookie jar is the session past 2FA — keep syncs domain-scoped, and see
 
 Wraith ships a stdio MCP server (`wraith-mcp`) that exposes the agent browser as
 tools — `navigate`, `snapshot`, `click`, `click_at`, `click_frame`, `type_text`,
-`press_key`, `select_option`, `upload_file`, `go_back`, `go_forward`,
+`press_key`, `select_option`, `upload_file`, `drag`, `go_back`, `go_forward`,
 `wait_for`, `network_requests`, `network_response`, `fill_secret`, `scroll`,
 `read`, `screenshot`, `detect_waap`, `borrow`, and `receive_profile`. Wire it into an MCP
 client such as Claude Code:
@@ -480,6 +480,12 @@ gives the `read(start=...)` call for the next slice. `upload_file` is off until
 you allow folders: `wraith mcp --upload-dir ~/agent-uploads` (repeatable) or
 `WRAITH_UPLOAD_DIRS`. The server sends stray `print` output to stderr, so a
 library that prints cannot corrupt the stdio protocol.
+
+`drag(dx, dy, index=…)` or `drag(dx, dy, x=…, y=…)` presses on a knob, moves it
+along a human path (eased, with a small wobble, uneven timing, and a short
+overshoot on long drags), and releases. It solves slider challenges when the
+agent reads the distance from `screenshot()`: in tests it passed GeeTest v3
+and v4 slide puzzles and Lemin's drag-the-piece puzzle on their public demos.
 
 `network_requests(contains, resource_type)` lists the browser's recent requests
 (`#id METHOD status type url`); `network_response(request_id)` returns a

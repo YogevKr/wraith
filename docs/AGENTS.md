@@ -188,6 +188,7 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | `press_key(key)` | press a key or chord (`Escape`, `Tab`, `Shift+Tab`, `ArrowDown`) on the focused element, held for 35–95 ms; re-snapshot | `Snapshot` |
 | `select_option(index, option)` | choose an option of a `<select>` by value or label: focus the list and type the label (trusted events), else Playwright's `select_option`; an unknown option raises with the option list | `Snapshot` |
 | `upload_file(index, paths)` | set files on a file input, or click an upload button and fill its file chooser; each file must be inside `upload_dirs` (off by default) | `Snapshot` |
+| `drag(dx, dy=0, *, index=None, x=None, y=None)` | press on element `index` or page point `(x, y)`, move by `(dx, dy)` CSS px along a human path (`wraith.behavior.human_drag`), release; for sliders and puzzle captchas | `Snapshot` |
 | `go_back()` / `go_forward()` | move through the tab's history | `Snapshot` |
 | `network(contains="", resource_type="", limit=50)` | the last requests of the context (`id`, `method`, `url`, `type`, `status`, `content_type`, `failure`); no query strings after a secret fill | `list[dict]` |
 | `network_response(request_id)` | the response body as text, or a one-line note for binary data; refused after a secret fill | `str` |
@@ -276,6 +277,7 @@ operates on one persistent session.
 | `press_key` | `press_key(key: str)` | new snapshot text |
 | `select_option` | `select_option(index: int, option: str)` | new snapshot text |
 | `upload_file` | `upload_file(index: int, paths: list[str])` | new snapshot text; refused outside `--upload-dir` folders |
+| `drag` | `drag(dx: float, dy: float=0, index: int=None, x: float=None, y: float=None)` | new snapshot text |
 | `go_back` / `go_forward` | `go_back()` / `go_forward()` | new snapshot text |
 | `wait_for` | `wait_for(text: str="", seconds: float=5)` | new snapshot text |
 | `network_requests` | `network_requests(contains: str="", resource_type: str="", limit: int=50)` | `#id METHOD status type url` lines |

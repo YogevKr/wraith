@@ -1081,6 +1081,51 @@ class AgentBrowser:
         self._wait_for_settle()
         return self.snapshot()
 
+    def drag(
+        self,
+        dx: float,
+        dy: float = 0.0,
+        *,
+        index: Optional[int] = None,
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+    ) -> Snapshot:
+        """Press on a start point, move by ``(dx, dy)`` CSS pixels, release.
+
+        Start on the element ``index`` (its visible point) or on the page point
+        ``(x, y)``. Use it for slider challenges ("slide to verify", puzzle
+        sliders) and range controls: aim the knob with :meth:`screenshot`; for
+        a puzzle, ``dx`` is the distance from the piece to the gap. The cursor
+        travels to the start, holds, and moves along a human path
+        (:func:`wraith.behavior.human_drag`).
+        """
+        start = self._drag_start(index, x, y)
+        end = (start[0] + float(dx), start[1] + float(dy))
+        from .behavior import human_drag
+
+        return self._act(lambda: human_drag(self.page, start, end))
+
+    def _drag_start(
+        self, index: Optional[int], x: Optional[float], y: Optional[float]
+    ) -> tuple[float, float]:
+        if index is not None:
+            handle = self._locator(index).element_handle()
+            if handle is None:
+                raise RuntimeError("The indexed element is no longer on the page")
+            handle.scroll_into_view_if_needed()
+            point = (
+                None if self._frame_of(index) else handle.evaluate(_POINTER_POINT_JS)
+            )
+            if point:
+                return float(point["x"]), float(point["y"])
+            box = handle.bounding_box()  # a frame element: main-page coordinates
+            if not box:
+                raise RuntimeError(f"[{index}] is covered or not visible")
+            return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        if x is None or y is None or not (float(x) >= 0 and float(y) >= 0):
+            raise ValueError("drag needs an element index or a page point x, y")
+        return float(x), float(y)
+
     def press_key(self, key: str) -> Snapshot:
         """Press one key or chord on the focused element and re-snapshot.
 

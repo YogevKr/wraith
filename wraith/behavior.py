@@ -28,11 +28,12 @@ so this module imports without Playwright/Camoufox installed.
 
 from __future__ import annotations
 
+import math
 import random
 import time
 from typing import Any
 
-__all__ = ["human_move", "human_type", "dwell"]
+__all__ = ["human_move", "human_type", "human_drag", "drag_path", "dwell"]
 
 
 # A person holds a mouse button or a key down for tens of milliseconds;
@@ -120,6 +121,63 @@ def human_move(
         # Sub-perceptual pauses; humans don't emit moves at a fixed rate.
         time.sleep(random.uniform(0.004, 0.018))
     return last
+
+
+def drag_path(
+    start: tuple[float, float], end: tuple[float, float]
+) -> list[tuple[float, float, float]]:
+    """Points ``(x, y, wait_ms)`` for a human drag from ``start`` to ``end``.
+
+    Slider challenges score the trajectory, so it copies what a hand does:
+    a fast start that slows down near the target (ease-out), a small vertical
+    wobble, uneven event timing, and, on longer drags, a short overshoot that
+    is corrected before release. The last point is exactly ``end``.
+    """
+    sx, sy = start
+    ex, ey = end
+    dx, dy = ex - sx, ey - sy
+    distance = math.hypot(dx, dy)
+    count = int(_clamp(distance / 5, 18, 90))
+    overshoot = random.uniform(0.02, 0.06) if distance > 60 else 0.0
+    wobble = random.uniform(0.6, 2.4) * random.choice((-1, 1))
+    bend = random.uniform(0.6, 1.6)
+    total_ms = random.uniform(420, 750) + distance * random.uniform(1.1, 1.9)
+    points: list[tuple[float, float, float]] = []
+    for i in range(1, count + 1):
+        t = i / count
+        progress = 1 - (1 - t) ** 3  # ease-out: fast start, slow finish
+        if overshoot:
+            # Late in the drag, pass the target by a few percent, then settle.
+            late = _clamp((t - 0.55) / 0.45, 0.0, 1.0)
+            progress += overshoot * math.sin(math.pi * late)
+        x = sx + dx * progress
+        y = sy + dy * progress + wobble * math.sin(math.pi * t * bend)
+        if i < count:
+            x += random.gauss(0, 0.35)
+            y += random.gauss(0, 0.35)
+        points.append((x, y, total_ms / count * random.uniform(0.6, 1.4)))
+    points.append((ex, ey, random.uniform(40, 90)))
+    return points
+
+
+def human_drag(page: Any, start: tuple[float, float], end: tuple[float, float]) -> None:
+    """Press at ``start``, move along :func:`drag_path` to ``end``, release.
+
+    The cursor first travels to ``start`` (:func:`human_move`), rests, and
+    holds the button a moment before moving, as a person does on a slider.
+    The button is always released.
+    """
+    human_move(page, target=start)
+    page.wait_for_timeout(random.uniform(90, 260))
+    page.mouse.down()
+    try:
+        page.wait_for_timeout(random.uniform(60, 160))
+        for x, y, wait_ms in drag_path(start, end):
+            page.mouse.move(x, y)
+            page.wait_for_timeout(wait_ms)
+        page.wait_for_timeout(random.uniform(60, 180))
+    finally:
+        page.mouse.up()
 
 
 def human_type(

@@ -6,7 +6,6 @@ opens a file chooser, a modal dialog, text that loads late, and a second page.
 
 from __future__ import annotations
 
-import http.server
 import os
 
 import pytest
@@ -16,7 +15,7 @@ if os.environ.get("WRAITH_LIVE_TEST") != "1":
         "set WRAITH_LIVE_TEST=1 to run the input tool checks", allow_module_level=True
     )
 
-from tests._local_server import serve
+from tests._local_server import html_pages, serve
 from wraith.agent import AgentBrowser
 from wraith.engine import launch
 from wraith.uploads import UploadNotAllowedError
@@ -39,15 +38,7 @@ FORM = f"""<!doctype html><title>Form</title><body>{PAD}
 SECOND = f"<!doctype html><title>Second</title><body><h1>Second</h1>{PAD}</body>"
 
 
-class _Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.end_headers()
-        self.wfile.write((SECOND if self.path == "/second" else FORM).encode())
-
-    def log_message(self, *args):
-        pass
+_Handler = html_pages({"/second": SECOND}, FORM)
 
 
 @pytest.fixture(scope="module")

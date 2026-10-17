@@ -89,6 +89,7 @@ app = _MCPServer(
         "`scroll()` to reveal more, `read()` for the page as markdown (in pages; "
         "follow its `read(start=...)` hint), and `screenshot()` to capture an image. "
         "`press_key(key)` sends Escape, Tab, arrow keys or Enter; "
+        "`drag(dx, index=... or x=..., y=...)` drags a slider knob along a human path; "
         "`select_option(index, option)` picks from a <select>; "
         "`upload_file(index, paths)` uploads local files from the folders the "
         "server allows; `go_back()` / `go_forward()` move through history; "
@@ -453,6 +454,26 @@ async def fill_vault_item(
             field_kind=field_kind,
             provider=provider,
         )
+    )
+
+
+@app.tool()
+async def drag(
+    dx: float,
+    dy: float = 0.0,
+    index: Optional[int] = None,
+    x: Optional[float] = None,
+    y: Optional[float] = None,
+    include_snapshot: bool = True,
+) -> str:
+    """Press on element ``index`` or page point (``x``, ``y``), move by
+    (``dx``, ``dy``) CSS pixels along a human path, and release.
+
+    Use it for slider challenges ("slide to verify", puzzle sliders) and range
+    controls. Aim the knob with `screenshot()` (its pixels are CSS pixels).
+    For a puzzle slider, ``dx`` is the distance from the piece to the gap."""
+    return await _step(
+        lambda b: b.drag(dx, dy, index=index, x=x, y=y), include_snapshot
     )
 
 

@@ -9,6 +9,7 @@ ack duplication 3b76f4dd73f4c291 19 MCP tool wrappers: one decorated function pe
 ack duplication 41169da95508164d 20 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
 ack duplication 46e8d784fd93eb45 142 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication 4c1597d4b0bf64d1 21 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
+ack duplication 53601770da82b633 20 new public API: drag; version bump; small test fakes
 ack duplication 63742955719f7295 21 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication 731f5f68ce0f2a80 23 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication 7a15e5e2f5e86aec 28 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
@@ -46,7 +47,7 @@ ack short-horizon-churn 0c06a44bade35510 3 cid=580fdd8f2c736d68 stacked fix: sna
 ack short-horizon-churn 164f45c988f31c6e 6 cid=97a537775c266e44 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 18fefd6e79b16448 6 cid=a975ea22642ede45 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 1add6568edcf07cb 5 cid=f4283b559c3c96cb race fixes: navigation wait after the action; test fakes for request/commit events; version bump
-ack short-horizon-churn 1ced20c4bd86493f 10 cid=cab1cac8e0f4f2ae follow-up fix: select_option types the label for trusted events; version bump | prior: stacked release: version bump, MCP instructions and paged-read helper per PR
+ack short-horizon-churn 1ced20c4bd86493f 12 cid=78ab1bfb1af46f02 new public API: drag; version bump; small test fakes | prior: follow-up fix: select_option types the label for trusted events; version bump
 ack short-horizon-churn 20e879d1c56f02ca 3 cid=43eed133900556f2 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 2914b9057f29d5a5 2 cid=59a83e36c094e5de stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 366c1ca61e6eff5a 4 cid=f67d1ba932d69c0d stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
@@ -60,7 +61,7 @@ ack short-horizon-churn 5baa1f10addb7ad8 9 cid=792538c008f2d65e stacked release:
 ack short-horizon-churn 5cc5bb06e26efb73 11 cid=b7b949048955c46b race fixes: navigation wait after the action; test fakes for request/commit events; version bump | prior: stacked feature work on agent actions (allowlist checks)
 ack short-horizon-churn 629ef977fc849573 3 cid=c89bf676baadfe09 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 6572f30e9932a654 4 cid=37c0b0fd22026597 stacked on #19: frame-aware focus/clear follow-up
-ack short-horizon-churn 66237ee2e6eeadce 15 cid=d10c43d7b7bbab1d race fixes: navigation wait after the action; test fakes for request/commit events; version bump | prior: stacked release: one version bump per PR
+ack short-horizon-churn 66237ee2e6eeadce 16 cid=7193a1f828d37d55 new public API: drag; version bump; small test fakes | prior: race fixes: navigation wait after the action; test fakes for request/commit events; version bump
 ack short-horizon-churn 663387691dbed52d 4 cid=18d774624128b83d stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 6bc9443f2681c693 4 cid=432f893720cdd97e stacked fix: snapshot index map in the isolated world; fakes answer the index lookup | prior: stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 6d60945c999d0cdd 9 cid=3fd91e226a083c5c stacked release: version bump, MCP instructions and paged-read helper per PR
@@ -72,7 +73,7 @@ ack short-horizon-churn 8041d2adab8608ec 3 cid=27b37c4439d0c8f4 stacked fix: cli
 ack short-horizon-churn 8145fd4be9c160bd 2 cid=658b1d6470295591 follow-up fix: no_viewport for Chromium contexts; version bump; headed case in live fingerprint test
 ack short-horizon-churn 85ac0208c1882f83 4 cid=511597afe97317a6 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 89e53f399b4b5922 4 cid=81d22f0570649198 stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
-ack short-horizon-churn 8c57d66d83c05660 14 cid=eec9888c2d430c05 race fixes: navigation wait after the action; test fakes for request/commit events; version bump | prior: stacked release: one version bump per PR
+ack short-horizon-churn 8c57d66d83c05660 15 cid=576ec21cb3c34f2d new public API: drag; version bump; small test fakes | prior: race fixes: navigation wait after the action; test fakes for request/commit events; version bump
 ack short-horizon-churn 8c58adf72c0ea5d0 10 cid=f780a3a8c3badecb follow-up fix: select_option types the label for trusted events; version bump
 ack short-horizon-churn 8e0b617291abd8cf 3 cid=208a24687c043a9a stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 914f2c0ebfa44719 5 cid=c2c930fcc6cb1b03 race fixes: navigation wait after the action; test fakes for request/commit events; version bump
@@ -102,7 +103,7 @@ ack short-horizon-churn d6087158ce599c0e 4 cid=7bfbabc18314d1a1 follow-up fix: n
 ack short-horizon-churn dc4c1f8353e2d72f 3 cid=3cdc35456ae5b358 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn dc7134ce127b0e73 3 cid=9e19973dbb47c6a0 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn e0d9039ea52f8402 3 cid=345c80d8ac65c9f0 stacked fix: click and key hold times reach the input helpers and their test stubs
-ack short-horizon-churn e1bb6e557f3a1051 5 cid=dd8486a69bff80ef stacked release: version bump, MCP instructions and paged-read helper per PR | prior: stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
+ack short-horizon-churn e1bb6e557f3a1051 6 cid=94c6dd0352c3822f new public API: drag; version bump; small test fakes | prior: stacked release: version bump, MCP instructions and paged-read helper per PR
 ack short-horizon-churn e29bc3595e28cb82 3 cid=a21e8b9598964f3e stacked release: one version bump per PR | prior: stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
 ack short-horizon-churn e4499165b4732665 5 cid=abd65f9c90e0cfe4 race fixes: navigation wait after the action; test fakes for request/commit events; version bump
 ack short-horizon-churn e47cc055b4877a74 5 cid=f34168a8f7171e72 stacked feature work on agent actions (allowlist checks) | prior: stacked on #19: frame-aware focus/clear follow-up
@@ -113,10 +114,11 @@ ack short-horizon-churn f3fa5384a571a9ce 10 cid=a88d464db3ac1b97 follow-up fix: 
 ack short-horizon-churn f70f408550186b38 2 cid=c27649b619ec4b37 stacked release: one version bump per PR
 ack short-horizon-churn f8c91622872119f6 2 cid=f34afb87b0c1afe1 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn f96b4ae6c2e1ed3d 3 cid=bae96e4c1aa95ef5 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
-ack verbosity 1ced20c4bd86493f 1386 cid=cab1cac8e0f4f2ae select_option type-ahead helper (_type_ahead) in AgentBrowser | prior: new public API: network, network_response; shared secret-fill guard
+ack verbosity 1ced20c4bd86493f 1431 cid=78ab1bfb1af46f02 new public API: drag; version bump; small test fakes | prior: select_option type-ahead helper (_type_ahead) in AgentBrowser
 ack verbosity 3e588b25ed647845 111 cid=16114520dd9efb26 CLI parser grows one block per subcommand (benchmark run/compare); weekly workflow config
-ack verbosity 719e8441be665024 88 cid=846d289de0b3b27b new public API: network, network_response; shared secret-fill guard | prior: new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs
+ack verbosity 719e8441be665024 92 cid=6d6d8e89a3d99229 new public API: drag; version bump; small test fakes | prior: new public API: network, network_response; shared secret-fill guard
 ack verbosity a3aec02e7a971455 80 cid=055961c07c04785a new public API: network, network_response; shared secret-fill guard
 ack verbosity af13e8dd18fb29c3 61 cid=4a37d089ce5be27d CLI parser grows one block per subcommand (benchmark run/compare); weekly workflow config
 ack verbosity e29bc3595e28cb82 395 cid=a21e8b9598964f3e CLI parser grows one block per subcommand (benchmark run/compare); weekly workflow config | prior: new public API: press_key, select_option, upload_file, go_back/go_forward, wait_for, upload_dirs
+ack verbosity e63a75f6c8eb6904 62 cid=69b11f578dfb4e0a new public API: drag; version bump; small test fakes
 ack verbosity f3fa5384a571a9ce 81 cid=a88d464db3ac1b97 select_option type-ahead helper (_type_ahead) in AgentBrowser | prior: new public API: network, network_response; shared secret-fill guard

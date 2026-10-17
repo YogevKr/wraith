@@ -6,6 +6,23 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-17
+
+### Added
+
+- `drag(dx, dy=0, index=… | x=…, y=…)` (`AgentBrowser` and MCP): press on a
+  knob, move it along a human path, release. The path eases out, wobbles a
+  little, has uneven event timing, overshoots long drags by 2–6% and settles,
+  and the button is held before the move. `wraith.behavior.drag_path` and
+  `human_drag`. With the distance read from `screenshot()`, it passed GeeTest
+  v3 and v4 slide puzzles and Lemin's puzzle on their public demo pages.
+
+### Changed
+
+- The macOS live CI job stops after 25 minutes, prints each test name, and
+  dumps the stack of a test that runs over 4 minutes. A hung run held a
+  runner for over 35 minutes with no output.
+
 ## [0.12.5] - 2026-10-17
 
 ### Fixed

@@ -75,8 +75,11 @@ is needed at all: a real Firefox engine clears the challenge natively, and
 - **No-browser TLS fast path** — `wraith.fastpath` (curl_cffi) replays a
   borrowed/harvested session with a real-browser TLS+HTTP/2 fingerprint and **no
   browser**: do the expensive challenge-clear/login once in Camoufox, then drive
-  authenticated requests cheaply. `wraith fetch` / MCP `fetch`.
-  *(`pip install 'wraith[fastpath]'`.)*
+  authenticated requests cheaply. `wraith fetch` / MCP `fetch`. A session from
+  Wraith's pinned Camoufox replays with that build's own TLS hello (same JA4,
+  HTTP/2 fingerprint, and key shares), so the server sees one client. Chromium
+  sessions replay with curl_cffi's Chrome preset, which lacks one extension
+  that Chrome 155 sends. *(`pip install 'wraith[fastpath]'`.)*
 - **Live session harvesting** — latch the first request carrying both an
   `Authorization` header and a named auth cookie, for tokens never stored on
   disk. Export a portable Playwright `storageState` from any cleared session,

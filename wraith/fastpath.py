@@ -20,9 +20,11 @@ etc. (a Chrome-TLS request carrying a Firefox UA is itself a tell).
 """
 from __future__ import annotations
 
+import warnings
 from typing import Any, Optional
 
 from . import detect, identity
+from .engine import _CAMOUFOX_BROWSER_VERSION
 
 __all__ = [
     "FastPathUnavailableError",
@@ -40,6 +42,43 @@ _FIREFOX = "firefox147"
 _CHROME = "chrome146"
 _SAFARI = "safari18_0"
 _DEFAULT_IMPERSONATE = _FIREFOX
+
+# Sessions from Wraith's pinned Camoufox build replay with that build's own TLS
+# hello (read from tls.peet.ws). The firefox147 preset sends one cipher more
+# (c00a); with this JA3 and these extras on top of it, the JA3, JA4,
+# peetprint, HTTP/2 fingerprint, and key shares are the same as Camoufox's.
+# The weekly stealth benchmark checks it (replay.matchesBrowser).
+_CAMOUFOX = "camoufox" + _CAMOUFOX_BROWSER_VERSION.split(".")[0]
+_CAMOUFOX_UA_TOKEN = "firefox/" + _CAMOUFOX_BROWSER_VERSION.split(".")[0] + ".0"
+_CAMOUFOX_JA3 = (
+    "771,4865-4867-4866-49195-49199-52393-52392-49196-49200-49162"
+    "-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-34-18-51"
+    "-43-13-45-28-27-65037,4588-29-23-24-25-256-257,0"
+)
+_CAMOUFOX_EXTRA_FP = {
+    "tls_signature_algorithms": [
+        "ecdsa_secp256r1_sha256",
+        "ecdsa_secp384r1_sha384",
+        "ecdsa_secp521r1_sha512",
+        "rsa_pss_rsae_sha256",
+        "rsa_pss_rsae_sha384",
+        "rsa_pss_rsae_sha512",
+        "rsa_pkcs1_sha256",
+        "rsa_pkcs1_sha384",
+        "rsa_pkcs1_sha512",
+        "ecdsa_sha1",
+        "rsa_pkcs1_sha1",
+    ],
+    "tls_grease": False,
+    "tls_permute_extensions": False,
+    # curl-impersonate takes a list; curl_cffi's type hint names one value.
+    "tls_cert_compression": "zlib,brotli,zstd",
+    "tls_delegated_credential": (
+        "ecdsa_secp256r1_sha256:ecdsa_secp384r1_sha384:ecdsa_secp521r1_sha512:ecdsa_sha1"
+    ),
+    "tls_record_size_limit": 16385,
+    "http2_no_priority": True,
+}
 
 
 class FastPathUnavailableError(RuntimeError):
@@ -59,11 +98,14 @@ def _require_curl() -> Any:
 def ua_to_impersonate(user_agent: Optional[str]) -> str:
     """Pick a curl_cffi impersonation preset coherent with a User-Agent string.
 
-    Firefox/Camoufox -> Firefox preset (the default), Chrome/Chromium/Edge ->
-    Chrome, Safari (non-Chromium) -> Safari. An unknown/empty UA defaults to
-    Firefox so the TLS fingerprint matches Wraith's Camoufox-first identity.
+    Wraith's pinned Camoufox (its Firefox version) -> that build's own TLS
+    hello; other Firefox -> Firefox preset (the default); Chrome/Chromium/Edge
+    -> Chrome; Safari (non-Chromium) -> Safari. An unknown/empty UA defaults
+    to the Firefox preset, a real Firefox identity with its own UA.
     """
     ua = (user_agent or "").lower()
+    if _CAMOUFOX_UA_TOKEN in ua:
+        return _CAMOUFOX
     if "firefox" in ua or "gecko/" in ua and "like gecko" not in ua:
         return _FIREFOX
     if "edg/" in ua or "chrome" in ua or "chromium" in ua:
@@ -152,18 +194,36 @@ def fetch(
 
     imp = impersonate or ua_to_impersonate(ua)
     jar = _coerce_cookies(cookies)
+    tls = _tls_options(imp)
+    tls.update(kwargs)  # an explicit ja3 / akamai / extra_fp wins
 
-    return cc.request(
-        method.upper(),
-        url,
-        headers=hdrs or None,
-        cookies=jar,
-        impersonate=imp,
-        proxies=_proxies(proxy),
-        timeout=timeout,
-        allow_redirects=allow_redirects,
-        **kwargs,
-    )
+    with warnings.catch_warnings():
+        # curl_cffi warns that a custom JA3 with certificate compression
+        # defaults to brotli; _CAMOUFOX_EXTRA_FP names the methods.
+        warnings.filterwarnings("ignore", message="Cert compression setting")
+        return cc.request(
+            method.upper(),
+            url,
+            headers=hdrs or None,
+            cookies=jar,
+            proxies=_proxies(proxy),
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            **tls,
+        )
+
+
+def _tls_options(preset: str) -> dict:
+    """curl_cffi keyword arguments for ``preset`` (a curl_cffi or Wraith name)."""
+    if preset != _CAMOUFOX:
+        return {"impersonate": preset}
+    from curl_cffi.requests import ExtraFingerprints  # type: ignore
+
+    return {
+        "impersonate": _FIREFOX,
+        "ja3": _CAMOUFOX_JA3,
+        "extra_fp": ExtraFingerprints(**_CAMOUFOX_EXTRA_FP),
+    }
 
 
 def replay(session: Any, url: str, **kwargs: Any) -> Any:

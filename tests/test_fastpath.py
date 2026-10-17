@@ -116,6 +116,34 @@ def test_fetch_assembles_session_headers_and_impersonate(monkeypatch):
     assert captured["proxies"] == {"http": "http://u:p@gw:1", "https": "http://u:p@gw:1"}
 
 
+CAMOUFOX_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0"
+)
+
+
+def test_camoufox_sessions_replay_with_camoufox_tls(monkeypatch):
+    from wraith import fastpath
+
+    captured: dict = {}
+    import curl_cffi.requests as ccr
+
+    class FakeResp:
+        status_code = 200
+
+    monkeypatch.setattr(ccr, "request", lambda m, u, **kw: (captured.update(kw) or FakeResp()))
+    assert fastpath.ua_to_impersonate(CAMOUFOX_UA) == "camoufox152"
+    assert fastpath.ua_to_impersonate(CAMOUFOX_UA.replace("152", "147")) == "firefox147"
+
+    fastpath.fetch("https://t.example", headers={"User-Agent": CAMOUFOX_UA})
+    assert captured["impersonate"] == "firefox147"
+    assert captured["ja3"].split(",")[1].count("-") == 15  # 16 ciphers
+    assert captured["extra_fp"].tls_cert_compression == "zlib,brotli,zstd"
+
+    captured.clear()
+    fastpath.fetch("https://t.example", headers={"User-Agent": CAMOUFOX_UA}, ja3="771,1,0,29,0")
+    assert captured["ja3"] == "771,1,0,29,0"  # an explicit ja3 wins
+
+
 def test_fetch_explicit_impersonate_overrides(monkeypatch):
     from wraith import fastpath
 

@@ -146,13 +146,43 @@ def test_run_collects_each_part_and_notes_errors(monkeypatch):
 
     monkeypatch.setattr(detect, "network_fingerprint", unreachable)
     monkeypatch.setattr(benchmark, "_fast_path_checks", lambda detect: None)
+    replays = []
+    monkeypatch.setattr(
+        benchmark, "_replay_checks", lambda detect, net: replays.append(net)
+    )
 
     record = benchmark.run("camoufox", runner="mac-camoufox-headless")
+    assert replays == [None]  # no browser fingerprint to compare with
 
     assert record["checks"] == {"bot.viewport": "pass"}
     assert record["details"]["net_error"] == "TimeoutError: tls.peet.ws did not load"
     assert record["details"]["user_agent"] == FIREFOX_UA
     assert benchmark.runner_name("chromium", False).endswith("-chromium-headed")
+
+
+@pytest.mark.parametrize(
+    "ja4, expected", [("t13d1617h2_a_b", "pass"), ("t13d1717h2_c_b", "fail")]
+)
+def test_replay_check_compares_with_the_browser(monkeypatch, ja4, expected):
+    sent = {}
+
+    class _Response:
+        def json(self):
+            return _peet(FIREFOX_UA, FIREFOX_H2, ja4=ja4)
+
+    def fake_fetch(url, headers=None):
+        sent.update(headers)
+        return _Response()
+
+    monkeypatch.setattr("wraith.fastpath.fetch", fake_fetch)
+    browser = {"user_agent": FIREFOX_UA, "ja4": "t13d1617h2_a_b", "akamai": FIREFOX_H2}
+    result = benchmark._replay_checks(detect, browser)
+
+    assert result["checks"] == {"matchesBrowser": expected}
+    assert sent == {"User-Agent": FIREFOX_UA}
+    assert (
+        benchmark._replay_checks(detect, None) is None
+    )  # the browser was not measured
 
 
 def test_cli_run_and_compare(monkeypatch, tmp_path, capsys):

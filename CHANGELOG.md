@@ -6,6 +6,24 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-10-17
+
+### Fixed
+
+- The fast path replays a session from Wraith's pinned Camoufox (User-Agent
+  `Firefox/152.0`) with Camoufox's own TLS hello. It used curl_cffi's
+  `firefox147` preset: one more cipher (`c00a`), so a server saw a different
+  client than the one that earned the cookies. Now the JA3, JA4, peetprint,
+  HTTP/2 fingerprint, and key shares match. An explicit `ja3`, `akamai`, or
+  `extra_fp` still wins.
+
+### Added
+
+- Benchmark check `replay.matchesBrowser`: the fast path, replaying with the
+  browser's User-Agent, sends the browser's JA4 and HTTP/2 fingerprint. It
+  passes for Camoufox. It fails for Chromium: Chrome 155 sends an extension
+  (51764) that curl_cffi 0.15 cannot send.
+
 ## [0.12.2] - 2026-10-17
 
 ### Fixed

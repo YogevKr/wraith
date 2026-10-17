@@ -7,7 +7,10 @@ A *runner* is one OS + engine + mode, such as ``macos-camoufox-headless``.
 * ``net.*`` — the browser's TLS and HTTP/2 fingerprint against the browser
   its User-Agent claims (:func:`wraith.detect.network_fingerprint`),
 * ``fastpath.*`` — the same for the no-browser fast path, when ``curl_cffi``
-  is installed.
+  is installed,
+* ``replay.matchesBrowser`` — whether the fast path, replaying a session with
+  this browser's User-Agent, sends the browser's own JA4 and HTTP/2
+  fingerprint.
 
 Each check is ``pass``, ``warn``, ``fail``, or ``unknown`` (the page could not
 be read, so nothing was measured). :func:`regressions` lists checks that
@@ -64,6 +67,8 @@ def run(engine: str, *, headless: bool = True, runner: Optional[str] = None) -> 
         _collect(record, "bot", lambda: _bot_checks(detect.selftest(session.page)))
         _collect(record, "net", lambda: detect.network_fingerprint(session.page))
     _collect(record, "fastpath", lambda: _fast_path_checks(detect))
+    browser = record["details"].get("net")
+    _collect(record, "replay", lambda: _replay_checks(detect, browser))
     return record
 
 
@@ -81,6 +86,27 @@ def _fast_path_checks(detect: Any) -> Optional[dict]:
     except fastpath.FastPathUnavailableError:
         return None
     return detect.network_checks(response.json())
+
+
+def _replay_checks(detect: Any, browser: Optional[dict]) -> Optional[dict]:
+    """Replay with the browser's User-Agent; compare the network fingerprints."""
+    if not browser or not browser.get("user_agent"):
+        return None
+    from . import fastpath
+
+    try:
+        response = fastpath.fetch(
+            detect.TLS_FINGERPRINT_URL, headers={"User-Agent": browser["user_agent"]}
+        )
+    except fastpath.FastPathUnavailableError:
+        return None
+    replay = detect.network_checks(response.json())
+    same = (replay["ja4"], replay["akamai"]) == (browser["ja4"], browser["akamai"])
+    return {
+        "checks": {"matchesBrowser": "pass" if same else "fail"},
+        "ja4": replay["ja4"],
+        "akamai": replay["akamai"],
+    }
 
 
 def _collect(record: dict, prefix: str, measure: Any) -> None:

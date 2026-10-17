@@ -126,7 +126,7 @@ week on GitHub runners, headless. Run of 2026-10-17:
 | TLS 1.3, HTTP/2 settings, and header order match the User-Agent | ✅ | ✅ | ✅ | ✅ |
 | Fast path replays with the browser's own TLS hello | ✅ | ✅ | ❌ ² | ❌ ² |
 
-¹ The Linux runner has no GPU, so WebGL uses SwiftShader.
+¹ The Linux runner has no GPU, so WebGL uses SwiftShader.<br>
 ² Chrome 155 sends TLS extension 51764. curl_cffi cannot send it.
 
 Interactive challenges on public demo pages, with the agent aiming from a
@@ -397,8 +397,8 @@ uv run wraith profile revoke <pairing-code>
 
 ```mermaid
 flowchart TB
-    mcp["mcp · wraith-mcp"] --> agent["agent · AgentBrowser"]
-    cli["cli · wraith"] --> agent
+    mcp["MCP server"] --> agent["agent<br/>AgentBrowser"]
+    cli["CLI"] --> agent
     agent --> snapshot["snapshot"]
     agent --> behavior["behavior"]
     agent --> engine["engine"]
@@ -407,7 +407,7 @@ flowchart TB
     engine --> proxy["proxy · providers"]
     identity["identity · chrome"] --> engine
     profile["profile · deaddrop"] --> identity
-    harvest["harvest"] --> fastpath["fastpath · curl_cffi"]
+    harvest["harvest"] --> fastpath["fastpath<br/>curl_cffi"]
 ```
 
 <details>

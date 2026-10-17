@@ -19,13 +19,14 @@ An LLM cannot reason over raw HTML (too big, too noisy) or over pixels alone
 
 1. **Perceive** — walk the live DOM, keep only the *interactive* elements
    (links, buttons, inputs, anything clickable/typeable/role-tagged), and give
-   each one a small **integer index**. Stamp that index onto the element in the
-   page itself (`data-wraith-index="<i>"`). Render the result as a compact,
+   each one a small **integer index**. Keep index → element in Wraith's
+   isolated JavaScript world, never in the page's DOM, so the page cannot see
+   which elements the agent indexed. Render the result as a compact,
    one-line-per-element text the model can read.
 2. **Act by index** — the model says "click 12" or "type 'BCN' into 4". Wraith
-   resolves the index back to the exact element via
-   `page.locator('[data-wraith-index="12"]')` and performs the action. No CSS
-   selectors, no XPath, no coordinates for the model to hallucinate.
+   resolves the index back to the exact element through that map and performs
+   the action. No CSS selectors, no XPath, no coordinates for the model to
+   hallucinate.
 3. **Re-perceive** — every action returns a *fresh* `Snapshot`. Indices are
    only valid for the snapshot that produced them; after any action (or scroll,
    or navigation) you get a new numbering. **Never reuse an index across
@@ -51,8 +52,10 @@ runs a self-contained `buildDomTree` walk inside the page (via
 plus anything with an interactive ARIA `role`
 (`button, link, checkbox, menuitem, tab, switch, radio, combobox, textbox`) —
 that are **visible** (and inside the viewport when `viewport_only=True`),
-assigns each a sequential integer index, **sets `data-wraith-index="<i>"`** on
-the node so it can be acted on later, and returns one `Element` per hit.
+assigns each a sequential integer index, keeps index → node in a `Map` on the
+isolated world's `window` so it can be acted on later, and returns one
+`Element` per hit. It writes nothing to the page's DOM: a page can watch for
+attribute changes with a `MutationObserver`.
 
 ### Data shapes
 
@@ -118,8 +121,8 @@ frame 2 @ (901,435) 523x156 https://challenges.cloudflare.com/…: no readable e
   window.
 
 > **Index lifetime:** an index identifies an element only within the snapshot
-> that minted it. The `data-wraith-index` attributes are overwritten on the
-> next `take_snapshot`. Always act on the latest snapshot.
+> that minted it. The next `take_snapshot` replaces the index map. Always act
+> on the latest snapshot.
 
 ---
 
@@ -179,7 +182,7 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | --- | --- | --- |
 | `navigate(url)` | `clear_challenge(url)` (pass any WAAP), auto-dismiss cookie/consent banners (clicks buttons matching `/accept\|agree\|got it\|מאשר\|אישור\|I understand/i`), wait for load, snapshot | `Snapshot` |
 | `snapshot(**kw)` | `take_snapshot(page, **kw)`, store as `.last_snapshot` | `Snapshot` |
-| `click(index)` | click `[data-wraith-index="index"]`; when the click starts a navigation (within 500 ms), wait for the commit; re-snapshot | `Snapshot` |
+| `click(index)` | click the indexed element; when the click starts a navigation (within 500 ms), wait for the commit; re-snapshot | `Snapshot` |
 | `type(index, text, *, clear=True, enter=False)` | refuse a non-text target before any click; click the field, then send keys to the focused control (they follow a field that replaces its node); verified clear; optional Enter waits the same way as `click`; re-snapshot | `Snapshot` |
 | `scroll(direction="down", amount=700)` | scroll, re-snapshot | `Snapshot` |
 | `read()` | readable markdown of the page (markdownify on `page.content()`, else `inner_text('body')`) | `str` |
@@ -229,7 +232,7 @@ Wraith keeps the *same* ergonomics and fixes exactly that layer:
 
 | Concern | browser-use (vanilla Playwright) | Wraith |
 | --- | --- | --- |
-| Perception | indexed DOM snapshot | same model (`Snapshot.to_text()`, `data-wraith-index`) |
+| Perception | indexed DOM snapshot | same model (`Snapshot.to_text()`, index map in the isolated world) |
 | Action | act by index | same (`click(i)`, `type(i, ...)`) |
 | Engine | Chromium (Chrome detection cluster runs) | **Camoufox/Firefox primary** — `isChrome()` branch is false, the whole Chrome cluster is skipped (`window.chrome`, `HeadlessChrome` UA, `$cdc_`/`__driver_` leaks) |
 | JS challenges | you hit the interstitial | `navigate()` runs **`clear_challenge`** — solves Reblaze `ac_v2` cookie-free, raises typed errors for IP-tier (`WaapRateLimitedError`) vs hard block (`WaapHardBlockError`) |

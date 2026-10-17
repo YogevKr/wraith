@@ -6,6 +6,24 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-17
+
+### Fixed
+
+- Snapshots no longer write `data-wraith-index` attributes into the page. A
+  page could find the elements an agent indexed, and the name Wraith, with
+  `document.querySelector('[data-wraith-index]')` or a `MutationObserver`.
+  Wraith now keeps index → element in a `Map` in its isolated JavaScript world,
+  which page scripts cannot read, and resolves indices through it.
+- Secret fills no longer mark the field with `data-wraith-secret`. Nothing read
+  the mark, and it told the page which field held a secret.
+- Snapshots no longer scan every element of the page to remove old marks.
+
+### Added
+
+- The live input check fails when Wraith adds an attribute to a page node, or
+  when the page can see a Wraith global.
+
 ## [0.9.1] - 2026-10-17
 
 ### Fixed

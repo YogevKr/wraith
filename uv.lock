@@ -2803,7 +2803,7 @@ wheels = [
 
 [[package]]
 name = "wraith"
-version = "0.9.1"
+version = "0.9.2"
 source = { editable = "." }
 dependencies = [
     { name = "camoufox", extra = ["geoip"] },

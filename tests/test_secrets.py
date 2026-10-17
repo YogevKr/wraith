@@ -21,6 +21,7 @@ from wraith.secrets import (
     unregister_secret_provider,
 )
 from wraith.snapshot import Element, Snapshot
+from tests._fakes import NodeHandle
 
 
 class _FakeLocator:
@@ -44,9 +45,6 @@ class _FakeLocator:
         self.filled = None
         self.secret_marked = False
 
-    def count(self):
-        return 1
-
     def element_handle(self):
         return self
 
@@ -67,8 +65,8 @@ class _FakePage:
         self.url = url
         self._locator = locator
 
-    def locator(self, _selector):
-        return self._locator
+    def evaluate_handle(self, _js, _index):
+        return NodeHandle(self._locator)
 
     def evaluate(self, *_args):
         return {"url": self.url, "n": 1, "h": 1}
@@ -145,7 +143,7 @@ def test_fill_secret_uses_provider_and_clears_material(monkeypatch):
     snapshot = browser.fill_secret(0, _capability())
 
     assert locator.filled == "synthetic-secret"
-    assert locator.secret_marked is True
+    assert locator.secret_marked is False  # the page must not learn which field holds a secret
     assert provider.material.cleared is True
     assert browser.secret_tainted is True
     assert snapshot.url == "https://login.example.com/sign-in"

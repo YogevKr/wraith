@@ -4,6 +4,7 @@ from __future__ import annotations
 import wraith.agent as ag
 from wraith.agent import AgentBrowser
 from wraith.snapshot import Element, Snapshot
+from tests._fakes import NodeHandle
 
 
 # --- snapshot.Element / Snapshot ------------------------------------------- #
@@ -81,20 +82,13 @@ def test_snapshot_marks_new_elements(monkeypatch):
 
 
 def test_locator_self_heals_by_signature(monkeypatch):
-    class FakeLoc:
-        def __init__(self, n):
-            self._n = n
-
-        def count(self):
-            return self._n
-
     class FakePage2:
         def __init__(self):
             self.requested = []
 
-        def locator(self, sel):
-            self.requested.append(sel)
-            return FakeLoc(0 if 'index="7"' in sel else 1)  # 7 is stale, others resolve
+        def evaluate_handle(self, js, index):
+            self.requested.append(index)
+            return NodeHandle(None if index == 7 else object())  # 7 is stale
 
         def evaluate(self, *a, **k):
             return {}
@@ -105,4 +99,4 @@ def test_locator_self_heals_by_signature(monkeypatch):
     fresh = Snapshot("u", "t", [Element(2, "button", "button", "Go", {"id": "go"})])
     monkeypatch.setattr(ag, "take_snapshot", lambda page, **kw: fresh)
     a._locator(7)
-    assert 'index="2"' in page.requested[-1]  # healed to the re-resolved index
+    assert page.requested[-1] == 2  # healed to the re-resolved index

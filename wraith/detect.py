@@ -41,12 +41,13 @@ bot-detector results are both JS-rendered).
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Mapping, Union
+from typing import Any, Mapping, Optional, Union
 
 import httpx
 
@@ -70,11 +71,16 @@ __all__ = [
     "classify_response",
     "is_blocked",
     "selftest",
+    "TLS_FINGERPRINT_URL",
+    "browser_family",
+    "network_checks",
+    "network_fingerprint",
 ]
 
 # Public test endpoints used by the JS-rendered probes.
 RECAPTCHA_V3_TEST_URL = "https://cleantalk.org/recaptcha-v3-score-test"
 BOT_DETECTOR_URL = "https://bot-detector.rebrowser.net/"
+TLS_FINGERPRINT_URL = "https://tls.peet.ws/api/all"
 
 # How fresh the reCAPTCHA result line's timestamp must be (seconds) for us to
 # trust it as belonging to *this* run rather than a cached "Last Score".
@@ -790,6 +796,80 @@ def selftest(page: Any) -> dict:
         "blocking_unknown": blocking_unknown,
         "passed": not critical and not blocking_unknown,
     }
+
+
+# ---------------------------------------------------------------------------
+# Network fingerprint (TLS + HTTP/2)
+# ---------------------------------------------------------------------------
+
+# tls.peet.ws's "akamai" HTTP/2 fingerprint: SETTINGS | WINDOW_UPDATE |
+# PRIORITY | pseudo-header order. Each browser family sends its own; the
+# pseudo-header order has been stable for years, the SETTINGS less so.
+_H2_FINGERPRINTS = {
+    "chrome": "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p",
+    "firefox": "1:65536;2:0;4:131072;5:16384|12517377|0|m,p,a,s",
+}
+_H2_HEADER_ORDER = {"chrome": "m,a,s,p", "firefox": "m,p,a,s", "safari": "m,s,p,a"}
+
+
+def browser_family(user_agent: Optional[str]) -> Optional[str]:
+    """``chrome`` / ``firefox`` / ``safari`` from a User-Agent, else ``None``."""
+    ua = user_agent or ""
+    if "Firefox/" in ua:
+        return "firefox"
+    if "Chrome/" in ua:
+        return "chrome"
+    if "Safari/" in ua:
+        return "safari"
+    return None
+
+
+def network_checks(data: Mapping[str, Any]) -> dict:
+    """Check a tls.peet.ws ``/api/all`` response against the claimed browser.
+
+    A server sees the TLS hello and the HTTP/2 frames before any page script
+    runs. They must match the browser the User-Agent claims.
+
+    :returns: ``{checks: {name: pass|fail|warn|unknown}, family, ja4, akamai,
+        user_agent}``.
+    """
+    ua = str(data.get("user_agent") or "")
+    ja4 = str((data.get("tls") or {}).get("ja4") or "")
+    akamai = str((data.get("http2") or {}).get("akamai_fingerprint") or "")
+    family = browser_family(ua)
+
+    def verdict(ok: bool) -> str:
+        return "pass" if ok else "fail"
+
+    order = akamai.rsplit("|", 1)[-1]
+    expected_order = _H2_HEADER_ORDER.get(family or "")
+    expected_h2 = _H2_FINGERPRINTS.get(family or "")
+    checks = {
+        "http2": verdict(data.get("http_version") == "h2"),
+        "tls13": verdict(ja4.startswith("t13")),
+        "headerUserAgent": verdict(bool(ua) and "HeadlessChrome" not in ua),
+        "h2HeaderOrder": (
+            verdict(order == expected_order) if akamai and expected_order else "unknown"
+        ),
+        "h2Settings": (
+            ("pass" if akamai == expected_h2 else "warn")
+            if akamai and expected_h2
+            else "unknown"
+        ),
+    }
+    return {
+        "checks": checks,
+        "family": family,
+        "ja4": ja4,
+        "akamai": akamai,
+        "user_agent": ua,
+    }
+
+
+def network_fingerprint(page: Any) -> dict:
+    """Open :data:`TLS_FINGERPRINT_URL` in ``page`` and run :func:`network_checks`."""
+    page.goto(TLS_FINGERPRINT_URL, wait_until="domcontentloaded", timeout=30000)
+    return network_checks(json.loads(page.inner_text("body")))
 
 
 # ---------------------------------------------------------------------------

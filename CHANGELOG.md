@@ -6,6 +6,24 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-17
+
+### Added
+
+- `wraith benchmark run`: one JSON record per engine with the bot-detector
+  checks, the browser's TLS and HTTP/2 checks, and the same network checks for
+  the no-browser fast path. `wraith benchmark compare` lists checks that passed
+  in the previous run and now warn or fail, and JA4 or HTTP/2 fingerprints that
+  changed.
+- `wraith.detect.network_fingerprint(page)` and `network_checks(data)`: TLS
+  1.3, HTTP/2, no `HeadlessChrome` in the header, and an HTTP/2 fingerprint
+  (pseudo-header order and SETTINGS) that matches the browser family the
+  User-Agent claims.
+- Weekly workflow `stealth benchmark` on macOS and Linux for Camoufox and
+  Chromium. It compares with the previous successful run on `main` and opens or
+  updates a `stealth-regression` issue. Unmeasured (`unknown`) checks never
+  open one.
+
 ## [0.10.0] - 2026-10-17
 
 ### Added

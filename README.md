@@ -93,6 +93,11 @@ is needed at all: a real Firefox engine clears the challenge natively, and
   `clear_challenge` fails fast on a hard block instead of burning the timeout.
 - **Stealth self-test** — `wraith selftest` runs the rebrowser leak suite and
   exits non-zero on a critical automation leak (CI/regression gate).
+- **Weekly stealth benchmark** — `wraith benchmark run` adds TLS and HTTP/2
+  checks (does the fingerprint match the browser the User-Agent claims?) for
+  the browser and the no-browser fast path. A weekly workflow runs it on macOS
+  and Linux for both engines and opens a `stealth-regression` issue when a
+  check that passed gets worse.
 - **Agent perception layer** — browser-use-style indexed DOM snapshots with
   **change-observation** (what each action did), **new-element marking**, and
   **signature self-heal** for stale indices; act by index (`click`, `type`,
@@ -385,6 +390,10 @@ uv run wraith fetch https://api.example.com/me --session example.session.json --
 uv run wraith selftest
 uv run wraith selftest --json
 
+# benchmark — leak suite + TLS/HTTP-2 checks as one JSON record; compare two runs
+uv run wraith benchmark run --engine chromium --out results/chromium.json
+uv run wraith benchmark compare results --previous last-week --summary summary.md
+
 # score   — read this identity's reCAPTCHA-v3 reputation (fresh -> ~0.1-0.3)
 uv run wraith score
 uv run wraith score --engine chromium --json
@@ -584,6 +593,11 @@ uv run pytest -q
 The suite runs fully offline (no browser binaries, no network): it asserts the
 package imports cleanly, the public API symbols exist, and the detection /
 identity / proxy logic behaves against synthetic inputs.
+
+`WRAITH_LIVE_TEST=1 uv run pytest tests/test_live_*.py` launches real browsers
+against pages on 127.0.0.1 only; the macOS CI job runs them on each push. The
+weekly `stealth benchmark` workflow uses public detector pages
+(`bot-detector.rebrowser.net`, `tls.peet.ws`).
 
 ## Contributing
 

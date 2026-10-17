@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Optional, Sequence
 
 from . import __version__
@@ -330,6 +331,47 @@ def cmd_detect(args: argparse.Namespace) -> int:
         print(f"{args.url}: no known WAAP signatures detected")
     else:
         print(f"{args.url}: detected -> {', '.join(map(str, waaps))}")
+    return 0
+
+
+def cmd_benchmark_run(args: argparse.Namespace) -> int:
+    """Run the stealth benchmark for one engine and write its JSON record."""
+    benchmark = _lazy("benchmark")
+    print(
+        f"wraith: benchmarking {args.engine} (this opens a browser)...", file=sys.stderr
+    )
+    record = benchmark.run(args.engine, headless=not args.headed, runner=args.runner)
+    text = json.dumps(record, indent=2, default=str)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(text + "\n")
+    print(text)
+    return 0
+
+
+def cmd_benchmark_compare(args: argparse.Namespace) -> int:
+    """Compare benchmark records with the previous run's and report regressions."""
+    benchmark = _lazy("benchmark")
+    current = benchmark.load_records(args.current)
+    previous = benchmark.load_records(args.previous) if args.previous else []
+    found = benchmark.regressions(previous, current)
+    report = "## Stealth benchmark\n\n" + benchmark.render(current) + "\n"
+    report += (
+        "\n### Regressions\n\n"
+        + ("\n".join(f"- {line}" for line in found) if found else "None.")
+        + "\n"
+    )
+    changes = benchmark.fingerprint_changes(previous, current)
+    if changes:
+        report += "\n### Fingerprint changes\n\n"
+        report += "\n".join(f"- {line}" for line in changes) + "\n"
+    if not previous:
+        report += "\nNo previous run to compare with.\n"
+    if args.summary:
+        Path(args.summary).write_text(report)
+    if args.issue and found:
+        Path(args.issue).write_text(report)
+    print(report)
     return 0
 
 
@@ -1074,6 +1116,45 @@ def build_parser() -> argparse.ArgumentParser:
     _add_engine_flags(p_selftest)
     _add_proxy_flags(p_selftest)
     p_selftest.set_defaults(func=cmd_selftest)
+
+    # benchmark
+    p_bench = sub.add_parser(
+        "benchmark",
+        help="run the stealth benchmark and compare it with a previous run",
+        description="Collect bot-detector, TLS, and HTTP/2 checks for one engine "
+        "(run), or compare a folder of records with the previous run's (compare). "
+        "The weekly CI workflow uses both.",
+    )
+    bench_sub = p_bench.add_subparsers(dest="benchmark_command", metavar="<action>")
+    bench_sub.required = True
+    p_bench_run = bench_sub.add_parser("run", help="benchmark one engine")
+    p_bench_run.add_argument(
+        "--engine", choices=["camoufox", "chromium"], default="camoufox"
+    )
+    p_bench_run.add_argument("--headed", action="store_true", help="show the window")
+    p_bench_run.add_argument(
+        "--runner", default=None, help="record name (default: <os>-<engine>-<mode>)"
+    )
+    p_bench_run.add_argument(
+        "--out", default=None, help="also write the record to this file"
+    )
+    p_bench_run.set_defaults(func=cmd_benchmark_run)
+    p_bench_cmp = bench_sub.add_parser(
+        "compare", help="report regressions against a previous run"
+    )
+    p_bench_cmp.add_argument("current", help="folder with this run's records")
+    p_bench_cmp.add_argument(
+        "--previous", default=None, help="folder with the previous run's records"
+    )
+    p_bench_cmp.add_argument(
+        "--summary", default=None, help="write the markdown report here"
+    )
+    p_bench_cmp.add_argument(
+        "--issue",
+        default=None,
+        help="write the report here only when a check regressed",
+    )
+    p_bench_cmp.set_defaults(func=cmd_benchmark_compare)
 
     # mcp
     p_mcp = sub.add_parser(

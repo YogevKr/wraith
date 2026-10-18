@@ -62,7 +62,7 @@ def _lazy(module: str):
             f"wraith: the '{module}' component is not available "
             f"({type(exc).__name__}: {exc}).\n"
             f"       Install the full toolkit: `uv sync --extra fastpath` in a clone, or "
-            f"`pip install 'wraith[fastpath] @ git+https://github.com/YogevKr/wraith'`."
+            f"`pip install 'wraith-browser[fastpath]'`."
         )
 
 

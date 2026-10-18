@@ -1,12 +1,12 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-fancy-pypi-readme"]
 build-backend = "hatchling.build"
 
 [project]
-name = "wraith"
-version = "0.14.3"
+name = "wraith-browser"
+version = "0.15.0"
 description = "A stealth, identity-borrowing, MCP-native agent browser (Camoufox/Playwright)."
-readme = "README.md"
+dynamic = ["readme"]
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Yogev Kr" }]
@@ -69,3 +69,29 @@ wraith-mcp = "wraith.mcp:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["wraith"]
+
+# PyPI shows the README but cannot follow repo-relative links or load repo
+# images, so the PyPI copy points them at GitHub. The GitHub README is unchanged.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '<img src="(?!https?://)([^"]+)"'
+replacement = '<img src="https://raw.githubusercontent.com/YogevKr/wraith/main/\1"'
+
+# Only an <a> whose first attribute is href, so snapshot examples in code
+# blocks (<a role=link href=...>) stay as they are.
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '<a href="(?!https?://|#)([^"]+)"'
+replacement = '<a href="https://github.com/YogevKr/wraith/blob/main/\1"'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\((?!https?://|#|mailto:)([^)\s]+)\)'
+replacement = '](https://github.com/YogevKr/wraith/blob/main/\1)'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]'
+replacement = '> **\1**'

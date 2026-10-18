@@ -135,8 +135,8 @@ const HTML = `<!doctype html>
     <h2>Quick start</h2>
     <div class="two">
       <div>
-        <pre><span class="c"># install (from source)</span>
-uv add <span class="g">"wraith @ git+https://github.com/YogevKr/wraith"</span>
+        <pre><span class="c"># install from PyPI</span>
+uv add <span class="g">wraith-browser</span>
 <span class="c"># then fetch the stealth browser</span>
 uv run camoufox fetch</pre>
       </div>

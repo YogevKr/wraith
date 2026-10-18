@@ -20,7 +20,7 @@ import pytest
 def test_import_wraith():
     import wraith
 
-    assert wraith.__version__ == "0.14.3"
+    assert wraith.__version__ == "0.15.0"
     assert isinstance(wraith.__all__, list)
 
 
@@ -176,20 +176,31 @@ def wraith_identify(resp):
 
 
 def test_install_hints_name_real_extras():
-    # A hint like `pip install 'wraith[all]'` fails when the extra does not
-    # exist, and the name "wraith" on PyPI is another project.
+    # A hint like `pip install 'wraith-browser[all]'` fails when the extra does
+    # not exist. On PyPI the package is "wraith-browser": "wraith" is another
+    # project, and `wraith @ git+...` fails because the names differ.
     import re
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
     pyproject = (root / "pyproject.toml").read_text()
+    assert re.search(r'^name = "wraith-browser"$', pyproject, re.M)
     section = pyproject.split("[project.optional-dependencies]")[1].split("\n[")[0]
     extras = set(re.findall(r"^([a-z0-9_-]+)\s*=", section, re.M))
     assert "fastpath" in extras
-    for source in [root / "README.md", *sorted((root / "wraith").glob("*.py"))]:
+    bare = re.compile(
+        r"(?:pip install|uv add|uvx --from)\s+(?:<[^>]*>)?['\"]?wraith(?![-\w])"
+    )
+    sources = [
+        root / "README.md",
+        root / "site" / "worker.js",
+        *sorted((root / "wraith").glob("*.py")),
+    ]
+    for source in sources:
         text = source.read_text()
-        for named in re.findall(r"wraith\[([a-z0-9_,-]+)\]", text):
-            assert set(named.split(",")) <= extras, f"{source.name}: wraith[{named}]"
+        for named in re.findall(r"wraith-browser\[([a-z0-9_,-]+)\]", text):
+            assert set(named.split(",")) <= extras, (
+                f"{source.name}: wraith-browser[{named}]"
+            )
         for line in text.splitlines():
-            if re.search(r"pip install ['\"]?wraith\b", line):
-                assert "git+" in line, f"{source.name}: {line.strip()}"
+            assert not bare.search(line), f"{source.name}: {line.strip()}"

@@ -6,6 +6,28 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-18
+
+### Changed
+
+- Wraith is on PyPI as `wraith-browser`: `pip install "wraith-browser[fastpath]"`,
+  or `uvx --from wraith-browser wraith-mcp` for the MCP server. The import name
+  (`import wraith`) and the `wraith` and `wraith-mcp` commands do not change.
+  The `wraith` and `wraith-mcp` packages on PyPI are other projects.
+- A published GitHub release now uploads the build to PyPI through the new
+  `publish` workflow. It uses a PyPI trusted publisher, so no token is stored,
+  and it stops when the tag does not match the package version.
+- The PyPI page shows the README with its repo links and banner pointed at
+  GitHub, because PyPI cannot follow relative links.
+
+### Upgrade
+
+- A Git install that names the package must use the new name:
+  `pip install "wraith-browser[fastpath] @ git+https://github.com/YogevKr/wraith"`.
+  The old `wraith @ git+...` form fails, because the names differ. For a
+  `uv tool` install made under the old name, run `uv tool uninstall wraith`,
+  then `uv tool install wraith-browser`.
+
 ## [0.14.3] - 2026-10-18
 
 ### Fixed

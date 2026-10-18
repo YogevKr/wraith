@@ -157,13 +157,14 @@ uv run patchright install chromium               # optional: the Chromium engine
 Or with pip:
 
 ```bash
-pip install "wraith[fastpath] @ git+https://github.com/YogevKr/wraith"
+pip install "wraith-browser[fastpath]"
 camoufox fetch official/152.0.4-beta.30
 ```
 
 > [!NOTE]
-> The name `wraith` on PyPI belongs to a different project. Install from
-> GitHub as shown.
+> On PyPI, Wraith is `wraith-browser`. You still `import wraith` and run
+> `wraith` and `wraith-mcp`. The `wraith` and `wraith-mcp` packages on PyPI
+> are other projects.
 
 ### 2. Connect your MCP client
 
@@ -172,7 +173,7 @@ camoufox fetch official/152.0.4-beta.30
 claude mcp add wraith -- uv run --directory /path/to/wraith wraith-mcp
 
 # Claude Code, without a clone
-claude mcp add wraith -- uvx --from git+https://github.com/YogevKr/wraith wraith-mcp
+claude mcp add wraith -- uvx --from wraith-browser wraith-mcp
 ```
 
 For Claude Desktop and other clients, see

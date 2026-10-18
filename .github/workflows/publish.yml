@@ -1,0 +1,64 @@
+name: publish
+
+# Build the sdist and wheel, and publish them to PyPI as wraith-browser when a
+# GitHub release is published. PyPI trusts this workflow through a trusted
+# publisher (owner YogevKr, repo wraith, workflow publish.yml, environment
+# pypi), so no API token is stored. A pull request that changes the packaging
+# runs the build only.
+on:
+  release:
+    types: [published]
+  pull_request:
+    paths:
+      - ".github/workflows/publish.yml"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Check the tag matches the package version
+        if: github.event_name == 'release'
+        run: |
+          version="v$(uv version --short)"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match the package version $version" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: uv build
+
+      - name: Upload the distributions
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/wraith-browser/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.14.2

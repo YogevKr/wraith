@@ -6,6 +6,31 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-18
+
+### Added
+
+- `wraith call TOOL ...` runs any MCP tool from a shell, with the same
+  arguments: `wraith call navigate URL`, `wraith call click 3`,
+  `wraith call read --find invoice`. The calls share one browser in a
+  background session, so the page, its cookies, and the element indices carry
+  over from one command to the next. Before, an agent without MCP wrote a
+  script for each step, and each script started a new browser.
+- `wraith session start|stop|status` controls those sessions. The first
+  `wraith call` starts the session `default` with the MCP server's defaults.
+  `session start` takes `--engine`, `--headed`, the proxy flags,
+  `--allowed-domains`, and `--upload-dir`. A session stops after 30 minutes
+  with no call (`--idle-timeout`).
+- Only your user can connect to a session: its Unix socket is in
+  `~/.wraith/sessions` (mode 0700; `WRAITH_SESSION_DIR` changes it). The
+  launch options reach the session on stdin, so a proxy password does not
+  show in `ps`.
+
+### Fixed
+
+- A `wraith` command whose output goes to a closed pipe (`| head`) no longer
+  prints a `BrokenPipeError` traceback.
+
 ## [0.14.3] - 2026-10-18
 
 ### Fixed

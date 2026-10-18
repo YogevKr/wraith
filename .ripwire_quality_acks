@@ -26,6 +26,7 @@ ack duplication 9632340f0144d5ad 23 MCP tool wrappers: one decorated function pe
 ack duplication 96e5ef66efddd7f4 23 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication b25e5bcbe95b91ab 21 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication b2b80687f91c2e4e 23 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
+ack duplication b30fa74be3386102 47 argparse flag helpers: same add_argument shape, different flags (policy vs state export)
 ack duplication b53fe39138a02e26 21 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication bb77b1c5597208d3 26 MCP tool wrappers: one decorated function per tool, each body is one _step call; one-line CLI wiring tests
 ack duplication bb79b17697aece54 30 MCP tool wrapper idiom: async def -> await _run(lambda: _render(...))
@@ -75,7 +76,7 @@ ack short-horizon-churn 629ef977fc849573 3 cid=c89bf676baadfe09 stacked fix: cli
 ack short-horizon-churn 632aaab4efcd4687 4 cid=103e7da84e6ad3d1 click_frame aims in frame coordinates; version bump; test fake update
 ack short-horizon-churn 6572f30e9932a654 4 cid=37c0b0fd22026597 stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 65a07f4196ef06c9 3 cid=cebbdba602618616 snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
-ack short-horizon-churn 66237ee2e6eeadce 23 cid=b5cb22cc0d18b7e5 press-hold settle window; version bump | prior: click_frame aims in frame coordinates; version bump; test fake update
+ack short-horizon-churn 66237ee2e6eeadce 24 cid=fe2688d3e8cdf5d3 0.15.0 wraith call: version-bump churn and the new session/call subcommands in build_parser | prior: press-hold settle window; version bump
 ack short-horizon-churn 663387691dbed52d 4 cid=18d774624128b83d stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn 6909ddc7ad6aff71 2 cid=b91a23de4ee9a3ee snapshot shows control state and captcha tokens; agent reports changes and refuses bad upload targets
 ack short-horizon-churn 6bc9443f2681c693 4 cid=432f893720cdd97e stacked fix: snapshot index map in the isolated world; fakes answer the index lookup | prior: stacked fix: click and key hold times reach the input helpers and their test stubs
@@ -88,7 +89,7 @@ ack short-horizon-churn 8041d2adab8608ec 3 cid=27b37c4439d0c8f4 stacked fix: cli
 ack short-horizon-churn 8145fd4be9c160bd 2 cid=658b1d6470295591 follow-up fix: no_viewport for Chromium contexts; version bump; headed case in live fingerprint test
 ack short-horizon-churn 85ac0208c1882f83 4 cid=511597afe97317a6 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn 89e53f399b4b5922 4 cid=81d22f0570649198 stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
-ack short-horizon-churn 8c57d66d83c05660 23 cid=772cc461146057fd press-hold settle window; version bump | prior: click_frame aims in frame coordinates; version bump; test fake update
+ack short-horizon-churn 8c57d66d83c05660 24 cid=9502f1556f9e177b 0.15.0 wraith call: version-bump churn and the new session/call subcommands in build_parser | prior: press-hold settle window; version bump
 ack short-horizon-churn 8c58adf72c0ea5d0 10 cid=f780a3a8c3badecb follow-up fix: select_option types the label for trusted events; version bump
 ack short-horizon-churn 8e0b617291abd8cf 3 cid=208a24687c043a9a stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn 914f2c0ebfa44719 5 cid=c2c930fcc6cb1b03 race fixes: navigation wait after the action; test fakes for request/commit events; version bump
@@ -126,7 +127,7 @@ ack short-horizon-churn dc4c1f8353e2d72f 3 cid=3cdc35456ae5b358 stacked fix: cli
 ack short-horizon-churn dc7134ce127b0e73 3 cid=9e19973dbb47c6a0 stacked fix: snapshot index map in the isolated world; fakes answer the index lookup
 ack short-horizon-churn e0d9039ea52f8402 3 cid=345c80d8ac65c9f0 stacked fix: click and key hold times reach the input helpers and their test stubs
 ack short-horizon-churn e1bb6e557f3a1051 8 cid=256e4247bdf84e76 read main content and find; small test cases; version bump | prior: new public API: drag; version bump; small test fakes
-ack short-horizon-churn e29bc3595e28cb82 3 cid=a21e8b9598964f3e stacked release: one version bump per PR | prior: stacked feature work on MCP tools (shared _step helper, paged read, upload folders)
+ack short-horizon-churn e29bc3595e28cb82 5 cid=4a4e2f4c1b32023f 0.15.0 wraith call: version-bump churn and the new session/call subcommands in build_parser | prior: stacked release: one version bump per PR
 ack short-horizon-churn e4499165b4732665 5 cid=abd65f9c90e0cfe4 race fixes: navigation wait after the action; test fakes for request/commit events; version bump
 ack short-horizon-churn e47cc055b4877a74 5 cid=f34168a8f7171e72 stacked feature work on agent actions (allowlist checks) | prior: stacked on #19: frame-aware focus/clear follow-up
 ack short-horizon-churn e5966c6e18f47447 2 cid=128a5ddbe212f761 stacked fix: click and key hold times reach the input helpers and their test stubs

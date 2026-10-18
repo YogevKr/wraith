@@ -566,6 +566,94 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return 0
 
 
+def _idle_note(info: dict) -> str:
+    limit = float(info.get("idle_timeout") or 0)
+    if limit <= 0:
+        return "it runs until `wraith session stop`"
+    return f"it stops after {limit / 60:g} min with no call"
+
+
+def _session_start(daemon, args: argparse.Namespace) -> None:
+    launch = {
+        "engine": args.engine,
+        "headless": not args.headed,
+        "geoip": not args.no_geoip,
+    }
+    if _proxy_flags_given(args):
+        launch["proxy"] = _resolve_proxy(args)
+    info = daemon.start(
+        args.name,
+        idle_timeout=args.idle_timeout,
+        launch=launch,
+        allowed_domains=args.allowed_domains,
+        upload_dirs=args.upload_dir,
+    )
+    print(
+        f"wraith: session '{args.name}' running (pid {info['pid']}); {_idle_note(info)}"
+    )
+
+
+def _session_stop(daemon, args: argparse.Namespace) -> None:
+    names = [n for n, _ in daemon.list_sessions()] if args.all else [args.name]
+    for name in names:
+        done = daemon.stop(name)
+        print(f"wraith: session '{name}' {'stopped' if done else 'was not running'}")
+
+
+def _session_status(daemon, args: argparse.Namespace) -> None:
+    sessions = [(n, i) for n, i in daemon.list_sessions() if i is not None]
+    if not sessions:
+        print("wraith: no session is running")
+    for name, info in sessions:
+        browser = "browser open" if info["browser_open"] else "no browser yet"
+        print(
+            f"{name}: pid {info['pid']}, {browser}, idle {info['idle_for']:.0f} s; "
+            f"{_idle_note(info)}"
+        )
+
+
+_SESSION_ACTIONS = {
+    "start": _session_start,
+    "stop": _session_stop,
+    "status": _session_status,
+}
+
+
+def cmd_session(args: argparse.Namespace) -> int:
+    """Start, stop, or list the background sessions that ``wraith call`` uses."""
+    daemon = _lazy("daemon")
+    try:
+        _SESSION_ACTIONS[args.action](daemon, args)
+    except daemon.SessionError as exc:
+        print(f"wraith: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_call(args: argparse.Namespace) -> int:
+    """Run one MCP tool in a background session (started when needed)."""
+    daemon = _lazy("daemon")
+    try:
+        info, started = daemon.ensure(args.session)
+        if started:
+            print(
+                f"wraith: started session '{args.session}' (pid {info['pid']}); "
+                f"{_idle_note(info)}. Stop it with `wraith session stop`.",
+                file=sys.stderr,
+            )
+        if not args.tool:
+            print(daemon.tools(args.session))
+            return 0
+        reply = daemon.call(args.session, args.tool, args.args)
+    except daemon.SessionError as exc:
+        print(f"wraith: {exc}", file=sys.stderr)
+        return 1
+    output = reply.get("output") or ""
+    if output:
+        print(output, file=sys.stdout if reply.get("ok") else sys.stderr)
+    return int(reply.get("status", 0 if reply.get("ok") else 1))
+
+
 # --------------------------------------------------------------------------
 # small adapters over the integrator modules (kept loose on purpose)
 # --------------------------------------------------------------------------
@@ -696,6 +784,25 @@ def _add_state_flags(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="make --save-state loadable by Chromium tools such as "
         "agent-browser (--state PATH)",
+    )
+
+
+def _add_policy_flags(p: argparse.ArgumentParser) -> None:
+    """Add ``--allowed-domains`` / ``--upload-dir`` (browser tool policy)."""
+    p.add_argument(
+        "--allowed-domains",
+        metavar="HOSTS",
+        default=None,
+        help="comma-separated host allowlist, e.g. 'example.com,*.example.com' "
+        "(or WRAITH_ALLOWED_DOMAINS). The browser refuses other hosts.",
+    )
+    p.add_argument(
+        "--upload-dir",
+        metavar="DIR",
+        action="append",
+        default=None,
+        help="folder the upload_file tool may read from; repeat for more "
+        "(or WRAITH_UPLOAD_DIRS). Without one, uploads are off.",
     )
 
 
@@ -888,6 +995,70 @@ def cmd_clawd_run(args: argparse.Namespace) -> int:
     for result in results:
         print(f"{result.name}: {result.status}")
     return 0
+
+
+def _add_session_parsers(sub) -> None:
+    """Add ``session`` and ``call``: one background browser shared by CLI calls."""
+    p_session = sub.add_parser(
+        "session",
+        help="start, stop, or list background browser sessions for `wraith call`",
+        description="A session is a background process that keeps one browser "
+        "open, so a run of `wraith call` commands drives the same page. It "
+        "stops after --idle-timeout seconds with no call. `wraith call` starts "
+        "the default session itself; use `session start` to choose the engine, "
+        "a proxy, or a domain allowlist.",
+    )
+    p_session.add_argument("action", choices=["start", "stop", "status"])
+    p_session.add_argument(
+        "--name", default="default", help="session name (default: default)"
+    )
+    p_session.add_argument(
+        "--all", action="store_true", help="stop: stop every session"
+    )
+    p_session.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=1800.0,
+        metavar="SECONDS",
+        help="start: stop after this many seconds with no call; 0 never "
+        "stops (default: 1800)",
+    )
+    p_session.add_argument(
+        "--engine",
+        choices=["auto", "camoufox", "chromium"],
+        default="auto",
+        help="start: browser engine (default: auto, as the MCP server)",
+    )
+    p_session.add_argument(
+        "--headed", action="store_true", help="start: show the browser window"
+    )
+    p_session.add_argument(
+        "--no-geoip",
+        action="store_true",
+        help="start: disable geoip-derived timezone/locale matching",
+    )
+    _add_proxy_flags(p_session)
+    _add_policy_flags(p_session)
+    p_session.set_defaults(func=cmd_session)
+
+    p_call = sub.add_parser(
+        "call",
+        help="run one MCP tool in a background browser session",
+        description="Run one Wraith MCP tool, e.g. `wraith call navigate URL`, "
+        "`wraith call click 3`, `wraith call read`. All calls share the "
+        "session's browser, which starts on first use. Without a TOOL, list "
+        "the tools. `wraith call TOOL --help` shows a tool's arguments.",
+    )
+    p_call.add_argument(
+        "--session",
+        default="default",
+        metavar="NAME",
+        help="session to use; started with defaults when not running "
+        "(default: default)",
+    )
+    p_call.add_argument("tool", nargs="?", help="tool name; omit to list them")
+    p_call.add_argument("args", nargs=argparse.REMAINDER, help="the tool's arguments")
+    p_call.set_defaults(func=cmd_call)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1167,22 +1338,10 @@ def build_parser() -> argparse.ArgumentParser:
         "server's browser.",
     )
     _add_proxy_flags(p_mcp)
-    p_mcp.add_argument(
-        "--allowed-domains",
-        metavar="HOSTS",
-        default=None,
-        help="comma-separated host allowlist, e.g. 'example.com,*.example.com' "
-        "(or WRAITH_ALLOWED_DOMAINS). The browser refuses other hosts.",
-    )
-    p_mcp.add_argument(
-        "--upload-dir",
-        metavar="DIR",
-        action="append",
-        default=None,
-        help="folder the upload_file tool may read from; repeat for more "
-        "(or WRAITH_UPLOAD_DIRS). Without one, uploads are off.",
-    )
+    _add_policy_flags(p_mcp)
     p_mcp.set_defaults(func=cmd_mcp)
+
+    _add_session_parsers(sub)
 
     # profile (sync / receive)
     p_profile = sub.add_parser(
@@ -1291,12 +1450,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        return int(args.func(args) or 0)
+        status = int(args.func(args) or 0)
+        sys.stdout.flush()
+        return status
     except SystemExit:
         raise
     except KeyboardInterrupt:
         print("\nwraith: interrupted", file=sys.stderr)
         return 130
+    except BrokenPipeError:
+        # The reader closed the pipe (e.g. `wraith call read | head`). Point
+        # stdout at /dev/null so the exit flush does not print a traceback.
+        import os
+
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 141
 
 
 if __name__ == "__main__":

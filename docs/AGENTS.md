@@ -403,6 +403,36 @@ env, their `*_CMD` command variants, or `~/.secrets` (see
 Wrapping the server command in your secret manager (for example
 `op run -- uv run … wraith mcp`) injects the provider env for that one process.
 
+### The same tools from a shell — `wraith call`
+
+An agent without MCP (a shell-only agent, or a script) can call the same tools
+with `wraith call TOOL ARGS`. The calls share one browser in a background
+session, so the page, its cookies, and the element indices carry over from one
+command to the next. Do not write a new Python script for each step: each
+`engine.launch()` starts a new browser.
+
+```bash
+wraith call navigate https://example.com/login   # prints the indexed snapshot
+wraith call type_text 3 "me@example.com"
+wraith call click 5 --no-include-snapshot
+wraith call snapshot
+```
+
+- Required parameters are positional; the others are flags
+  (`include_snapshot=False` is `--no-include-snapshot`, `max_chars` is
+  `--max-chars`). `wraith call TOOL --help` prints the tool's description.
+- The first `wraith call` starts the session `default` with the MCP server's
+  defaults. `wraith session start --name NAME --engine chromium --proxy …
+  --allowed-domains …` starts one with other options; pass `--session NAME`
+  to `wraith call` to use it.
+- Relative file paths (`upload_file`, `save_state`, `screenshot --out`)
+  resolve against the folder you run `wraith call` in.
+- A session stops after 30 minutes with no call (`--idle-timeout`), or with
+  `wraith session stop`. `wraith session status` lists the running sessions.
+- The socket is in `~/.wraith/sessions` (mode 0700; `WRAITH_SESSION_DIR`
+  changes it), so only your user can drive the browser. Launch options go to
+  the session on stdin, so a proxy password does not show in `ps`.
+
 ---
 
 ## 5. Borrowing a warmed identity in the loop

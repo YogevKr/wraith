@@ -368,9 +368,35 @@ each control.
 | `wraith profile sync` / `receive` / `revoke` | Move a login through the encrypted dead-drop. |
 | `wraith clawd-run` | Run a versioned, gated Tailnet and browser flow. |
 | `wraith mcp` | Run the MCP server over stdio. |
+| `wraith call TOOL ...` | Run one MCP tool in a background session that keeps its browser open. |
+| `wraith session start` / `stop` / `status` | Control the background sessions that `wraith call` uses. |
 
 The default engine is `camoufox`. Use `--engine chromium` for patched
 Chromium, or `--engine auto` to let Wraith choose.
+
+### One browser across commands
+
+Each one-shot command above starts and closes its own browser. To drive one
+page step by step from a shell or a script, use `wraith call`. It runs any
+MCP tool, with the same arguments, in a background session that keeps one
+browser open:
+
+```bash
+wraith call borrow example.com             # starts the session on first use
+wraith call navigate https://example.com/account
+wraith call click 12
+wraith call type_text 4 "hello" --enter
+wraith call read --find invoice
+wraith call screenshot --out page.png
+wraith session stop                        # or it stops after 30 min idle
+```
+
+`wraith call` lists the tools, and `wraith call TOOL --help` shows a tool's
+arguments. A session uses the MCP server's defaults (`--engine auto`,
+headless). For a different engine, a proxy, or a domain allowlist, run
+`wraith session start --engine chromium --allowed-domains example.com` first.
+Use `--session NAME` to keep several sessions apart. Only your user can
+connect to a session.
 
 <details>
 <summary>CLI examples</summary>
@@ -399,6 +425,8 @@ uv run wraith profile revoke <pairing-code>
 flowchart TB
     mcp["MCP server"] --> agent["agent<br/>AgentBrowser"]
     cli["CLI"] --> agent
+    cli -->|wraith call| daemon["daemon<br/>background session"]
+    daemon --> mcp
     agent --> snapshot["snapshot"]
     agent --> behavior["behavior"]
     agent --> engine["engine"]
@@ -433,6 +461,7 @@ flowchart TB
 | [`providers`](wraith/providers.py) | DataImpulse and anyIP residential (and anyIP mobile) exits. |
 | [`benchmark`](wraith/benchmark.py) | The stealth benchmark records and their comparison. |
 | [`mcp`](wraith/mcp.py) | The `wraith-mcp` stdio server. |
+| [`daemon`](wraith/daemon.py) | The background session behind `wraith call`: one browser, the MCP tools, a Unix socket. |
 | [`cli`](wraith/cli.py) | The `wraith` command. Imports each part on demand, so `--help` works on a partial install. |
 
 Examples: [`examples/`](examples/) has `borrow_session.py`, `score_check.py`,

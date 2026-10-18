@@ -211,7 +211,7 @@ def test_managed_flow_is_planned_by_default_without_running_commands():
             "command": ["curl", "-fsS", "https://example/exit"],
             "expected": "1.2.3.4",
             "identity_command": ["tailscale", "status", "--json"],
-            "identity_expected": "rpi5",
+            "identity_expected": "expected-exit-node",
         },
         "canary": {"command": ["vault-canary"]},
         "run": {"command": ["wraith", "agent", "https://shop.example"]},
@@ -236,7 +236,7 @@ def test_managed_flow_requires_apply_for_execute():
             "command": ["exit-check"],
             "expected": "home",
             "identity_command": ["tailscale", "status", "--json"],
-            "identity_expected": "rpi5",
+            "identity_expected": "expected-exit-node",
         },
         "canary": {},
         "run": {"command": ["purchase"]},
@@ -263,7 +263,7 @@ def test_managed_timeout_does_not_retain_command_output():
             "command": ["exit-check"],
             "expected": "home",
             "identity_command": ["tailscale", "status", "--json"],
-            "identity_expected": "rpi5",
+            "identity_expected": "expected-exit-node",
         },
         "canary": {"command": ["canary"]},
         "run": {},
@@ -282,7 +282,7 @@ def test_managed_flow_never_returns_command_output():
             "command": ["exit-check"],
             "expected": "home",
             "identity_command": ["tailscale", "status", "--json"],
-            "identity_expected": "rpi5",
+            "identity_expected": "expected-exit-node",
         },
         "canary": {"command": ["canary"]},
         "run": {"command": ["purchase"]},
@@ -294,7 +294,7 @@ def test_managed_flow_never_returns_command_output():
         elif command == ["tailscale", "status", "--json"]:
             output = json.dumps({
                 "BackendState": "Running",
-                "ExitNodeStatus": {"Online": True, "HostName": "rpi5"},
+                "ExitNodeStatus": {"Online": True, "HostName": "expected-exit-node"},
             })
         else:
             output = "plaintext-vault-value"
@@ -320,7 +320,10 @@ def test_managed_flow_rejects_missing_identity_check():
 @pytest.mark.parametrize(
     "identity",
     [
-        {"BackendState": "Stopped", "ExitNodeStatus": {"Online": True, "HostName": "rpi5"}},
+        {
+            "BackendState": "Stopped",
+            "ExitNodeStatus": {"Online": True, "HostName": "expected-exit-node"},
+        },
         {"BackendState": "Running", "ExitNodeStatus": {"Online": True, "HostName": "other"}},
     ],
 )
@@ -332,7 +335,7 @@ def test_managed_flow_requires_healthy_expected_exit_node(identity):
             "command": ["exit-check"],
             "expected": "home",
             "identity_command": ["tailscale", "status", "--json"],
-            "identity_expected": "rpi5",
+            "identity_expected": "expected-exit-node",
         },
         "canary": {"command": ["canary"]},
         "run": {},

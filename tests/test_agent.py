@@ -130,6 +130,7 @@ def test_agent_browser_importable_and_methods_exist():
         "click",
         "type",
         "fill_secret",
+        "fill_vault_item",
         "scroll",
         "read",
         "get_text",

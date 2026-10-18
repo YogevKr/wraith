@@ -6,6 +6,21 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-18
+
+### Fixed
+
+- `wait_for` no longer closes the browser when its text does not show. On
+  Python 3.11 and later, the MCP server read the tool's own `TimeoutError`
+  as a stuck browser: it reported "BrowserStuck: the browser did not answer
+  within 180 s" at once and closed the browser, so the agent lost its pages,
+  tabs, and login. The tool now returns "TimeoutError: '…' did not appear
+  within N s" and keeps the browser. `wraith call wait_for` had the same
+  fault. The 180 s watchdog still closes a browser that does not answer.
+- The live browser tests in CI stop when one test runs past 240 s. A hung
+  browser call printed its stack at 240 s but then held the job until the
+  25-minute timeout.
+
 ## [0.16.0] - 2026-10-18
 
 ### Added

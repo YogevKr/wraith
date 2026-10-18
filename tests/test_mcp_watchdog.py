@@ -45,6 +45,47 @@ def test_a_stuck_call_is_reported_and_its_driver_killed(monkeypatch):
             driver.kill()
 
 
+def test_a_tool_timeout_is_not_reported_as_a_stuck_browser(monkeypatch):
+    # wait_for raises the built-in TimeoutError when its text does not show.
+    # Since Python 3.11 that is also asyncio.TimeoutError, which the watchdog
+    # once took for a stuck browser: it closed the browser and said 180 s.
+    browser = object()
+    executor = ThreadPoolExecutor(max_workers=1)
+    monkeypatch.setattr(m, "_EXEC", executor)
+    monkeypatch.setattr(m, "_browser", browser)
+
+    def text_never_shows():
+        raise TimeoutError("'Create New Policy' did not appear within 60 s")
+
+    with pytest.raises(m._ToolError) as err:
+        asyncio.run(m._run(text_never_shows))
+    assert str(err.value) == (
+        "TimeoutError: 'Create New Policy' did not appear within 60 s"
+    )
+    assert m._browser is browser and m._EXEC is executor  # browser kept
+
+
+def test_a_cancelled_call_that_waits_in_the_queue_never_runs(monkeypatch):
+    executor = ThreadPoolExecutor(max_workers=1)
+    monkeypatch.setattr(m, "_EXEC", executor)
+    release = threading.Event()
+    ran = []
+
+    async def scenario():
+        busy = asyncio.ensure_future(m._run(lambda: release.wait(10)))
+        queued = asyncio.ensure_future(m._run(lambda: ran.append("queued")))
+        await asyncio.sleep(0.1)
+        queued.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+        release.set()
+        await busy
+
+    asyncio.run(scenario())
+    executor.shutdown(wait=True)
+    assert ran == []
+
+
 def test_tool_timeout_setting(monkeypatch):
     monkeypatch.delenv(m.ENV_TOOL_TIMEOUT, raising=False)
     assert m._tool_timeout() == 180

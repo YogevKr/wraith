@@ -259,15 +259,24 @@ async def _run(fn: "Callable[[], T]") -> T:
     loop = asyncio.get_running_loop()
     executor = _EXEC
     limit = _tool_timeout()
+    call = loop.run_in_executor(executor, fn)
     try:
-        return await asyncio.wait_for(loop.run_in_executor(executor, fn), limit)
-    except asyncio.TimeoutError:
+        # Not asyncio.wait_for: since Python 3.11 its timeout is the built-in
+        # TimeoutError, which a tool also raises (wait_for's text did not
+        # show). A tool's own timeout must not read as a stuck browser.
+        done, _ = await asyncio.wait({call}, timeout=limit)
+    finally:
+        if not call.done():
+            call.cancel()
+    if not done:
         _abandon_browser(executor)
         raise _ToolError(
             f"BrowserStuck: the browser did not answer within {limit:.0f} s. "
             "Wraith closed it; the next tool call starts a new browser "
             "(open pages and tabs are lost)."
-        ) from None
+        )
+    try:
+        return call.result()
     except _ToolError:
         raise
     except Exception as exc:

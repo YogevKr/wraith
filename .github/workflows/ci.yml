@@ -90,8 +90,12 @@ jobs:
       - name: Live browser tests (local fixtures only)
         env:
           WRAITH_LIVE_TEST: "1"
+        # A test that runs past 240 s dumps every thread's stack and stops
+        # the run, so a hung browser call fails in minutes, not at the job
+        # timeout.
         run: >-
           uv run pytest -v -o faulthandler_timeout=240
+          -o faulthandler_exit_on_timeout=true
           tests/test_live_launch.py
           tests/test_live_frames.py
           tests/test_live_press_hold.py

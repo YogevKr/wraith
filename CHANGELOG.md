@@ -6,6 +6,20 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-18
+
+### Added
+
+- A no-browser replay now says when its TLS hello can differ from the
+  browser the session came from. A session from Chrome 155 replays with
+  curl_cffi's `chrome146` hello: Chrome 155 sends TLS extension 51764, and
+  no curl_cffi preset sends it, so a site that ties clearance to the TLS
+  fingerprint can challenge the replay. `wraith fetch` prints the note on
+  stderr, the MCP `fetch` tool adds a `Note:` line, and
+  `wraith.fastpath.fetch()` raises a `TLSMismatchWarning` (or calls
+  `on_tls_mismatch`). `wraith.fastpath.tls_note()` returns the text. Sessions
+  from Camoufox replay with their own browser's hello and get no note.
+
 ## [0.15.0] - 2026-10-18
 
 ### Added

@@ -29,20 +29,20 @@ def session_dir(monkeypatch):
     shutil.rmtree(folder, ignore_errors=True)
 
 
-async def navigate(url: str, include_snapshot: bool = True) -> str:
+async def fake_navigate(url: str, include_snapshot: bool = True) -> str:
     """Open a URL."""
     return f"{url} {include_snapshot}"
 
 
-async def drag(dx: float, dy: float = 0.0, index: Optional[int] = None) -> str:
+async def fake_drag(dx: float, dy: float = 0.0, index: Optional[int] = None) -> str:
     return f"{dx} {dy} {index}"
 
 
-async def upload_file(index: int, paths: list[str]) -> str:
+async def fake_upload_file(index: int, paths: list[str]) -> str:
     return f"{index} {paths}"
 
 
-async def fill_secret(index: int, capability: dict) -> str:
+async def fake_fill_secret(index: int, capability: dict) -> str:
     return f"{index} {capability}"
 
 
@@ -50,23 +50,23 @@ async def fill_secret(index: int, capability: dict) -> str:
     "fn, argv, expected",
     [
         (
-            navigate,
+            fake_navigate,
             ["https://x.test/?a=b"],
             {"url": "https://x.test/?a=b", "include_snapshot": True},
         ),
         (
-            navigate,
+            fake_navigate,
             ["u", "--no-include-snapshot"],
             {"url": "u", "include_snapshot": False},
         ),
-        (drag, ["-40", "--index", "3"], {"dx": -40.0, "dy": 0.0, "index": 3}),
+        (fake_drag, ["-40", "--index", "3"], {"dx": -40.0, "dy": 0.0, "index": 3}),
         (
-            upload_file,
+            fake_upload_file,
             ["2", "a.txt", "b.txt"],
             {"index": 2, "paths": ["a.txt", "b.txt"]},
         ),
         (
-            fill_secret,
+            fake_fill_secret,
             ["1", '{"provider": "env"}'],
             {"index": 1, "capability": {"provider": "env"}},
         ),
@@ -85,7 +85,7 @@ def test_tool_parser_follows_the_signature(fn, argv, expected):
 )
 def test_tool_parser_returns_help_and_errors(argv, status, text):
     with pytest.raises(daemon._ParseExit) as caught:
-        daemon.tool_parser("navigate", navigate).parse_args(argv)
+        daemon.tool_parser("navigate", fake_navigate).parse_args(argv)
     assert caught.value.status == status
     assert text in caught.value.text
 
@@ -129,7 +129,7 @@ def _fake_tools():
     async def fail() -> str:
         raise RuntimeError("boom")
 
-    async def screenshot() -> object:
+    async def shot() -> object:
         return _Shot()
 
     def lookup(url: str) -> list[str]:
@@ -138,7 +138,8 @@ def _fake_tools():
     async def confirm(index: int) -> bool:
         return index == 1
 
-    return {f.__name__: f for f in (count, fail, screenshot, lookup, confirm)}
+    tools = {f.__name__: f for f in (count, fail, lookup, confirm)}
+    return {**tools, "screenshot": shot}  # the server saves this tool's image
 
 
 class _FakeBrowser:

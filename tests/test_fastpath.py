@@ -5,6 +5,8 @@ Pure logic + request-assembly (curl_cffi monkeypatched) — no network.
 from __future__ import annotations
 
 import http.cookiejar
+import json
+import warnings
 
 import pytest
 
@@ -142,6 +144,89 @@ def test_camoufox_sessions_replay_with_camoufox_tls(monkeypatch):
     captured.clear()
     fastpath.fetch("https://t.example", headers={"User-Agent": CAMOUFOX_UA}, ja3="771,1,0,29,0")
     assert captured["ja3"] == "771,1,0,29,0"  # an explicit ja3 wins
+
+
+CHROME_155_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+)
+
+
+@pytest.mark.parametrize(
+    "ua, preset, mismatch",
+    [
+        (CHROME_155_UA, "chrome146", True),
+        (CHROME_155_UA + " Edg/155.0.0.0", "chrome146", True),
+        (CHROME_155_UA.replace("155", "146"), "chrome146", False),
+        (CHROME_155_UA, "firefox147", False),
+        (CAMOUFOX_UA, "camoufox152", False),
+        ("", "chrome146", False),
+    ],
+)
+def test_tls_note_flags_a_chrome_version_mismatch(ua, preset, mismatch):
+    from wraith import fastpath
+
+    note = fastpath.tls_note(ua, preset)
+    assert (note is not None) is mismatch
+    if mismatch:
+        assert "Chrome 155" in note and "chrome146" in note
+
+
+def test_a_chrome_replay_warns_or_reports_the_tls_mismatch(monkeypatch):
+    from wraith import fastpath
+
+    import curl_cffi.requests as ccr
+
+    class FakeResp:
+        status_code = 200
+
+    monkeypatch.setattr(ccr, "request", lambda m, u, **kw: FakeResp())
+    headers = {"User-Agent": CHROME_155_UA}
+    with pytest.warns(fastpath.TLSMismatchWarning, match="Chrome 155"):
+        fastpath.fetch("https://t.example", headers=headers)
+
+    notes: list = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # the callback replaces the warning
+        fastpath.fetch(
+            "https://t.example", headers=headers, on_tls_mismatch=notes.append
+        )
+    assert len(notes) == 1 and "51764" in notes[0]
+
+
+@pytest.fixture
+def chrome_155_session(monkeypatch, tmp_path):
+    """A session file from Chrome 155, and a curl_cffi that answers 200."""
+    import curl_cffi.requests as ccr
+
+    class FakeResp:
+        status_code = 200
+        text = "{}"
+        headers: dict = {}
+        url = "https://t.example/api"
+
+    monkeypatch.setattr(ccr, "request", lambda meth, u, **kw: FakeResp())
+    session = tmp_path / "s.json"
+    session.write_text(json.dumps({"headers": {"User-Agent": CHROME_155_UA}}))
+    return str(session)
+
+
+def test_the_mcp_fetch_tool_reports_the_tls_mismatch(chrome_155_session):
+    import asyncio
+
+    import wraith.mcp as m
+
+    out = asyncio.run(m.fetch("https://t.example/api", session_file=chrome_155_session))
+    assert "Note: the session came from Chrome 155" in out
+
+
+def test_wraith_fetch_prints_the_tls_mismatch_on_stderr(chrome_155_session, capsys):
+    from wraith import cli
+
+    cli.main(["fetch", "https://t.example/api", "--session", chrome_155_session])
+    out, err = capsys.readouterr()
+    assert out.startswith("200")
+    assert "wraith: note: the session came from Chrome 155" in err
 
 
 def test_fetch_explicit_impersonate_overrides(monkeypatch):

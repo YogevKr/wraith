@@ -729,6 +729,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             impersonate=args.impersonate,
             proxy=_resolve_proxy(args),
             timeout=args.timeout,
+            on_tls_mismatch=lambda note: print(
+                f"wraith: note: {note}", file=sys.stderr
+            ),
         )
     except fastpath.FastPathUnavailableError as exc:
         print(str(exc))

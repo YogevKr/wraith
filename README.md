@@ -127,7 +127,8 @@ week on GitHub runners, headless. Run of 2026-10-17:
 | Fast path replays with the browser's own TLS hello | ✅ | ✅ | ❌ ² | ❌ ² |
 
 ¹ The Linux runner has no GPU, so WebGL uses SwiftShader.<br>
-² Chrome 155 sends TLS extension 51764. curl_cffi cannot send it.
+² Chrome 155 sends TLS extension 51764. curl_cffi cannot send it, so `wraith fetch`
+and the `fetch` tool add a note when they replay a session from another Chrome version.
 
 Interactive challenges on public demo pages, with the agent aiming from a
 `screenshot()`:

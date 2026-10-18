@@ -20,7 +20,7 @@ import pytest
 def test_import_wraith():
     import wraith
 
-    assert wraith.__version__ == "0.15.0"
+    assert wraith.__version__ == "0.16.0"
     assert isinstance(wraith.__all__, list)
 
 

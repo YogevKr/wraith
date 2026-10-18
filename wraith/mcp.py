@@ -899,13 +899,22 @@ async def fetch(
         headers = data.get("headers") or data
 
     def _go() -> str:
-        resp = fastpath.fetch(url, method=method, headers=headers, impersonate=impersonate or None)
+        notes: list[str] = []
+        resp = fastpath.fetch(
+            url,
+            method=method,
+            headers=headers,
+            impersonate=impersonate or None,
+            on_tls_mismatch=notes.append,
+        )
         sig = fastpath.classify(resp)
         head = f"{resp.status_code}  {sig.state}"
         if sig.vendor:
             head += f" [{sig.vendor}]"
         if sig.reason:
             head += f"  — {sig.reason}"
+        for note in notes:
+            head += f"\nNote: {note}"
         body = (getattr(resp, "text", "") or "")[:1500]
         return head + "\n\n" + _untrusted(body)
 

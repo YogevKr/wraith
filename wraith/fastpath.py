@@ -20,14 +20,17 @@ etc. (a Chrome-TLS request carrying a Firefox UA is itself a tell).
 """
 from __future__ import annotations
 
+import re
 import warnings
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from . import detect, identity
 from .engine import _CAMOUFOX_BROWSER_VERSION
 
 __all__ = [
     "FastPathUnavailableError",
+    "TLSMismatchWarning",
+    "tls_note",
     "ua_to_impersonate",
     "fetch",
     "replay",
@@ -138,6 +141,48 @@ def _proxies(proxy: Optional[str]) -> Optional[dict]:
     return {"http": proxy, "https": proxy}
 
 
+class TLSMismatchWarning(UserWarning):
+    """A replay's TLS hello can differ from the browser its session came from."""
+
+
+_CHROME_VERSION = re.compile(r"\b(?:Chrome|Chromium)/(\d+)")
+
+
+def tls_note(user_agent: Optional[str], impersonate: str) -> Optional[str]:
+    """Why a Chrome replay's TLS hello can differ from the session's browser.
+
+    A curl_cffi Chrome preset copies the TLS hello of one Chrome version. A
+    session from another Chrome version replays with the preset's hello, not
+    its own: Chrome 155 sends TLS extension 51764, and no curl_cffi preset up
+    to 0.16.3 sends it. Returns ``None`` when the replay is not a Chrome
+    preset, or when its version matches the session's Chrome.
+    """
+    preset = re.fullmatch(r"chrome(\d+)", impersonate or "")
+    browser = _CHROME_VERSION.search(user_agent or "")
+    if not preset or not browser or preset.group(1) == browser.group(1):
+        return None
+    return (
+        f"the session came from Chrome {browser.group(1)}, but the replay sends "
+        f"curl_cffi's {impersonate} TLS hello. A site that ties its clearance to "
+        "the TLS fingerprint can challenge the replay (Chrome 155 sends TLS "
+        "extension 51764, which curl_cffi cannot send). A session from Camoufox, "
+        "Wraith's default engine, replays with its own browser's TLS hello."
+    )
+
+
+def _report_tls_mismatch(
+    user_agent: Optional[str],
+    impersonate: str,
+    report: Optional[Callable[[str], None]],
+) -> None:
+    """Send :func:`tls_note`'s text to ``report``, or warn without one."""
+    note = tls_note(user_agent, impersonate)
+    if note and report is not None:
+        report(note)
+    elif note:
+        warnings.warn(note, TLSMismatchWarning, stacklevel=3)
+
+
 def fetch(
     url: str,
     *,
@@ -149,6 +194,7 @@ def fetch(
     proxy: Optional[str] = None,
     timeout: float = 30.0,
     allow_redirects: bool = True,
+    on_tls_mismatch: Optional[Callable[[str], None]] = None,
     **kwargs: Any,
 ) -> Any:
     """Issue one no-browser request with a real-browser TLS fingerprint.
@@ -162,6 +208,9 @@ def fetch(
         cookie dicts, a ``CookieJar``, or a ``{name: value}`` dict.
     :param impersonate: explicit curl_cffi preset; otherwise inferred from the
         session/headers UA (default Firefox).
+    :param on_tls_mismatch: called with :func:`tls_note`'s text when the
+        replay's TLS hello can differ from the session's browser. Without it,
+        that text is a :class:`TLSMismatchWarning`.
     :returns: the ``curl_cffi`` Response (``.status_code`` / ``.text`` /
         ``.headers`` / ``.json()`` / ``.cookies``). Pass it to
         :func:`classify` to decide whether to escalate to the browser.
@@ -193,6 +242,7 @@ def fetch(
     ua = ua or hdrs.get("User-Agent")
 
     imp = impersonate or ua_to_impersonate(ua)
+    _report_tls_mismatch(ua, imp, on_tls_mismatch)
     jar = _coerce_cookies(cookies)
     tls = _tls_options(imp)
     tls.update(kwargs)  # an explicit ja3 / akamai / extra_fp wins

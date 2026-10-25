@@ -87,16 +87,22 @@ def fake_pw(monkeypatch):
         engine, "_installed_chrome", lambda: "/Applications/Google Chrome"
     )
     monkeypatch.setattr(engine, "_chromium_sandbox_default", lambda: True)
+    # Deterministic GPU assumption; the GPU-specific tests override it.
+    monkeypatch.setattr(engine, "_host_has_gpu", lambda: True)
     return log, state
 
 
 def _launch(**extra):
     headless = extra.pop("headless", True)
     profile_dir = extra.pop("profile_dir", None)
+    geoip = extra.pop("geoip", False)
+    locale = extra.pop("locale", None)
+    timezone = extra.pop("timezone", None)
     return engine._launch_chromium(
         headless=headless,
-        locale=None,
-        timezone=None,
+        geoip=geoip,
+        locale=locale,
+        timezone=timezone,
         profile_dir=profile_dir,
         extra=extra,
     )
@@ -109,6 +115,116 @@ def _calls(log, name):
         if isinstance(entry, tuple) and entry[0] == name
         for kw in [entry[1]]
     ]
+
+
+def test_geoip_gives_chromium_a_matching_locale_and_timezone(fake_pw, monkeypatch):
+    log, _ = fake_pw
+    monkeypatch.setattr(
+        engine, "_chromium_geoip_identity", lambda proxy: ("en-US", "America/New_York")
+    )
+    _launch(geoip=True, proxy={"server": "http://p:1"})
+    _probe, ctx = _calls(log, "new_context")
+    assert ctx["locale"] == "en-US"
+    assert ctx["timezone_id"] == "America/New_York"
+
+
+def test_explicit_locale_and_timezone_win_over_geoip(fake_pw, monkeypatch):
+    log, _ = fake_pw
+    monkeypatch.setattr(
+        engine, "_chromium_geoip_identity", lambda proxy: ("en-US", "America/New_York")
+    )
+    _launch(geoip=True, locale="he-IL", timezone="Asia/Jerusalem")
+    _probe, ctx = _calls(log, "new_context")
+    assert ctx["locale"] == "he-IL"
+    assert ctx["timezone_id"] == "Asia/Jerusalem"
+
+
+def test_geoip_failure_keeps_host_defaults(fake_pw, monkeypatch):
+    log, _ = fake_pw
+    monkeypatch.setattr(engine, "_chromium_geoip_identity", lambda proxy: (None, None))
+    _launch(geoip=True)
+    _probe, ctx = _calls(log, "new_context")
+    assert "locale" not in ctx and "timezone_id" not in ctx
+
+
+def test_webrtc_is_forced_through_the_proxy(fake_pw):
+    log, _ = fake_pw
+    _launch(proxy={"server": "http://p:1"})
+    (launch_kw,) = _calls(log, "launch")
+    assert "--webrtc-ip-handling-policy=disable_non_proxied_udp" in launch_kw["args"]
+
+
+def test_no_webrtc_flag_without_a_proxy(fake_pw):
+    log, _ = fake_pw
+    _launch()
+    (launch_kw,) = _calls(log, "launch")
+    assert "args" not in launch_kw
+
+
+def test_gpu_less_headless_adds_swiftshader(fake_pw, monkeypatch):
+    log, _ = fake_pw
+    monkeypatch.setattr(engine, "_host_has_gpu", lambda: False)
+    _launch()
+    (launch_kw,) = _calls(log, "launch")
+    assert "--use-angle=swiftshader" in launch_kw["args"]
+
+
+def test_gpu_host_keeps_the_native_renderer(fake_pw):
+    log, _ = fake_pw
+    _launch()
+    (launch_kw,) = _calls(log, "launch")
+    assert "args" not in launch_kw
+
+
+def test_headed_skips_swiftshader(fake_pw, monkeypatch):
+    log, _ = fake_pw
+    monkeypatch.setattr(engine, "_host_has_gpu", lambda: False)
+    _launch(headless=False)
+    (launch_kw,) = _calls(log, "launch")
+    assert "args" not in launch_kw
+
+
+def test_caller_gl_choice_wins(fake_pw, monkeypatch):
+    log, _ = fake_pw
+    monkeypatch.setattr(engine, "_host_has_gpu", lambda: False)
+    _launch(args=["--use-angle=vulkan"])
+    (launch_kw,) = _calls(log, "launch")
+    assert launch_kw["args"] == ["--use-angle=vulkan"]
+
+
+def test_caller_webrtc_policy_wins(fake_pw):
+    log, _ = fake_pw
+    _launch(proxy={"server": "http://p:1"}, args=["--webrtc-ip-handling-policy=default"])
+    (launch_kw,) = _calls(log, "launch")
+    assert launch_kw["args"] == ["--webrtc-ip-handling-policy=default"]
+
+
+def test_geoip_resolves_locale_from_the_exit_ip(monkeypatch):
+    import types as _types
+
+    geo = _types.SimpleNamespace(
+        locale=_types.SimpleNamespace(language="he", region="IL"),
+        timezone="Asia/Jerusalem",
+    )
+    seen: dict = {}
+    fake = _types.ModuleType("camoufox.ip")
+    fake.Proxy = lambda **kw: _types.SimpleNamespace(as_string=lambda: "http://p:1")
+    fake.public_ip = lambda url: "1.2.3.4"
+    fake_geo = _types.ModuleType("camoufox.geolocation")
+
+    def _geo(ip):
+        seen["ip"] = ip
+        return geo
+
+    fake_geo.get_geolocation = _geo
+    monkeypatch.setitem(sys.modules, "camoufox.ip", fake)
+    monkeypatch.setitem(sys.modules, "camoufox.geolocation", fake_geo)
+
+    assert engine._chromium_geoip_identity({"server": "http://p:1"}) == (
+        "he-IL",
+        "Asia/Jerusalem",
+    )
+    assert seen["ip"] == "1.2.3.4"
 
 
 def test_headless_uses_installed_chrome_with_a_clean_user_agent(fake_pw):
@@ -171,6 +287,7 @@ def test_persistent_profile_reads_user_agent_from_a_probe_and_sizes_the_window(f
     assert kw["proxy"] == {"server": "http://p:1"}
     assert kw["args"] == [
         "--lang=en",
+        "--webrtc-ip-handling-policy=disable_non_proxied_udp",
         "--window-size=1920,1080",
         "--screen-info={0,0 1920x1080}",
     ]

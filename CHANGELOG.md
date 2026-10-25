@@ -6,6 +6,48 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-25
+
+### Changed
+
+- Camoufox updated to `0.5.9b5` and Playwright to `1.62`, with the Camoufox
+  browser it pairs with (`158.0-beta.40`). The Firefox identity is now 158,
+  not 152. Camoufox 0.5.6 fixed the 0.4.x `pageError` crash, so the old
+  `playwright < 1.60` ceiling no longer applies. `camoufox fetch` installs the
+  paired build.
+- The fast path replays Camoufox with that build's own TLS hello. Firefox 156
+  dropped the `49162` cipher and the `256-257` curve from its ClientHello, so
+  `_CAMOUFOX_JA3` was retuned. JA3, JA4, peetprint, and the HTTP/2 fingerprint
+  were verified equal to the browser against `tls.peet.ws` (156 and 158 send
+  the same hello).
+- A persistent profile now keeps one Camoufox device fingerprint. Camoufox
+  draws a new random device every launch, so a reused profile changed the
+  device while the cookies stayed. The chosen preset is stored beside the
+  profile and reused. A caller fingerprint or preset still wins.
+- `clear_challenge` now clicks a visible Cloudflare Turnstile checkbox. The
+  widget is cross-origin, so it aims at the checkbox fraction of the widget
+  frame. Solves 3 of 3 on `nowsecure.nl`; a site that needs the token no longer
+  waits for the agent to aim by hand.
+- The behavioral nudge now sends one `wheel` notch (down, then back up), not
+  just cursor moves, so a sensor sees the input channel a hand uses.
+- An indexed `click` now travels a human cursor path to a random point near the
+  element center, not the exact center, and falls back to the center when a
+  point would miss.
+- Chromium keeps WebGL available on a headless host with no GPU by forcing
+  ANGLE/SwiftShader, instead of leaving WebGL null. A caller GL choice wins.
+- A SOCKS proxy now sets `network.proxy.socks_remote_dns`, so DNS resolves at
+  the exit instead of leaking the local resolver.
+- The Chromium fallback now honors `geoip=True`: it derives the exit IP's
+  locale and timezone through Camoufox's GeoIP data instead of advertising
+  the host's. A proxied Chromium run no longer contradicts its own exit IP.
+- Chromium now passes `--webrtc-ip-handling-policy=disable_non_proxied_udp`
+  when a proxy is set, so WebRTC cannot expose the host's real IP next to a
+  proxy exit IP. A caller-supplied policy still wins.
+- Relative `scroll` (up/down/left/right) now uses real `wheel` events in
+  several small notches instead of one `window.scrollBy`, so behavioral
+  sensors see a human scroll stream. It falls back to `scrollBy` when a page
+  swallows the wheel. `top`/`bottom` still use `scrollTo`.
+
 ## [0.16.1] - 2026-10-18
 
 ### Fixed

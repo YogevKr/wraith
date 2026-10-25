@@ -119,7 +119,7 @@ def test_fetch_assembles_session_headers_and_impersonate(monkeypatch):
 
 
 CAMOUFOX_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Firefox/158.0"
 )
 
 
@@ -133,12 +133,12 @@ def test_camoufox_sessions_replay_with_camoufox_tls(monkeypatch):
         status_code = 200
 
     monkeypatch.setattr(ccr, "request", lambda m, u, **kw: (captured.update(kw) or FakeResp()))
-    assert fastpath.ua_to_impersonate(CAMOUFOX_UA) == "camoufox152"
-    assert fastpath.ua_to_impersonate(CAMOUFOX_UA.replace("152", "147")) == "firefox147"
+    assert fastpath.ua_to_impersonate(CAMOUFOX_UA) == "camoufox158"
+    assert fastpath.ua_to_impersonate(CAMOUFOX_UA.replace("158", "147")) == "firefox147"
 
     fastpath.fetch("https://t.example", headers={"User-Agent": CAMOUFOX_UA})
     assert captured["impersonate"] == "firefox147"
-    assert captured["ja3"].split(",")[1].count("-") == 15  # 16 ciphers
+    assert captured["ja3"].split(",")[1].count("-") == 14  # 15 ciphers
     assert captured["extra_fp"].tls_cert_compression == "zlib,brotli,zstd"
 
     captured.clear()
@@ -159,7 +159,7 @@ CHROME_155_UA = (
         (CHROME_155_UA + " Edg/155.0.0.0", "chrome146", True),
         (CHROME_155_UA.replace("155", "146"), "chrome146", False),
         (CHROME_155_UA, "firefox147", False),
-        (CAMOUFOX_UA, "camoufox152", False),
+        (CAMOUFOX_UA, "camoufox158", False),
         ("", "chrome146", False),
     ],
 )

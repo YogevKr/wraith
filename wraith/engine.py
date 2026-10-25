@@ -24,11 +24,14 @@ Two engines are supported, in priority order:
 
 Critical compatibility note
 ---------------------------
-Camoufox 0.4.x **crashes** when paired with ``playwright >= 1.60`` because of a
+Camoufox 0.4.x **crashed** when paired with ``playwright >= 1.60`` because of a
 Firefox ``pageError`` serialization bug (``coreBundle.js`` reading
-``pageError.location.url``). Wraith pins ``playwright == 1.55.x``; this module
-detects a mismatch up front and raises a clear, actionable error rather than
-letting it explode mid-run. See :class:`PlaywrightVersionError`.
+``pageError.location.url``). Camoufox 0.5.x fixed it: from 0.5.6 on, the package
+ships a browser/playwright floor table and only needs the browser build that
+matches the resolved Playwright. Wraith pins ``playwright == 1.62.x`` and the
+Camoufox browser build its package pairs with, and still refuses a Playwright
+above the package's tested range rather than let it explode mid-run. See
+:class:`PlaywrightVersionError`.
 
 Usage
 -----
@@ -53,6 +56,7 @@ Context manager (auto-closes everything)::
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import sys
 import warnings
@@ -65,16 +69,19 @@ from .proxy import to_playwright_proxy
 # Public engine identifiers.
 Engine = Literal["auto", "camoufox", "chromium"]
 
-# The last playwright minor that Camoufox 0.4.x can safely drive. From 1.60 on,
-# the Firefox pageError serialization path crashes (coreBundle.js reads
-# pageError.location.url). We require < 1.60 for the camoufox engine.
-_CAMOUFOX_MAX_PLAYWRIGHT = (1, 60)
+# The last playwright minor that Camoufox 0.5.x can safely drive. Camoufox
+# 0.5.9b5 declares ``playwright < 1.63``; 0.5.6 fixed the 0.4.x pageError crash
+# for 1.60+, so the old < 1.60 ceiling no longer applies. We require < 1.63 for
+# the camoufox engine and let the package's browser/playwright floor table pick
+# the matching browser build.
+_CAMOUFOX_MAX_PLAYWRIGHT = (1, 63)
 
-# Camoufox 0.4.x and 0.5.x generate navigator.appCodeName. Camoufox 156
-# removed that property from its browser schema, so an unpinned fetch fails
-# during config validation before the browser can start. Keep the package and
-# browser pair on the last compatible schema until the launcher mapping moves.
-_CAMOUFOX_BROWSER_VERSION = "152.0.4-beta.30"
+# Camoufox 0.4.x and 0.5.x generate navigator.appCodeName. Camoufox 156 removed
+# that property from its browser schema, so an unpinned fetch fails during config
+# validation before the browser can start. Keep the package and browser pair on
+# the last compatible schema until the launcher mapping moves.
+# 0.5.9b5 pairs with browser 158.0-beta.40 (see its browser-pin.json).
+_CAMOUFOX_BROWSER_VERSION = "158.0-beta.40"
 _CAMOUFOX_BROWSER_FETCH = f"official/{_CAMOUFOX_BROWSER_VERSION}"
 
 # Default args we strip from the Chromium fallback. --enable-automation paints a
@@ -328,13 +335,16 @@ def _assert_camoufox_playwright_ok() -> None:
     if ver >= _CAMOUFOX_MAX_PLAYWRIGHT:
         pretty = ".".join(map(str, ver)) or "unknown"
         raise PlaywrightVersionError(
-            f"Camoufox 0.4.x is incompatible with playwright {pretty}.\n"
-            f"playwright >= {'.'.join(map(str, _CAMOUFOX_MAX_PLAYWRIGHT))} triggers a "
-            "Firefox pageError serialization crash (coreBundle.js reads "
-            "pageError.location.url) that hard-crashes the page.\n"
+            f"Camoufox 0.5.x is incompatible with playwright {pretty}.\n"
+            f"Camoufox 0.5.9b5 declares playwright < "
+            f"{'.'.join(map(str, _CAMOUFOX_MAX_PLAYWRIGHT))}. A newer Playwright can "
+            "change the Juggler protocol the browser speaks without a matching "
+            "browser build.\n"
             "Fix one of:\n"
-            "  - pin playwright to 1.55.x:  pip install 'playwright==1.55.0'\n"
-            "  - run Camoufox in its own virtualenv with playwright 1.55.x\n"
+            "  - pin playwright < "
+            f"{'.'.join(map(str, _CAMOUFOX_MAX_PLAYWRIGHT))}"
+            ":  pip install 'playwright==1.62.0'\n"
+            "  - upgrade camoufox, which may raise the ceiling\n"
             "  - use engine='chromium' (patchright) instead, which is unaffected."
         )
 
@@ -344,7 +354,7 @@ def _camoufox_browser_options() -> dict[str, Any]:
     return {
         "browser": _CAMOUFOX_BROWSER_VERSION,
         # Keep the generated Firefox identity aligned with the selected build.
-        "ff_version": 152,
+        "ff_version": 158,
     }
 
 
@@ -368,12 +378,11 @@ def _camoufox_pinned_executable() -> str:
 
 
 def _ensure_camoufox_bundle_properties() -> None:
-    """Let Camoufox find ``properties.json`` inside a macOS app bundle.
+    """Make a macOS app bundle's ``properties.json`` findable either place.
 
-    Camoufox 0.5.6 reads ``properties.json`` beside an explicit executable. A
-    macOS bundle keeps the binary in ``Contents/MacOS`` and the file in
-    ``Contents/Resources``, so every pinned launch fails on macOS. Camoufox
-    0.5.8 has the same fallback; remove this shim with that upgrade.
+    Camoufox 0.5.9b5 reads ``properties.json`` from ``Contents/Resources`` for a
+    ``Contents/MacOS`` executable. A bundle that carries the file beside the
+    executable is read from there as well, so an older layout keeps working.
     """
     try:
         from camoufox import utils as camoufox_utils
@@ -389,11 +398,14 @@ def _ensure_camoufox_bundle_properties() -> None:
             from pathlib import Path
 
             path = Path(path)
+            beside = path.parent / "properties.json"
             resources = path.parent.parent / "Resources"
-            if (
-                not (path.parent / "properties.json").exists()
-                and (resources / "properties.json").exists()
-            ):
+            if beside.exists():
+                # 0.5.9b5 prefers Resources for a MacOS/named executable.
+                # Parse the beside file directly so that layout still wins.
+                with open(beside, "rb") as fh:
+                    return {p["property"]: p for p in json.load(fh)}
+            if (resources / "properties.json").exists():
                 path = resources / path.name
         return original(path=path)
 
@@ -414,6 +426,10 @@ def _prepare_camoufox_options(opts: dict[str, Any], extra: dict[str, Any]) -> No
     if "executable_path" not in opts:
         opts["executable_path"] = _camoufox_pinned_executable()
     opts.update(_camoufox_browser_options())
+    if "executable_path" in opts and "browser" in opts:
+        # Camoufox 0.5.9b5 rejects both. The executable is already the exact
+        # pinned build, so the selector is redundant; drop it.
+        opts.pop("browser")
 
 
 def _enter_camoufox(cm: Any) -> Any:
@@ -436,6 +452,51 @@ def _enter_camoufox(cm: Any) -> Any:
 # --------------------------------------------------------------------------- #
 # Camoufox (PRIMARY)
 # --------------------------------------------------------------------------- #
+_PROFILE_FINGERPRINT_FILE = ".wraith_fingerprint.json"
+
+
+def _profile_fingerprint_preset(profile_dir: str) -> Optional[dict[str, Any]]:
+    """Load or create one stable Camoufox fingerprint preset for a profile dir.
+
+    Camoufox draws a fresh device fingerprint on every launch. With a
+    persistent profile the cookies survive but the device changes, so a site
+    can correlate two visits to the same login as two devices. Store one
+    bundled device preset beside the profile and reuse it. Returns ``None``
+    (fall back to Camoufox's random draw) when generation is unavailable.
+    """
+    from pathlib import Path
+
+    path = Path(profile_dir) / _PROFILE_FINGERPRINT_FILE
+    with contextlib.suppress(Exception):
+        if path.exists():
+            data = json.loads(path.read_text())
+            if isinstance(data, dict) and data:
+                return data
+    try:
+        from camoufox.fingerprints import get_random_preset
+
+        version = int(_CAMOUFOX_BROWSER_VERSION.split(".", 1)[0])
+        preset = get_random_preset(os=_host_os_family(), ff_version=version)
+    except Exception:
+        return None
+    if not isinstance(preset, dict) or not preset:
+        return None
+    with contextlib.suppress(Exception):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(preset))
+    return preset
+
+
+def _is_socks_proxy(proxy: Any) -> bool:
+    """Whether a Playwright proxy dict points at a SOCKS server."""
+    if not proxy:
+        return False
+    server = ""
+    with contextlib.suppress(Exception):
+        server = str(dict(proxy).get("server") or "").lower()
+    return server.startswith(("socks4", "socks5"))
+
+
 def _launch_camoufox(
     *,
     headless: bool,
@@ -496,6 +557,12 @@ def _launch_camoufox(
     if profile_dir:
         opts["persistent_context"] = True
         opts["user_data_dir"] = profile_dir
+        # One device per profile: keep the fingerprint stable across runs.
+        # A caller's own fingerprint or preset wins.
+        if "fingerprint" not in extra and "fingerprint_preset" not in extra:
+            preset = _profile_fingerprint_preset(profile_dir)
+            if preset:
+                opts["fingerprint_preset"] = preset
 
     # firefox_user_prefs needs a dict-MERGE, not the override that a plain
     # opts.update(extra) would do: a caller may pass un-partition prefs (so
@@ -506,6 +573,11 @@ def _launch_camoufox(
     caller_prefs = extra.pop(_FIREFOX_PREFS_KEY, None)
     base_prefs = opts.pop(_FIREFOX_PREFS_KEY, None)
     merged_prefs = _merge_firefox_prefs(base_prefs, caller_prefs)
+
+    # A SOCKS proxy must resolve DNS remotely, or Firefox resolves the name
+    # locally and the IP of the exit and the resolver can contradict.
+    if _is_socks_proxy(extra.get("proxy")):
+        merged_prefs.setdefault("network.proxy.socks_remote_dns", True)
 
     # Caller options and the pinned browser must reach validation together.
     _prepare_camoufox_options(opts, extra)
@@ -543,9 +615,103 @@ def _launch_camoufox(
 # --------------------------------------------------------------------------- #
 # patchright Chromium (FALLBACK)
 # --------------------------------------------------------------------------- #
+def _chromium_geoip_identity(
+    proxy: Any,
+) -> tuple[Optional[str], Optional[str]]:
+    """Locale and timezone for the exit IP, for the Chromium fallback.
+
+    Camoufox derives these from the IP itself. Chromium does not, so a proxied
+    Chromium run otherwise advertises the *host's* locale and timezone under a
+    foreign exit IP -- a hard fingerprint contradiction that score-based
+    defenses read as masking. Best-effort: any failure (no geoip extra, no
+    network, unknown IP) returns ``(None, None)`` and the caller keeps its
+    defaults.
+    """
+    try:
+        from camoufox.geolocation import get_geolocation  # type: ignore
+        from camoufox.ip import Proxy, public_ip  # type: ignore
+    except Exception:  # pragma: no cover - guarded in _launch_chromium earlier
+        return None, None
+    try:
+        proxy_url = None
+        if proxy:
+            fields = {
+                k: v
+                for k, v in dict(proxy).items()
+                if k in ("server", "username", "password", "bypass")
+            }
+            proxy_url = Proxy(**fields).as_string()
+        geo = get_geolocation(public_ip(proxy_url))
+    except Exception:
+        return None, None
+    language = getattr(geo.locale, "language", None)
+    region = getattr(geo.locale, "region", None)
+    tag = "-".join(part for part in (language, region) if part) or None
+    return tag, (geo.timezone or None)
+
+
+def _host_has_gpu() -> bool:
+    """Whether the host can give Chromium a hardware GL renderer.
+
+    macOS and Windows always can. A Linux host is screened by its DRM render
+    node. When unsure, assume a GPU (keep the native renderer).
+    """
+    if sys.platform.startswith(("darwin", "win")):
+        return True
+    from pathlib import Path
+
+    with contextlib.suppress(Exception):
+        return any(Path("/dev/dri").glob("renderD*"))
+    return True
+
+
+def _chromium_gpu_args(launch_kw: dict[str, Any], headless: bool) -> dict[str, Any]:
+    """Keep WebGL available on a headless host with no GPU.
+
+    Wraith strips ``--enable-unsafe-swiftshader`` to avoid a software renderer
+    on a real GPU. On a GPU-less host that leaves WebGL null, which is itself a
+    headless tell. Force ANGLE/SwiftShader there. A caller GL choice wins.
+    """
+    if not headless or _host_has_gpu():
+        return {}
+    args = [str(arg) for arg in launch_kw.get("args") or []]
+    if any(arg.startswith(("--use-gl", "--use-angle")) for arg in args):
+        return {}
+    return {
+        "args": [
+            *args,
+            "--use-gl=angle",
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+        ]
+    }
+
+
+def _chromium_webrtc_proxy_args(launch_kw: dict[str, Any]) -> dict[str, Any]:
+    """Force WebRTC through the proxy so the real IP cannot leak.
+
+    Without this, Chromium's WebRTC stack still gathers host/STUN candidates
+    from the host network, so a proxy-backed session can present a public IP
+    that contradicts its HTTP exit IP. ``disable_non_proxied_udp`` routes all
+    WebRTC traffic through the proxy. A caller-supplied policy wins.
+    """
+    if not launch_kw.get("proxy"):
+        return {}
+    args = [str(arg) for arg in launch_kw.get("args") or []]
+    if any(arg.startswith("--webrtc-ip-handling-policy") for arg in args):
+        return {}
+    return {
+        "args": [
+            *(launch_kw.get("args") or []),
+            "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+        ]
+    }
+
+
 def _launch_chromium(
     *,
     headless: bool,
+    geoip: bool = False,
     locale: Optional[str],
     timezone: Optional[str],
     profile_dir: Optional[str],
@@ -590,11 +756,23 @@ def _launch_chromium(
     launch_kw = {k: v for k, v in extra.items() if k in _CHROMIUM_LAUNCH_ONLY}
     context_kw = {k: v for k, v in extra.items() if k not in _CHROMIUM_LAUNCH_ONLY}
 
+    # Chromium has no geoip of its own; derive the exit IP's locale/timezone so a
+    # proxied run does not advertise the host's. An explicit caller value wins.
+    if geoip and (locale is None or timezone is None):
+        geo_locale, geo_timezone = _chromium_geoip_identity(launch_kw.get("proxy"))
+        locale = locale or geo_locale
+        timezone = timezone or geo_timezone
+
     # Context-level identity options.
     if locale:
         context_kw.setdefault("locale", locale)
     if timezone:
         context_kw.setdefault("timezone_id", timezone)
+
+    # Keep WebRTC off the host network when a proxy is in use.
+    launch_kw.update(_chromium_webrtc_proxy_args(launch_kw))
+    # Keep WebGL present on a GPU-less headless host.
+    launch_kw.update(_chromium_gpu_args(launch_kw, headless))
 
     try:
         context, browser_obj, page = _open_chromium(
@@ -919,9 +1097,12 @@ def launch(
             * ``"chromium"``: force patchright Chromium.
         headless: Run without a visible window. Default ``True`` (Camoufox
             headless actually benchmarks *better* than headed).
-        geoip: For Camoufox, derive a coherent timezone/locale/geolocation from
-            the exit IP. Strongly recommended for identity consistency. Ignored
-            by the Chromium engine (use ``locale``/``timezone`` explicitly).
+        geoip: Derive a coherent timezone/locale/geolocation from the exit IP.
+            Strongly recommended for identity consistency. Works for both
+            engines: Camoufox derives a full fingerprint identity, and the
+            Chromium fallback derives locale + timezone and keeps WebRTC off
+            the host network when a proxy is set. An explicit ``locale`` /
+            ``timezone`` still wins.
         locale: Override the locale (e.g. ``"he-IL"``). Should match the exit
             region. For Chromium, sets the context ``locale``.
         timezone: Override the IANA timezone (e.g. ``"Asia/Jerusalem"``). For
@@ -946,7 +1127,8 @@ def launch(
         A :class:`Session` with ``.page`` / ``.context`` ready to drive.
 
     Raises:
-        PlaywrightVersionError: ``engine="camoufox"`` with ``playwright>=1.60``.
+        PlaywrightVersionError: ``engine="camoufox"`` with a playwright at or
+            above the Camoufox-tested ceiling.
         EngineUnavailableError: the requested engine (or dependency) is missing,
             or ``"auto"`` exhausted all engines.
         WraithEngineError: other launch failures.
@@ -972,6 +1154,7 @@ def launch(
     if engine == "chromium":
         return _launch_chromium(
             headless=headless,
+            geoip=geoip,
             locale=locale,
             timezone=timezone,
             profile_dir=profile_dir,
@@ -993,13 +1176,15 @@ def launch(
             warnings.warn(
                 f"Camoufox engine unavailable ({exc.__class__.__name__}: {exc}); "
                 "falling back to patchright Chromium. Chromium is weaker against "
-                "reCAPTCHA-v3 / Reblaze — pin playwright==1.55.x to use Camoufox.",
+                "reCAPTCHA-v3 / Reblaze — use a playwright the Camoufox "
+                "package supports to use Camoufox.",
                 RuntimeWarning,
                 stacklevel=2,
             )
             try:
                 return _launch_chromium(
                     headless=headless,
+                    geoip=geoip,
                     locale=locale,
                     timezone=timezone,
                     profile_dir=profile_dir,
@@ -1198,6 +1383,13 @@ def _behavioral_nudge(page: Any) -> None:
     with contextlib.suppress(Exception):
         _behavior.human_move(page)
     with contextlib.suppress(Exception):
+        # A wheel notch adds the input channel a hand always produces on a
+        # challenge page; sensors read the wheel stream, not just the cursor.
+        # Scroll back so the page view is unchanged for perception.
+        page.mouse.wheel(0, 120)
+        page.wait_for_timeout(60)
+        page.mouse.wheel(0, -120)
+    with contextlib.suppress(Exception):
         # A *short* dwell — deliberately briefer than behavior.dwell()'s default
         # 0.4-1.8s so the nudge never dominates a small `timeout` budget.
         _behavior.dwell(0.1, 0.3)
@@ -1223,6 +1415,51 @@ def _hold_settling(holding: bool, seen_at: Optional[float]) -> bool:
     if holding:
         return True
     return seen_at is not None and time.monotonic() - seen_at < _HOLD_SETTLE_S
+
+
+# A Cloudflare Turnstile checkbox sits at this fraction of the widget frame.
+# The frame is cross-origin, so a coordinate click is the only way in. Measured
+# on the widget geometry; it holds for the compact and normal layouts.
+_TURNSTILE_COORD = (0.11, 0.45)
+_TURNSTILE_ATTEMPTS = 2
+
+
+def _click_visible_turnstile(page: Any) -> bool:
+    """Click the checkbox of a visible Cloudflare Turnstile widget once.
+
+    Finds a live ``challenges.cloudflare.com`` turnstile frame, aims at the
+    checkbox fraction of its box with a human path, and clicks. Returns
+    ``True`` when a click was sent. Never raises.
+    """
+    try:
+        frames = list(getattr(page, "frames", []) or [])
+    except Exception:
+        return False
+    for frame in frames:
+        url = getattr(frame, "url", "") or ""
+        if "challenges.cloudflare.com" not in url or "turnstile" not in url.lower():
+            continue
+        try:
+            box = frame.frame_element().bounding_box()
+        except Exception:
+            continue
+        if not box or box.get("width", 0) < 60 or box.get("height", 0) < 20:
+            continue
+        # The hidden duplicate sits fully above the viewport; skip it.
+        if box.get("y", 0) < 0 or box.get("y", 0) > 100000:
+            continue
+        x = box["x"] + _TURNSTILE_COORD[0] * box["width"]
+        y = box["y"] + _TURNSTILE_COORD[1] * box["height"]
+        try:
+            from wraith import behavior as _behavior
+
+            with contextlib.suppress(Exception):
+                _behavior.human_move(page, target=(x, y))
+            page.mouse.click(x, y, delay=70)
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def clear_challenge(
@@ -1431,6 +1668,8 @@ def clear_challenge(
         hold_handler = PressHoldHandler(enabled=press_hold, deadline=deadline)
         challenge_generation: Optional[int] = None
         challenge_seen_at: Optional[float] = None
+        turnstile_attempts = 0
+        turnstile_next_at = 0.0
 
         while True:
             # Read the rendered page once per iteration (reused below).
@@ -1445,6 +1684,16 @@ def clear_challenge(
                 challenge_seen_at = _time.monotonic()
             if holding and challenge_generation is None:
                 challenge_generation = generation_before_poll
+
+            # A visible Turnstile widget needs a click and is cross-origin, so
+            # aim at its checkbox fraction. Bounded and paced, never fatal.
+            poll_now = _time.monotonic()
+            if turnstile_attempts < _TURNSTILE_ATTEMPTS and poll_now >= turnstile_next_at:
+                turnstile_next_at = poll_now + 1.0
+                if _click_visible_turnstile(page):
+                    turnstile_attempts += 1
+                    if challenge_generation is None:
+                        challenge_generation = generation_before_poll
 
             # A stale trust cookie does not prove that a visible challenge cleared.
             try:

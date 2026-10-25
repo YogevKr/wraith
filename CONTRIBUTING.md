@@ -85,7 +85,7 @@ duck-typed against the Playwright sync API and import with no browser installed.
 
 | Module | Responsibility |
 | --- | --- |
-| `wraith/engine.py` | Stealth launcher & engine selection. `launch()` / `browser()` return a `Session`; `clear_challenge()` drives the WAAP clearance/proxy-rotation loop. Camoufox primary, patchright Chromium fallback; enforces the `playwright==1.55` pin. |
+| `wraith/engine.py` | Stealth launcher & engine selection. `launch()` / `browser()` return a `Session`; `clear_challenge()` drives the WAAP clearance/proxy-rotation loop. Camoufox primary, patchright Chromium fallback; enforces the Playwright ceiling in `_CAMOUFOX_MAX_PLAYWRIGHT`. |
 | `wraith/identity.py` | **Signature feature.** Discover Firefox/Zen/Chrome profiles, `extract_cookies`, normalize, and `inject_cookies` into a context. Firefox/Zen plaintext; Chrome raises `ChromeEncryptionError`. |
 | `wraith/harvest.py` | Live session capture. `SessionHarvester` latches the first request carrying an `Authorization` header + auth cookie; `harvest_session()` is the high-level helper. |
 | `wraith/detect.py` | Diagnostics + the WAAP signature table (`SIGNATURES`, `Signature`): `identify_waap()`, `fingerprint()`, `recaptcha_v3_score()`, `bot_detector()`, `cookie_is_valid()`, `CLEARANCE_COOKIES`. |

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wraith"
-version = "0.16.1"
+version = "0.17.0"
 description = "A stealth, identity-borrowing, MCP-native agent browser (Camoufox/Playwright)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,8 +33,8 @@ classifiers = [
 ]
 dependencies = [
     # Keep the Python launcher and its pinned browser selection together.
-    "camoufox[geoip]==0.5.6",
-    "playwright==1.55.0",
+    "camoufox[geoip]==0.5.9b5",
+    "playwright==1.62.0",
     "patchright",
     "httpx",
     # wraith.mcp works on both mcp 1.x (FastMCP) and 2.x (MCPServer) via an
@@ -53,9 +53,9 @@ Issues = "https://github.com/YogevKr/wraith/issues"
 
 [project.optional-dependencies]
 # Browser binaries (camoufox Firefox, patchright Chromium) are runtime installs,
-# not pip deps. Wraith pins Camoufox to 152.0.4-beta.30; install it with
-# `camoufox fetch official/152.0.4-beta.30` and use `patchright install chromium`
-# for the optional fallback engine.
+# not pip deps. Wraith pairs Camoufox 0.5.8 with its stamped browser build
+# (156.0.1-beta.36; `camoufox fetch` installs it). `patchright install chromium`
+# is the optional fallback engine.
 # The no-browser TLS-impersonation fast path (wraith.fastpath) needs curl_cffi.
 fastpath = ["curl_cffi>=0.7"]
 dev = ["pytest", "ruff", "curl_cffi>=0.7"]

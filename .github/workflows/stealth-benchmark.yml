@@ -43,7 +43,7 @@ jobs:
         if: matrix.engine == 'camoufox'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: uv run camoufox fetch official/152.0.4-beta.30
+        run: uv run camoufox fetch
 
       - name: Install Camoufox system libraries
         if: matrix.engine == 'camoufox' && runner.os == 'Linux'

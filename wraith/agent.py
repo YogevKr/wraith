@@ -53,6 +53,7 @@ Reusing an existing stealth session (identity already borrowed, etc.)::
 from __future__ import annotations
 
 import contextlib
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -419,6 +420,18 @@ _POINTER_PROBE_JS = """() => {
 }"""
 _POINTER_READ_JS = "() => window.__wraithPointer || null"
 _POINTER_RESET_JS = "() => { window.__wraithPointer = null; }"
+
+# Whether the top element at viewport point (x, y) is the target or inside it.
+# Descends shadow roots, like the snapshot's own visible-point probe.
+_HITS_POINT_JS = """(el, [x, y]) => {
+  let hit = document.elementFromPoint(x, y);
+  while (hit && hit.shadowRoot && typeof hit.shadowRoot.elementFromPoint === 'function') {
+    const inner = hit.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === hit) break;
+    hit = inner;
+  }
+  return !!hit && (hit === el || el.contains(hit));
+}"""
 
 
 def _refine_in_frame(
@@ -1296,28 +1309,66 @@ class AgentBrowser:
             amount: Pixels to scroll for the relative directions
                 (down/up/left/right). Ignored for ``top``/``bottom``.
 
+        Relative scrolls use real ``wheel`` events (a human scroll stream);
+        ``top``/``bottom`` jump with ``scrollTo``. A blocked wheel falls back
+        to ``scrollBy``.
+
         Returns:
             A fresh :class:`~wraith.snapshot.Snapshot` of the scrolled page.
         """
         amt = int(amount)
         d = (direction or "down").lower()
-        if d == "up":
-            js = f"window.scrollBy(0, {-amt})"
-        elif d == "top":
-            js = "window.scrollTo(0, 0)"
-        elif d == "bottom":
-            js = "window.scrollTo(0, document.body.scrollHeight)"
-        elif d == "left":
-            js = f"window.scrollBy({-amt}, 0)"
-        elif d == "right":
-            js = f"window.scrollBy({amt}, 0)"
-        else:  # "down" and any unknown value
-            js = f"window.scrollBy(0, {amt})"
-
-        with contextlib.suppress(Exception):
-            self.page.evaluate(js)
+        if d in ("top", "bottom"):
+            js = (
+                "window.scrollTo(0, 0)"
+                if d == "top"
+                else "window.scrollTo(0, document.body.scrollHeight)"
+            )
+            with contextlib.suppress(Exception):
+                self.page.evaluate(js)
+        else:
+            dx, dy = 0, 0
+            if d == "up":
+                dy = -amt
+            elif d == "left":
+                dx = -amt
+            elif d == "right":
+                dx = amt
+            else:  # "down" and any unknown value
+                dy = amt
+            self._wheel_scroll(dx, dy)
         self._wait_for_settle()
         return self.snapshot()
+
+    def _wheel_scroll(self, dx: int, dy: int) -> None:
+        """Scroll with real ``wheel`` events, falling back to a JS jump.
+
+        ``window.scrollBy`` moves the document in one step and fires only
+        ``scroll``; behavioral sensors (Akamai, DataDome) listen for the
+        ``wheel`` stream a hand produces. Emit several small notches, then
+        verify the page moved -- a fixed/absolute element under the cursor can
+        swallow a wheel event, in which case the deterministic JS path runs.
+        """
+        before: Optional[list[float]] = None
+        with contextlib.suppress(Exception):
+            before = self.page.evaluate("() => [window.scrollX, window.scrollY]")
+        steps = max(1, int(max(abs(dx), abs(dy)) / 120))
+        try:
+            for _ in range(steps):
+                self.page.mouse.wheel(dx / steps, dy / steps)
+                if steps > 1:
+                    self.page.wait_for_timeout(random.uniform(12, 40))
+            self.page.wait_for_timeout(60)
+        except Exception:
+            before = None
+        if before is not None:
+            after: Optional[list[float]] = None
+            with contextlib.suppress(Exception):
+                after = self.page.evaluate("() => [window.scrollX, window.scrollY]")
+            if after == before:
+                js = f"window.scrollBy({dx}, {dy})"
+                with contextlib.suppress(Exception):
+                    self.page.evaluate(js)
 
     def drag(
         self,
@@ -1754,8 +1805,43 @@ class AgentBrowser:
         point = target.evaluate(_POINTER_POINT_JS)
         if not point:
             raise RuntimeError("The visible target is covered or unavailable")
+        point = self._offset_click_point(target, point)
+        # Travel to the point like a hand instead of teleporting the cursor.
+        with contextlib.suppress(Exception):
+            from .behavior import human_move
+
+            human_move(self.page, target=point)
         # Never retry a dispatched click: it may have submitted a purchase.
-        self.page.mouse.click(point["x"], point["y"], delay=click_hold_ms())
+        self.page.mouse.click(point[0], point[1], delay=click_hold_ms())
+
+    def _offset_click_point(
+        self, target: Any, center: Any
+    ) -> tuple[float, float]:
+        """A random point near the element center that still hits the element.
+
+        A hand rarely lands on the exact center. Pick a point in the middle
+        half of the element, and fall back to ``center`` when the point would
+        hit a child outside the target or another overlay. ``center`` may be a
+        ``{x, y}`` mapping (the snapshot probe) or a pair.
+        """
+        if hasattr(center, "get"):
+            cx, cy = float(center["x"]), float(center["y"])
+        else:
+            cx, cy = float(center[0]), float(center[1])
+        try:
+            box = target.bounding_box()
+        except Exception:
+            box = None
+        if not box or not box.get("width") or not box.get("height"):
+            return cx, cy
+        x = cx + random.uniform(-0.22, 0.22) * box["width"]
+        y = cy + random.uniform(-0.22, 0.22) * box["height"]
+        try:
+            if target.evaluate(_HITS_POINT_JS, [x, y]):
+                return (x, y)
+        except Exception:
+            pass
+        return cx, cy
 
     def _pointer_focus(self, index: int) -> Any:
         """Return the pinned field after focusing its current visible point."""

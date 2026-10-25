@@ -12,7 +12,7 @@ CHROME_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
 )
-FIREFOX_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0"
+FIREFOX_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Firefox/158.0"
 CHROME_H2 = "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p"
 FIREFOX_H2 = "1:65536;2:0;4:131072;5:16384|12517377|0|m,p,a,s"
 

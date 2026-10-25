@@ -68,13 +68,13 @@ jobs:
         uses: actions/cache@v6.1.0
         with:
           path: ~/Library/Caches/camoufox
-          key: camoufox-${{ runner.os }}-${{ runner.arch }}-152.0.4-beta.30
+          key: camoufox-${{ runner.os }}-${{ runner.arch }}-0.5.9b5-158.0-beta.40
 
       - name: Fetch pinned Camoufox
         env:
           # Authenticated GitHub API calls avoid the anonymous rate limit.
           GITHUB_TOKEN: ${{ github.token }}
-        run: uv run camoufox fetch official/152.0.4-beta.30
+        run: uv run camoufox fetch
 
       - name: Cache patched Chromium
         uses: actions/cache@v6.1.0

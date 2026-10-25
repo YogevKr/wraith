@@ -49,14 +49,18 @@ You don't *defeat* those checks — you make them **not run**. That is why Camou
 is primary and Chromium is fallback, even though a well-patched Chromium can also
 score high on general benchmarks.
 
-### The hard version pin (this WILL bite you)
-- **Camoufox 0.4.x CRASHES with `playwright>=1.60`.** It's a Firefox `pageError`
-  serialization bug: `coreBundle.js` reads `pageError.location.url`, which is
-  absent/changed in newer Playwright, throwing during page error handling.
-- **=> Pin `playwright==1.55.x` for the Camoufox path** (or run Camoufox in its
-  own venv isolated from a newer Playwright).
+### The version pin (this WILL bite you)
+- **Camoufox 0.4.x CRASHED with `playwright>=1.60`.** It was a Firefox
+  `pageError` serialization bug: `coreBundle.js` reads `pageError.location.url`,
+  which is absent/changed in newer Playwright, throwing during page error
+  handling.
+- **Camoufox 0.5.6 fixed it** with a browser/playwright floor table; 0.5.9b5
+  declares `playwright<1.63`. **=> Pin `playwright==1.62.x` for the Camoufox
+  path** and pair it with the browser build the package ships with
+  (`camoufox fetch`). A browser and Playwright from different releases speak
+  different protocol versions.
 - **Detect and warn on mismatch** at startup: if the Camoufox path is selected
-  and `playwright.__version__ >= 1.60`, refuse / warn loudly rather than crash
+  and `playwright.__version__ >= 1.63`, refuse / warn loudly rather than crash
   cryptically mid-run.
 
 ### Chromium fallback hardening (when you must use patchright)
@@ -584,7 +588,7 @@ Tier 1, and — critically — **don't expect to brute Tier 3.**
 1. **Identify the system** (`DETECTION.md` cheat sheet) from headers/cookies/status,
    and **classify the layer** (§0): JS challenge (247) / reputation gate /
    IP rate-limit (474/481).
-2. **Pick the engine:** Camoufox primary (with `playwright==1.55` pinned);
+2. **Pick the engine:** Camoufox primary (with `playwright==1.62` pinned);
    patchright fallback (`no_viewport=True`, suppress `Runtime.enable`, strip
    automation args). For a plain `247` this alone gets you through — Camoufox
    solves `ac_v2` cookie-free.

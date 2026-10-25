@@ -151,7 +151,7 @@ From source, with [uv](https://docs.astral.sh/uv/):
 ```bash
 git clone https://github.com/YogevKr/wraith && cd wraith
 uv sync
-uv run camoufox fetch official/152.0.4-beta.30   # Wraith's pinned Camoufox build
+uv run camoufox fetch                             # the Camoufox build Wraith pairs with
 uv run patchright install chromium               # optional: the Chromium engine
 ```
 
@@ -159,7 +159,7 @@ Or with pip:
 
 ```bash
 pip install "wraith[fastpath] @ git+https://github.com/YogevKr/wraith"
-camoufox fetch official/152.0.4-beta.30
+camoufox fetch
 ```
 
 > [!NOTE]
@@ -473,14 +473,16 @@ and `detect_waap.py`.
 <details>
 <summary>Version pins</summary>
 
-Wraith pins **`playwright == 1.55.x`**. Camoufox 0.4.x crashes on
-`playwright >= 1.60` (a Firefox `pageError` serialization bug). Wraith finds
-a mismatch at launch and gives an error with the fix. patchright has its own
-version and is not affected.
+Wraith pins **`playwright == 1.62.x`** and **Camoufox `0.5.9b5`**. Camoufox
+0.4.x crashed on `playwright >= 1.60` (a Firefox `pageError` serialization
+bug); 0.5.6 fixed it with a browser/playwright floor table. Wraith still
+refuses a Playwright above the package's tested range and gives an error with
+the fix. patchright has its own version and is not affected.
 
-Wraith also pins the Camoufox browser build to **`152.0.4-beta.30`**.
-Camoufox `156.0.1-beta.32` removed `navigator.appCodeName`, which the pinned
-Python launcher still generates. Wraith selects this build even when newer
+Wraith also pairs the Camoufox browser with the build its package ships with
+(**`158.0-beta.40`**), because a browser and Playwright from different
+releases speak different versions of the automation protocol. `camoufox
+fetch` installs the paired build. Wraith selects that build even when newer
 releases exist. If it is missing, launch fails with the install command; it
 does not fetch a new beta.
 

@@ -514,7 +514,7 @@ a warmed identity and let the reputation come along for free.**
 - [`docs/DETECTION.md`](DETECTION.md) — identify which WAAP/anti-bot system a
   target runs (header/cookie/status cheat sheet + per-vendor deep dives).
 - [`docs/PLAYBOOK.md`](PLAYBOOK.md) — the per-layer decision playbook (engine
-  choice, the `playwright==1.55` pin, identity borrowing, proxy rotation,
+  choice, the `playwright==1.62` pin, identity borrowing, proxy rotation,
   behavior).
 - [`README.md`](../README.md) — install, the `wraith` CLI, and the library
   quickstart.

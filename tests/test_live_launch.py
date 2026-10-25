@@ -18,4 +18,4 @@ def test_pinned_camoufox_launches_and_renders():
 
         assert session.engine == "camoufox"
         assert session.page.text_content("#ok") == "wraith"
-        assert "Firefox/152" in session.page.evaluate("navigator.userAgent")
+        assert "Firefox/158" in session.page.evaluate("navigator.userAgent")

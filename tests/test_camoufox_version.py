@@ -11,10 +11,10 @@ from wraith import engine
 
 
 def test_camoufox_browser_selection_is_pinned() -> None:
-    assert engine._CAMOUFOX_BROWSER_VERSION == "152.0.4-beta.30"
+    assert engine._CAMOUFOX_BROWSER_VERSION == "158.0-beta.40"
     assert engine._camoufox_browser_options() == {
-        "browser": "152.0.4-beta.30",
-        "ff_version": 152,
+        "browser": "158.0-beta.40",
+        "ff_version": 158,
     }
 
 
@@ -26,7 +26,7 @@ def _launch_missing_camoufox(monkeypatch, on_options) -> None:
             on_options(options)
 
         def __enter__(self):
-            raise ValueError("Browser version '152.0.4-beta.30' not found")
+            raise ValueError("Browser version '158.0-beta.40' not found")
 
     module = types.ModuleType("camoufox.sync_api")
     module.Camoufox = FakeCamoufox
@@ -34,7 +34,7 @@ def _launch_missing_camoufox(monkeypatch, on_options) -> None:
     monkeypatch.setattr(engine, "_assert_camoufox_playwright_ok", lambda: None)
     monkeypatch.setattr(engine, "_camoufox_pinned_executable", lambda: "/tmp/camoufox")
 
-    with pytest.raises(engine.EngineUnavailableError, match="camoufox fetch official/152.0.4-beta.30"):
+    with pytest.raises(engine.EngineUnavailableError, match="camoufox fetch official/158.0-beta.40"):
         engine._launch_camoufox(
             headless=True,
             geoip=False,
@@ -51,8 +51,10 @@ def test_missing_camoufox_browser_has_actionable_error(monkeypatch) -> None:
 
     _launch_missing_camoufox(monkeypatch, seen.update)
 
-    assert seen["browser"] == "152.0.4-beta.30"
-    assert seen["ff_version"] == 152
+    # 0.5.9b5 rejects browser= and executable_path= together; the pinned
+    # executable already selects the build, so browser is dropped.
+    assert "browser" not in seen
+    assert seen["ff_version"] == 158
     assert seen["executable_path"] == "/tmp/camoufox"
 
 
@@ -64,7 +66,7 @@ def test_missing_pinned_camoufox_binary_does_not_fetch(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "camoufox.multiversion", multiversion)
     monkeypatch.setitem(sys.modules, "camoufox.pkgman", pkgman)
 
-    with pytest.raises(engine.EngineUnavailableError, match="official/152.0.4-beta.30"):
+    with pytest.raises(engine.EngineUnavailableError, match="official/158.0-beta.40"):
         engine._camoufox_pinned_executable()
 
 
@@ -112,7 +114,10 @@ def test_properties_beside_executable_take_precedence(tmp_path, monkeypatch) -> 
 
     engine._ensure_camoufox_bundle_properties()
 
-    assert camoufox_utils._load_properties(path=exe) == {"navigator.userAgent": "str"}
+    # Camoufox 0.5.8 returns {property: {property, type}}; 0.5.6 returned
+    # {property: type}. The beside file must win over the empty Resources file.
+    result = camoufox_utils._load_properties(path=exe)
+    assert "navigator.userAgent" in result
 
 
 def test_camoufox_launch_applies_bundle_fix(monkeypatch) -> None:

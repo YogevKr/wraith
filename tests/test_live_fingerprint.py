@@ -184,10 +184,15 @@ def test_agent_input_looks_like_a_person(base, engine):
     assert probe["moves"] > 0, "the mouse jumped to the target"
     held = first_click[3]["time"] - first_click[1]["time"]
     assert held > 5, f"the button was held for {held:.1f} ms"
-    keydowns = [
-        e["key"] for e in events if e["type"] == "keydown" and e["key"] in TYPED
-    ]
-    assert "".join(keydowns).endswith(TYPED)
+    keydowns = [e["key"] for e in events if e["type"] == "keydown"]
+    # A typo then Backspace is allowed; the net keystrokes must spell TYPED.
+    typed: list[str] = []
+    for key in keydowns:
+        if key == "Backspace":
+            typed.pop()
+        elif len(key) == 1:
+            typed.append(key)
+    assert "".join(typed) == TYPED
     downs = {}
     holds = []
     for e in events:

@@ -247,3 +247,48 @@ def test_engine_humanizes_reads_the_session_flag():
 
     assert AgentBrowser(session=_S())._engine_humanizes() is True
     assert AgentBrowser(session=object())._engine_humanizes() is False
+
+
+def test_type_secret_uses_human_typing_with_a_mistake_rate(monkeypatch):
+    from wraith import behavior as behavior_mod
+
+    calls: dict = {}
+
+    def fake(locator, value, click=True, **kw):
+        calls.update(value=value, click=click, mistake_rate=kw.get("mistake_rate"))
+
+    monkeypatch.setattr(behavior_mod, "human_type", fake)
+
+    class _Loc:
+        def fill(self, v):
+            calls["filled"] = v
+
+    AgentBrowser(session=object())._type_secret(_Loc(), "s3cret", click=True)
+
+    assert calls["value"] == "s3cret"
+    assert calls["click"] is True
+    assert calls["mistake_rate"] == ag._SECRET_MISTAKE_RATE > 0
+
+
+def test_type_secret_falls_back_to_fill_when_typing_fails(monkeypatch):
+    from wraith import behavior as behavior_mod
+
+    def boom(*a, **k):
+        raise RuntimeError("no per-key typing")
+
+    monkeypatch.setattr(behavior_mod, "human_type", boom)
+
+    class _Loc:
+        def __init__(self):
+            self.filled = None
+
+        def fill(self, v):
+            self.filled = v
+
+    loc = _Loc()
+    AgentBrowser(session=object())._type_secret(loc, "v", click=False)
+    assert loc.filled == "v"
+
+
+def test_typing_mistake_rate_is_nonzero():
+    assert 0 < ag._TYPE_MISTAKE_RATE < 0.2

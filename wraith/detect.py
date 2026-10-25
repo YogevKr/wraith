@@ -83,6 +83,14 @@ RECAPTCHA_V3_TEST_URL = "https://cleantalk.org/recaptcha-v3-score-test"
 BOT_DETECTOR_URL = "https://bot-detector.rebrowser.net/"
 TLS_FINGERPRINT_URL = "https://tls.peet.ws/api/all"
 
+# Fallback probe User-Agent when curl_cffi (the browser-TLS fast path) is
+# absent. Matches Wraith's pinned Camoufox build so the probe and the browser
+# do not disagree about the client.
+_DEFAULT_PROBE_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) "
+    "Gecko/20100101 Firefox/158.0"
+)
+
 # How fresh the reCAPTCHA result line's timestamp must be (seconds) for us to
 # trust it as belonging to *this* run rather than a cached "Last Score".
 _RECAPTCHA_FRESHNESS_S = 120.0
@@ -1290,19 +1298,38 @@ def _signals_from_httpx(resp: httpx.Response) -> _Signals:
     ).finalize()
 
 
+def _browser_tls_get(url: str) -> Any:
+    """GET ``url`` with a real browser TLS hello, or ``None`` when unavailable.
+
+    Prefers the fast path (curl_cffi) so the probe's TLS and HTTP/2 match a
+    browser and its User-Agent is Wraith's pinned Camoufox UA, not a stale
+    hard-coded Chrome string. Falls back to httpx when curl_cffi is absent.
+    """
+    try:
+        from . import fastpath
+    except Exception:  # pragma: no cover - import guard
+        return None
+    try:
+        return fastpath.fetch(
+            url,
+            allow_redirects=True,
+            headers={"User-Agent": fastpath.camoufox_user_agent()},
+        )
+    except Exception:
+        return None
+
+
 def _signals_from_url(url: str) -> _Signals:
-    with httpx.Client(
-        follow_redirects=True,
-        timeout=20.0,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            )
-        },
-    ) as client:
-        resp = client.get(url)
+    # A browser TLS hello first: the Python httpx client's TLS is not any
+    # browser's, so a TLS-bound defense can answer the two probes differently.
+    resp = _browser_tls_get(url)
+    if resp is None:
+        with httpx.Client(
+            follow_redirects=True,
+            timeout=20.0,
+            headers={"User-Agent": _DEFAULT_PROBE_UA},
+        ) as client:
+            resp = client.get(url)
     sig = _signals_from_httpx(resp)
     sig.url = url
     return sig

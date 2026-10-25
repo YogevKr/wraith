@@ -6,6 +6,21 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-25
+
+### Changed
+
+- `detect.fingerprint(url)` now probes with a real browser TLS hello (the
+  fast path) and Wraith's pinned Camoufox User-Agent, instead of httpx's
+  Python TLS and a stale hard-coded Chrome 124 UA. It falls back to httpx
+  when curl_cffi is absent.
+- Agent typing injects a small typo-then-Backspace by default
+  (`_TYPE_MISTAKE_RATE`); `human_type` itself stays at 0 for callers that
+  want it.
+- Secret and vault fills now type with human key events instead of an atomic
+  `fill`, so a login form sees keydown/keyup. A per-key failure still falls
+  back to `fill`.
+
 ## [0.19.0] - 2026-10-25
 
 ### Added

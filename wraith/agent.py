@@ -132,6 +132,10 @@ _FOCUSED_VALUE_JS = """() => {
 
 
 _SELECT_TIMEOUT_MS = 3000
+#: Probability that human typing inserts a wrong key then Backspace. Low, but
+#: non-zero: it is the strongest human typing signal, and 0 reads as a script.
+_TYPE_MISTAKE_RATE = 0.04
+_SECRET_MISTAKE_RATE = 0.03
 # A <select> forgets the typed prefix about one second after the last key.
 _TYPE_AHEAD_RESET_S = 1.2
 _FILE_CHOOSER_TIMEOUT_MS = 5000
@@ -1180,7 +1184,7 @@ class AgentBrowser:
         try:
             from .behavior import human_type
 
-            human_type(keys, text, click=False)
+            human_type(keys, text, click=False, mistake_rate=_TYPE_MISTAKE_RATE)
             typed = True
         except Exception:
             typed = False
@@ -1279,7 +1283,7 @@ class AgentBrowser:
             if not element.evaluate(_POINTER_POINT_JS):
                 raise SecretPolicyError("The target field is covered or unavailable")
             self._secret_state.tainted = True
-            element.fill(material.reveal())
+            self._type_secret(locator, material.reveal(), click=False)
         except SecretPolicyError:
             raise
         except Exception:
@@ -1290,6 +1294,21 @@ class AgentBrowser:
             raise SecretProviderError("The browser could not fill the vault item")
         self._wait_for_settle()
         return True
+
+    def _type_secret(self, locator: Any, value: str, *, click: bool) -> None:
+        """Type a secret with human key events; fall back to an atomic fill.
+
+        An atomic ``fill`` fires no keydown/keyup and is the most robotic thing
+        on a login form. ``human_type`` presses each key. If the field or the
+        behavior helpers make per-key typing fail, fall back to ``fill`` (which
+        replaces whatever partial value was typed).
+        """
+        try:
+            from .behavior import human_type
+
+            human_type(locator, value, click=click, mistake_rate=_SECRET_MISTAKE_RATE)
+        except Exception:
+            locator.fill(value)
 
     def fill_secret(
         self,
@@ -1382,7 +1401,7 @@ class AgentBrowser:
             # Reserve the use before the browser can receive any secret bytes.
             secret_state.uses[usage_key] = uses + 1
             secret_state.tainted = True
-            element.fill(material.reveal())
+            self._type_secret(locator, material.reveal(), click=True)
         except (SecretCapabilityError, SecretPolicyError):
             raise
         except Exception:

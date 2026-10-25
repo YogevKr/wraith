@@ -37,6 +37,7 @@ __all__ = [
     "cookies_from_context",
     "from_context",
     "classify",
+    "camoufox_user_agent",
 ]
 
 # Latest presets available in curl_cffi 0.15 (see BrowserType). Firefox is the
@@ -96,6 +97,28 @@ def _require_curl() -> Any:
             "The fast path needs curl_cffi. Install it with: pip install curl_cffi"
         ) from exc
     return _cc
+
+
+def camoufox_user_agent() -> str:
+    """The User-Agent of Wraith's pinned Camoufox build for this host OS.
+
+    Used by :func:`wraith.detect.fingerprint` so a URL probe sends the exact
+    browser UA that matches the fast path's TLS hello, instead of a stale
+    hard-coded Chrome string.
+    """
+    from .engine import _host_os_family
+
+    version = _CAMOUFOX_BROWSER_VERSION.split(".")[0]
+    family = _host_os_family()
+    if family == "windows":
+        plat = "Windows NT 10.0; Win64; x64"
+    elif family == "macos":
+        plat = "Macintosh; Intel Mac OS X 10.15"
+    else:
+        plat = "X11; Linux x86_64"
+    return (
+        f"Mozilla/5.0 ({plat}; rv:{version}.0) Gecko/20100101 Firefox/{version}.0"
+    )
 
 
 def ua_to_impersonate(user_agent: Optional[str]) -> str:

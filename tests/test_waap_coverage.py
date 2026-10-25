@@ -201,3 +201,59 @@ def test_clearance_cookies_export_is_consistent():
     assert "_abck" in CLEARANCE_COOKIES["Akamai"]
     assert "Cloudflare" in CLEARANCE_COOKIES
     assert "cf_clearance" in CLEARANCE_COOKIES["Cloudflare"]
+
+
+# --------------------------------------------------------------------------- #
+# URL probe: browser TLS first, httpx fallback
+# --------------------------------------------------------------------------- #
+class _ProbeHeaders(dict):
+    def get_list(self, name):
+        return [self[name]] if name in self else []
+
+
+class _ProbeResponse:
+    def __init__(self, headers, status=200, text="", url="https://target.test/"):
+        import types
+
+        self.headers = _ProbeHeaders(headers)
+        self.status_code = status
+        self.text = text
+        self.request = types.SimpleNamespace(url=url)
+
+
+def test_url_probe_prefers_the_browser_tls_fast_path(monkeypatch):
+    from wraith import detect, fastpath
+
+    resp = _ProbeResponse({"cf-ray": "abc", "server": "cloudflare"})
+    calls: list = []
+    monkeypatch.setattr(fastpath, "fetch", lambda url, **kw: (calls.append(url) or resp))
+
+    sig = detect._signals_from_url("https://target.test/")
+
+    assert calls == ["https://target.test/"]
+    assert [s.name for s, _ in detect._match_all(sig)] == ["Cloudflare"]
+
+
+def test_url_probe_falls_back_to_httpx_without_curl_cffi(monkeypatch):
+    from wraith import detect, fastpath
+
+    monkeypatch.setattr(
+        fastpath, "fetch", lambda url, **kw: (_ for _ in ()).throw(RuntimeError("no curl"))
+    )
+    resp = _ProbeResponse({"server": "cloudflare", "cf-ray": "abc"})
+    import httpx
+
+    class _Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, url):
+            return resp
+
+    monkeypatch.setattr(httpx, "Client", lambda **kw: _Client())
+
+    sig = detect._signals_from_url("https://target.test/")
+    assert [s.name for s, _ in detect._match_all(sig)] == ["Cloudflare"]

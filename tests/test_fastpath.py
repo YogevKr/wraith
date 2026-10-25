@@ -262,3 +262,13 @@ def test_wraith_reexports_fastpath_symbols():
 
     for name in ("fetch", "replay", "to_cookiejar", "classify_response"):
         assert hasattr(wraith, name), f"wraith.{name} not exported"
+
+
+def test_camoufox_user_agent_matches_the_pinned_build():
+    from wraith import fastpath
+    from wraith.engine import _CAMOUFOX_BROWSER_VERSION
+
+    version = _CAMOUFOX_BROWSER_VERSION.split(".")[0]
+    ua = fastpath.camoufox_user_agent()
+    assert f"Firefox/{version}.0" in ua and f"rv:{version}.0" in ua
+    assert fastpath.ua_to_impersonate(ua) == f"camoufox{version}"

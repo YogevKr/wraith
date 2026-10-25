@@ -83,13 +83,23 @@ RECAPTCHA_V3_TEST_URL = "https://cleantalk.org/recaptcha-v3-score-test"
 BOT_DETECTOR_URL = "https://bot-detector.rebrowser.net/"
 TLS_FINGERPRINT_URL = "https://tls.peet.ws/api/all"
 
-# Fallback probe User-Agent when curl_cffi (the browser-TLS fast path) is
-# absent. Matches Wraith's pinned Camoufox build so the probe and the browser
-# do not disagree about the client.
-_DEFAULT_PROBE_UA = (
+# Last-resort probe User-Agent when the engine module cannot be imported.
+# Normally :func:`_default_probe_ua` derives it from the pinned Camoufox build
+# and this host OS, so a version bump cannot leave it stale.
+_FALLBACK_PROBE_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) "
     "Gecko/20100101 Firefox/158.0"
 )
+
+
+def _default_probe_ua() -> str:
+    """User-Agent for the httpx fallback probe (the pinned Camoufox UA)."""
+    try:
+        from . import fastpath
+
+        return fastpath.camoufox_user_agent()
+    except Exception:  # pragma: no cover - cheap last resort
+        return _FALLBACK_PROBE_UA
 
 # How fresh the reCAPTCHA result line's timestamp must be (seconds) for us to
 # trust it as belonging to *this* run rather than a cached "Last Score".
@@ -1327,7 +1337,7 @@ def _signals_from_url(url: str) -> _Signals:
         with httpx.Client(
             follow_redirects=True,
             timeout=20.0,
-            headers={"User-Agent": _DEFAULT_PROBE_UA},
+            headers={"User-Agent": _default_probe_ua()},
         ) as client:
             resp = client.get(url)
     sig = _signals_from_httpx(resp)

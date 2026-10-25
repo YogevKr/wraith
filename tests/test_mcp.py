@@ -113,7 +113,7 @@ def test_tool_errors_reach_the_client_with_their_reason(monkeypatch):
     from wraith.engine import NavigationFailedError
 
     class FailingBrowser:
-        def navigate(self, url):
+        def navigate(self, url, **_kw):
             raise NavigationFailedError(f"Navigation to {url} failed: NS_ERROR_UNKNOWN_HOST")
 
     monkeypatch.setattr(m, "_get_browser", lambda: FailingBrowser())
@@ -123,3 +123,18 @@ def test_tool_errors_reach_the_client_with_their_reason(monkeypatch):
 
     assert "NS_ERROR_UNKNOWN_HOST" in str(info.value)
     assert "NavigationFailedError" in str(info.value)
+
+
+def test_navigate_forwards_require_clearance(monkeypatch):
+    class FakeBrowser:
+        def __init__(self):
+            self.seen = None
+
+        def navigate(self, url, **kw):
+            self.seen = (url, kw)
+            return Snapshot(url, "", [])
+
+    browser = FakeBrowser()
+    monkeypatch.setattr(m, "_get_browser", lambda: browser)
+    asyncio.run(m.navigate("https://x.test/", require_clearance=True))
+    assert browser.seen == ("https://x.test/", {"require_clearance": True})

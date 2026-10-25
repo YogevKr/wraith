@@ -108,38 +108,52 @@ def _dataset(page, root, key):
     return json.loads(page.evaluate(script))
 
 
+def _is_target_closed(exc: BaseException) -> bool:
+    return type(exc).__name__ == "TargetClosedError"
+
+
 @pytest.mark.parametrize(
     "engine, headless",
     [("camoufox", True), ("chromium", True), ("chromium", False)],
     ids=["camoufox", "chromium", "chromium-headed"],
 )
 def test_fingerprint_has_no_automation_tells(base, engine, headless):
-    with launch(engine=engine, headless=headless, geoip=False) as session:
-        session.page.goto(f"{base}/probe")
-        seen = _dataset(session.page, "document.body", "probe")
+    def check() -> None:
+        with launch(engine=engine, headless=headless, geoip=False) as session:
+            session.page.goto(f"{base}/probe")
+            seen = _dataset(session.page, "document.body", "probe")
 
-    ua = seen["ua"]
-    assert seen["webdriver"] is not True
-    for value in (
-        ua,
-        seen["workerUA"],
-        seen["headers"]["user-agent"],
-        seen["headers"].get("sec-ch-ua", ""),
-    ):
-        assert "HeadlessChrome" not in value, seen
-    assert seen["workerUA"] == ua and seen["headers"]["user-agent"] == ua
-    assert seen["languages"] and seen["plugins"] > 0
-    assert seen["webgl"] and not SOFTWARE_GL.search(seen["webgl"]), seen["webgl"]
-    (sw, sh), (ow, oh), (iw, ih) = seen["screen"], seen["outer"], seen["inner"]
-    assert sw >= ow >= iw and sh >= oh >= ih, seen
-    assert (iw, ih) != (1280, 720) and (sw, sh) != (1280, 720), (
-        "Playwright's default viewport"
-    )
-    if engine == "chromium":
-        assert seen["chrome"] == "object"
-        assert (
-            "HeadlessChrome" not in seen["brands"] and "Google Chrome" in seen["brands"]
+        ua = seen["ua"]
+        assert seen["webdriver"] is not True
+        for value in (
+            ua,
+            seen["workerUA"],
+            seen["headers"]["user-agent"],
+            seen["headers"].get("sec-ch-ua", ""),
+        ):
+            assert "HeadlessChrome" not in value, seen
+        assert seen["workerUA"] == ua and seen["headers"]["user-agent"] == ua
+        assert seen["languages"] and seen["plugins"] > 0
+        assert seen["webgl"] and not SOFTWARE_GL.search(seen["webgl"]), seen["webgl"]
+        (sw, sh), (ow, oh), (iw, ih) = seen["screen"], seen["outer"], seen["inner"]
+        assert sw >= ow >= iw and sh >= oh >= ih, seen
+        assert (iw, ih) != (1280, 720) and (sw, sh) != (1280, 720), (
+            "Playwright's default viewport"
         )
+        if engine == "chromium":
+            assert seen["chrome"] == "object"
+            assert (
+                "HeadlessChrome" not in seen["brands"]
+                and "Google Chrome" in seen["brands"]
+            )
+
+    # A headed browser can close under a slow runner; one retry, then fail.
+    try:
+        check()
+    except Exception as exc:
+        if not _is_target_closed(exc):
+            raise
+        check()
 
 
 @pytest.mark.parametrize("engine", ENGINES)

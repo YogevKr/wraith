@@ -434,18 +434,24 @@ async def _step(action: "Callable[[AgentBrowser], Any]", include_snapshot: bool)
 
 
 @app.tool()
-async def navigate(url: str, include_snapshot: bool = True) -> str:
+async def navigate(
+    url: str, require_clearance: bool = False, include_snapshot: bool = True
+) -> str:
     """Open a URL and return an indexed snapshot of the page's interactive
     elements.
 
     Automatically attempts WAAP challenges, including HUMAN/PerimeterX Press & Hold,
     and dismisses common cookie/consent banners. No separate challenge command is needed.
     If verification fails, navigation reports an error; do not assume clearance.
+    Set ``require_clearance=true`` on Akamai: a clean 200 does not count, so it
+    waits for a valid clearance cookie (``_abck`` can be present but unsolved).
     Each line is ``[index]<tag role=...>text</tag>``;
     use the index with `click` / `type_text`. Pass ``include_snapshot=false`` for
     a compact summary (saves tokens; call `snapshot()` when you need the list).
     """
-    return await _step(lambda b: b.navigate(url), include_snapshot)
+    return await _step(
+        lambda b: b.navigate(url, require_clearance=require_clearance), include_snapshot
+    )
 
 
 @app.tool()

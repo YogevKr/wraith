@@ -958,7 +958,7 @@ class AgentBrowser:
             parts.append("content changed")
         snap.changed = "; ".join(parts) if parts else "no visible change detected"
 
-    def navigate(self, url: str) -> Snapshot:
+    def navigate(self, url: str, *, require_clearance: bool = False) -> Snapshot:
         """Navigate to ``url`` through the WAAP, dismiss consent, and snapshot.
 
         The navigation is routed through :func:`wraith.engine.clear_challenge`
@@ -969,6 +969,9 @@ class AgentBrowser:
 
         Args:
             url: The URL to open.
+            require_clearance: When ``True``, a clean 200 does not count; wait
+                for a valid clearance cookie. Use it on Akamai, where a cookie
+                can be present but still unsolved (``_abck`` ``~-1~``).
 
         When a ``reputation`` source was supplied at construction, this also
         runs :func:`wraith.recaptcha_v3.ensure_high_score` *after* the WAAP is
@@ -990,7 +993,9 @@ class AgentBrowser:
         # clear_challenge drives the session we pass and never closes a
         # caller-supplied session — so it is safe to hand it ours regardless of
         # ownership. Returns the same Session object on success.
-        _engine.clear_challenge(url, session=self.session)
+        _engine.clear_challenge(
+            url, session=self.session, require_clearance=require_clearance
+        )
 
         self._wait_for_settle()
         self._dismiss_consent()

@@ -6,6 +6,26 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-25
+
+### Added
+
+- `navigate(url, require_clearance=True)` on `AgentBrowser` and the MCP
+  `navigate` tool. It reaches `clear_challenge`'s cookie-only mode from the
+  agent and CLI, for Akamai sites where a clean 200 is not proof.
+
+### Changed
+
+- The httpx fallback probe User-Agent is derived from the pinned Camoufox
+  build and host OS, so it can no longer drift on a version bump.
+- The headed-Chromium fingerprint test retries once on a `TargetClosedError`,
+  which a slow runner can raise.
+
+### Removed
+
+- Stale local wheels under `dist/`, and the superseded `v0.18.0` release
+  (the tag stays).
+
 ## [0.20.0] - 2026-10-25
 
 ### Changed

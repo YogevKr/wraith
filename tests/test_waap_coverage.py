@@ -257,3 +257,11 @@ def test_url_probe_falls_back_to_httpx_without_curl_cffi(monkeypatch):
 
     sig = detect._signals_from_url("https://target.test/")
     assert [s.name for s, _ in detect._match_all(sig)] == ["Cloudflare"]
+
+
+def test_default_probe_ua_matches_the_pinned_build():
+    from wraith import detect
+    from wraith.engine import _CAMOUFOX_BROWSER_VERSION
+
+    version = _CAMOUFOX_BROWSER_VERSION.split(".")[0]
+    assert f"Firefox/{version}.0" in detect._default_probe_ua()

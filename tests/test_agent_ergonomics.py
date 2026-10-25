@@ -100,3 +100,72 @@ def test_locator_self_heals_by_signature(monkeypatch):
     monkeypatch.setattr(ag, "take_snapshot", lambda page, **kw: fresh)
     a._locator(7)
     assert page.requested[-1] == 2  # healed to the re-resolved index
+
+
+# --- double-click and human locator click ---------------------------------- #
+
+def test_dblclick_sends_a_double_click(monkeypatch):
+    a = AgentBrowser(session=object())
+    seen: dict = {}
+    monkeypatch.setattr(a, "_pointer_click", lambda index, count=1: seen.update(i=index, c=count))
+    monkeypatch.setattr(a, "_act", lambda action: action() or "snap")
+
+    assert a.dblclick(7) == "snap"
+    assert seen == {"i": 7, "c": 2}
+
+
+def test_click_sends_a_single_click(monkeypatch):
+    a = AgentBrowser(session=object())
+    seen: dict = {}
+    monkeypatch.setattr(a, "_pointer_click", lambda index, count=1: seen.update(i=index, c=count))
+    monkeypatch.setattr(a, "_act", lambda action: action() or "snap")
+
+    a.click(3)
+    assert seen == {"i": 3, "c": 1}
+
+
+class _LocMouse:
+    def __init__(self):
+        self.moves = 0
+
+    def move(self, x, y, steps=1):
+        self.moves += 1
+
+
+class _LocPage:
+    def __init__(self):
+        self.mouse = _LocMouse()
+
+    def evaluate(self, script):
+        return [1000, 800]
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+
+class _Locator:
+    def __init__(self):
+        self.clicked = 0
+
+    def bounding_box(self):
+        return {"x": 100.0, "y": 200.0, "width": 80.0, "height": 40.0}
+
+    def click(self, **_kw):
+        self.clicked += 1
+
+
+def test_human_click_locator_moves_the_cursor_first():
+    page, loc = _LocPage(), _Locator()
+    ag._human_click_locator(page, loc)
+    assert loc.clicked == 1
+    assert page.mouse.moves > 1  # a human path, not one jump
+
+
+def test_human_click_locator_falls_back_without_a_box():
+    class _NoBox(_Locator):
+        def bounding_box(self):
+            return None
+
+    page, loc = _LocPage(), _NoBox()
+    ag._human_click_locator(page, loc)
+    assert loc.clicked == 1

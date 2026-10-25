@@ -466,6 +466,15 @@ async def click(index: int, include_snapshot: bool = True) -> str:
 
 
 @app.tool()
+async def double_click(index: int, include_snapshot: bool = True) -> str:
+    """Double-click the element with the given index (from the latest snapshot).
+
+    Use it for a control that opens or edits on a double click (a file row, an
+    inline rename). Two separate `click` calls do not fire a `dblclick`."""
+    return await _step(lambda b: b.dblclick(index), include_snapshot)
+
+
+@app.tool()
 async def click_at(x: float, y: float, include_snapshot: bool = True) -> str:
     """Click a point in the page, in CSS pixels (the same units as the
     snapshot's ``@ (x,y)`` points and the screenshot).

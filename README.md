@@ -221,7 +221,7 @@ leaves out the affected symbols and records why in `wraith.missing_imports`.
 | Group | Tools |
 | --- | --- |
 | Perceive | `navigate`, `snapshot`, `read`, `screenshot`, `wait_for`, `browser_tabs` |
-| Act | `click`, `click_at`, `click_frame`, `type_text`, `press_key`, `select_option`, `drag`, `scroll`, `upload_file`, `go_back`, `go_forward` |
+| Act | `click`, `double_click`, `click_at`, `click_frame`, `type_text`, `press_key`, `select_option`, `drag`, `scroll`, `upload_file`, `go_back`, `go_forward` |
 | Secrets | `fill_secret`, `fill_vault_item` |
 | Network | `network_requests`, `network_response`, `fetch` |
 | Identity | `borrow`, `receive_profile`, `save_state`, `ensure_high_score` |

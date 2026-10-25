@@ -359,3 +359,42 @@ def test_denied_text_after_the_settle_window_is_still_a_hard_block(monkeypatch):
     with pytest.raises(WaapHardBlockError, match="PerimeterX"):
         clear_challenge(URL, session=sess, timeout=5.0, settle=0.0)
     assert len(polls) == 2  # not while holding; on the first poll after it
+
+
+# --------------------------------------------------------------------------- #
+# A 200 challenge wall is not real content yet
+# --------------------------------------------------------------------------- #
+_CF_CHALLENGE = (
+    "<html><head><title>Just a moment...</title></head><body>"
+    "challenge-platform " + "x" * 500 + "</body></html>"
+)
+
+
+def test_a_200_challenge_page_is_not_accepted_as_cleared():
+    sess = _make_session(200, URL, cookies_sequence=[[]], content=_CF_CHALLENGE)
+    with pytest.raises(WaapChallengeTimeout):
+        clear_challenge(URL, session=sess, timeout=0.2, settle=0.0)
+
+
+def test_a_200_challenge_page_clears_once_the_cookie_arrives():
+    sess = _make_session(
+        200,
+        URL,
+        cookies_sequence=[[], [{"name": "cf_clearance", "value": "v"}]],
+        content=_CF_CHALLENGE,
+    )
+    assert clear_challenge(URL, session=sess, timeout=5.0, settle=0.0) is sess
+
+
+def test_a_plain_200_page_still_returns_without_a_cookie():
+    sess = _make_session(200, URL, cookies_sequence=[[]], content="y" * 500)
+    assert clear_challenge(URL, session=sess, timeout=5.0, settle=0.0) is sess
+
+
+def test_navigate_false_polls_the_current_page():
+    sess = _make_session(200, URL, cookies_sequence=[[]], content="y" * 500)
+    returned = clear_challenge(
+        URL, session=sess, timeout=5.0, settle=0.0, navigate=False
+    )
+    assert returned is sess
+    assert sess.page.goto_calls == []

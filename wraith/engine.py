@@ -1407,6 +1407,19 @@ def _raise_if_not_loaded(url: str, error: Optional[Exception], status: Any) -> N
     raise NavigationFailedError(f"Navigation to {url} failed: {reason}")
 
 
+def _looks_like_challenge_page(content: str, title: str = "") -> bool:
+    """Whether the rendered document still looks like a JS challenge wall.
+
+    A challenge served with HTTP 200 and a large body otherwise passes as
+    "real content", so :func:`clear_challenge` can return before the challenge
+    JS has run. Match only high-precision Cloudflare markers; the widget may
+    stay on the page after it clears, so this alone is not proof, but with no
+    clearance cookie it is a reason to keep waiting. Never raises.
+    """
+    hay = (str(title or "") + "  " + str(content or "")[:8000]).lower()
+    return any(marker in hay for marker in _CHALLENGE_PAGE_MARKERS)
+
+
 def _hold_settling(holding: bool, seen_at: Optional[float]) -> bool:
     """True while a press-and-hold challenge is on screen, or was at
     ``seen_at`` and may still be redirecting (see ``_HOLD_SETTLE_S``)."""
@@ -1422,6 +1435,17 @@ def _hold_settling(holding: bool, seen_at: Optional[float]) -> bool:
 # on the widget geometry; it holds for the compact and normal layouts.
 _TURNSTILE_COORD = (0.11, 0.45)
 _TURNSTILE_ATTEMPTS = 2
+
+# High-precision markers of a Cloudflare managed-challenge document (not a
+# standalone Turnstile widget, which does not carry them).
+_CHALLENGE_PAGE_MARKERS = (
+    "challenge-platform",
+    "cf-chl-",
+    "cf-challenge",
+    "cf-please-wait",
+    "just a moment",
+    "attention required! | cloudflare",
+)
 
 
 def _click_visible_turnstile(page: Any) -> bool:
@@ -1472,6 +1496,7 @@ def clear_challenge(
     settle: float = 1.0,
     proxy_pool: Optional["Any"] = None,
     press_hold: bool = True,
+    navigate: bool = True,
     **launch_kw: Any,
 ) -> Session:
     """Navigate to ``url`` and return a Session once the WAAP challenge clears.
@@ -1514,7 +1539,9 @@ def clear_challenge(
     If ``url`` has no anti-bot layer, no clearance cookie will ever appear — that
     is success, not failure. Once the navigation settles on a 200 with real
     content, the (unmodified) Session is returned immediately. There is nothing
-    to clear.
+    to clear. A 200 page that still carries a Cloudflare challenge marker
+    (``challenge-platform``, "Just a moment", ...) with no clearance cookie is
+    the one exception: it keeps polling until the challenge JS finishes.
 
     Args:
         url: The URL to navigate to and clear.
@@ -1553,6 +1580,9 @@ def clear_challenge(
         press_hold: Attempt visible HUMAN press-and-hold challenges automatically.
             Make at most two eight-second holds within ``timeout``. ``False``
             disables input attempts but still waits for the challenge to clear.
+        navigate: When ``True`` (default) call ``page.goto(url)`` first. When
+            ``False`` the caller already moved the page (history back/forward);
+            clear the challenge on the page in place and ignore ``url``.
         **launch_kw: Forwarded to :func:`launch` when self-launching (e.g.
             ``proxy``, ``headless``, ``geoip``, ``locale``, ``timezone``).
 
@@ -1590,6 +1620,7 @@ def clear_challenge(
         non-solvable tiers (so the caller may rotate a proxy), or
         :class:`WaapChallengeTimeout` when no valid clearance appears.
         """
+        nonlocal url
         page = active.page
         context = active.context
 
@@ -1620,18 +1651,23 @@ def clear_challenge(
             page.on("response", _on_response)
 
         # Navigate. Capture the goto() response too — it is the most reliable
-        # source of the top-level status across engines.
+        # source of the top-level status across engines. With ``navigate=False``
+        # the caller already moved the page (history back/forward); poll it in
+        # place.
         goto_status: Any = None
         goto_error: Optional[Exception] = None
-        try:
-            resp = page.goto(url)
-            if resp is not None:
-                goto_status = getattr(resp, "status", None)
-        except Exception as exc:
-            # A navigation that throws (e.g. interstitial abort) is not fatal on
-            # its own; fall through to status/cookie polling.
-            goto_error = exc
-            resp = None
+        if navigate:
+            try:
+                resp = page.goto(url)
+                if resp is not None:
+                    goto_status = getattr(resp, "status", None)
+            except Exception as exc:
+                # A navigation that throws (e.g. interstitial abort) is not fatal
+                # on its own; fall through to status/cookie polling.
+                goto_error = exc
+                resp = None
+        else:
+            url = getattr(page, "url", "") or url
 
         main_status = goto_status if goto_status is not None else nav_status["status"]
 
@@ -1712,13 +1748,15 @@ def clear_challenge(
             # hold that just cleared): the next poll reads the new page, and
             # stale content must never count as a block.
             fresh = nav_status["generation"] == generation_before_poll
+            title = ""
+            if content:
+                try:
+                    title = page.title()
+                except Exception:
+                    title = ""
             if detect is not None and content and fresh:
                 _is_blocked = getattr(detect, "is_blocked", None)
                 if callable(_is_blocked):
-                    try:
-                        title = page.title()
-                    except Exception:
-                        title = ""
                     try:
                         block_reason = _is_blocked(content, title)
                     except Exception:
@@ -1744,9 +1782,12 @@ def clear_challenge(
                 # An HTTP 200 challenge response is not proof of acceptance.
                 status_ok = status_ok and nav_status["generation"] > challenge_generation
             has_content = bool(content) and len(content) > 200
-            cleared = (status_ok and has_content) or (
-                cookie_cleared and not hold_handler.seen
-            )
+            # A 200 challenge wall is not real content yet; without a clearance
+            # cookie, keep waiting for the challenge JS to finish.
+            challenge_page = has_content and _looks_like_challenge_page(content, title)
+            cleared = (
+                status_ok and has_content and (cookie_cleared or not challenge_page)
+            ) or (cookie_cleared and not hold_handler.seen)
             if not holding and cleared:
                 if clean_since is None:
                     clean_since = now

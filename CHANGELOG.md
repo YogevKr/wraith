@@ -6,6 +6,22 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-25
+
+### Changed
+
+- `clear_challenge` no longer accepts a 200 page that still looks like a
+  Cloudflare challenge wall (markers such as `challenge-platform` or
+  "Just a moment") while no clearance cookie exists. It waits for the
+  challenge JS to finish instead of returning early.
+- `new_tab`, `go_back`, and `go_forward` now run the same WAAP clearance as
+  `navigate`. `new_tab` routes through `clear_challenge`; the history moves use
+  a new `navigate=False` mode that polls the current page in place.
+- Added `dblclick(index)` and the MCP `double_click` tool. Two `click` calls do
+  not fire `dblclick`; the new path does.
+- Consent-button clicks (`_dismiss_consent`) and indexed clicks inside a frame
+  now travel a human cursor path first, like other clicks.
+
 ## [0.17.0] - 2026-10-25
 
 ### Changed

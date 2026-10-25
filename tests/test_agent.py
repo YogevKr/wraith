@@ -128,6 +128,7 @@ def test_agent_browser_importable_and_methods_exist():
         "navigate",
         "snapshot",
         "click",
+        "dblclick",
         "type",
         "fill_secret",
         "fill_vault_item",

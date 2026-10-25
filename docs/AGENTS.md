@@ -206,6 +206,7 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 | `current_url` / `current_title` | properties | `str` |
 | `save_storage_state(path, *, for_chromium=False)` | write cookies + localStorage as Playwright `storageState`; `for_chromium=True` makes the file loadable by Chromium tools such as agent-browser | `str` (the path) |
 | `click_at(x, y)` | human-like move, then click the page point in CSS pixels; it cannot verify the target | `Snapshot` |
+| `double_click(index)` | double-click the indexed element (two `click` calls do not fire `dblclick`) | `Snapshot` |
 | `click_frame(frame, x, y)` | click a point of frame `frame` from the last snapshot; `x`/`y` are fractions (0 to 1) of the frame's own width and height (also when rotated or tilted in 3D); Wraith corrects the aim from where the cursor lands inside the frame | `Snapshot` |
 | `close()` | close the Session **iff** we launched it | — |
 
@@ -278,6 +279,7 @@ operates on one persistent session.
 | `snapshot` | `snapshot()` | snapshot `to_text()` |
 | `click` | `click(index: int)` | new snapshot text |
 | `click_at` | `click_at(x: float, y: float)` | new snapshot text |
+| `double_click` | `double_click(index: int)` | new snapshot text |
 | `click_frame` | `click_frame(frame: int, x: float, y: float)` | new snapshot text |
 | `type_text` | `type_text(index: int, text: str, enter: bool=False)` | new snapshot text |
 | `scroll` | `scroll(direction: str="down")` | new snapshot text |

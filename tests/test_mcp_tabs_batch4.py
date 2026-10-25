@@ -23,6 +23,8 @@ class _FakePage:
         self._title = title
         self._closed = False
         self.fronted = False
+        self.frames: list = []
+        self.mouse = _FakeMouse()
 
     @property
     def url(self):
@@ -43,6 +45,20 @@ class _FakePage:
     def goto(self, u, **k):
         self._url = u
 
+    def content(self):
+        return "<html><body>" + "x" * 300 + "</body></html>"
+
+    def wait_for_timeout(self, ms):
+        return None
+
+
+class _FakeMouse:
+    def move(self, x, y, steps=1):
+        return None
+
+    def wheel(self, dx, dy):
+        return None
+
 
 class _FakeContext:
     def __init__(self, pages):
@@ -53,6 +69,9 @@ class _FakeContext:
         p = _FakePage("about:blank", "new")
         self.pages.append(p)
         return p
+
+    def cookies(self):
+        return []
 
     def storage_state(self, path=None):
         self.saved = path
@@ -97,3 +116,33 @@ def test_save_storage_state():
     a = _agent(ctx)
     out = a.save_storage_state("/tmp/state.json")
     assert out == "/tmp/state.json" and ctx.saved == "/tmp/state.json"
+
+
+def test_new_tab_routes_through_clear_challenge(monkeypatch):
+    ctx = _FakeContext([_FakePage("http://a", "A")])
+    a = _agent(ctx)
+    monkeypatch.setattr(a, "_wait_for_settle", lambda: None)
+    monkeypatch.setattr(
+        ag, "take_snapshot", lambda page, **kw: Snapshot(getattr(page, "url", ""), "", [])
+    )
+    calls: list = []
+    monkeypatch.setattr(ag._engine, "clear_challenge", lambda url, **kw: calls.append((url, kw)))
+
+    a.new_tab("http://c")
+
+    assert calls and calls[0][0] == "http://c"
+    assert calls[0][1]["session"].page is a.page
+
+
+def test_clear_current_polls_without_navigating(monkeypatch):
+    ctx = _FakeContext([_FakePage("http://x", "X")])
+    a = _agent(ctx)
+    calls: list = []
+    monkeypatch.setattr(ag._engine, "clear_challenge", lambda url, **kw: calls.append((url, kw)))
+
+    a._clear_current()
+
+    assert len(calls) == 1
+    assert calls[0][0] == "http://x"
+    assert calls[0][1]["navigate"] is False
+    assert calls[0][1]["session"].page is a.page

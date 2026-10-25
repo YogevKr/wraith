@@ -351,16 +351,48 @@ def _clear_focused(page: Any, frame: Any = None) -> None:
     )
 
 
-def _click_in_frame(target: Any) -> None:
-    """Click a node inside a child frame once.
+def _click_in_frame(page: Any, target: Any, *, count: int = 1) -> None:
+    """Click a node inside a child frame, after a human cursor path.
 
     Playwright maps the point through the iframe (and its CSS transforms) and
     checks that the node receives the pointer before it dispatches; it never
-    repeats a dispatched click.
+    repeats a dispatched click. The cursor first travels a human path to the
+    node's on-screen box, then Playwright's own click lands it.
     """
     if target is None:
         raise RuntimeError("The visible target is unavailable")
-    target.click(timeout=_FRAME_CLICK_TIMEOUT_MS, delay=click_hold_ms())
+    with contextlib.suppress(Exception):
+        from .behavior import human_move
+
+        box = target.bounding_box()
+        if box:
+            human_move(
+                page,
+                target=(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2),
+            )
+    if count > 1:
+        target.dblclick(timeout=_FRAME_CLICK_TIMEOUT_MS, delay=click_hold_ms())
+    else:
+        target.click(timeout=_FRAME_CLICK_TIMEOUT_MS, delay=click_hold_ms())
+
+
+def _human_click_locator(page: Any, locator: Any) -> None:
+    """Click a locator after a human cursor path to its visible box.
+
+    Used for consent buttons, which sit outside the indexed snapshot. The
+    cursor travels first, then Playwright's own click lands it, so a page that
+    reads pointer motion sees a hand rather than a single jump.
+    """
+    with contextlib.suppress(Exception):
+        from .behavior import human_move
+
+        box = locator.bounding_box()
+        if box:
+            human_move(
+                page,
+                target=(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2),
+            )
+    locator.click(timeout=1500, delay=click_hold_ms())
 
 
 def _human_click(
@@ -789,9 +821,29 @@ class AgentBrowser:
         page = self.context.new_page()
         self._active_page = page
         if url:
-            page.goto(url)
-            self._wait_for_settle()
+            # Route the new tab through clear_challenge so a WAAP on it is
+            # solved, exactly like navigate() on the primary tab.
+            _engine.clear_challenge(url, session=self._session_for(page))
+        self._wait_for_settle()
         return self.snapshot()
+
+    def _session_for(self, page: Any) -> Any:
+        """A non-owning Session view that drives ``page`` in this context."""
+        import dataclasses
+        import types
+
+        session = self.session
+        if dataclasses.is_dataclass(session) and not isinstance(session, type):
+            return dataclasses.replace(
+                session, page=page, _closers=[], _closed=False
+            )
+        return types.SimpleNamespace(
+            page=page,
+            context=getattr(session, "context", None),
+            browser=getattr(session, "browser", None),
+            engine=getattr(session, "engine", ""),
+            headless=getattr(session, "headless", True),
+        )
 
     def close_tab(self, index: int) -> list[dict]:
         """Close tab ``index``; if it was active, fall back to the primary page."""
@@ -938,6 +990,22 @@ class AgentBrowser:
             settles.
         """
         return self._act(lambda: self._pointer_click(index))
+
+    def dblclick(self, index: int) -> Snapshot:
+        """Double-click the element with the given snapshot ``index``.
+
+        Use it for controls that open or edit on a double click, such as a
+        file/folder row or an inline rename. Two separate :meth:`click` calls
+        do not fire a ``dblclick`` (each re-snapshots first).
+
+        Args:
+            index: The integer index from the current snapshot.
+
+        Returns:
+            A fresh :class:`~wraith.snapshot.Snapshot` taken after the click
+            settles.
+        """
+        return self._act(lambda: self._pointer_click(index, count=2))
 
     def click_at(self, x: float, y: float) -> Snapshot:
         """Click the main-viewport point ``(x, y)`` in CSS pixels.
@@ -1526,12 +1594,26 @@ class AgentBrowser:
         chooser.value.set_files(files)
 
     def go_back(self) -> Snapshot:
-        """Go back one page in the tab's history and re-snapshot."""
-        return self._act(lambda: self.page.go_back(wait_until="commit"))
+        """Go back one page in the tab's history, clear a WAAP, and re-snapshot."""
+        self._act(lambda: self.page.go_back(wait_until="commit"))
+        self._clear_current()
+        return self.snapshot()
 
     def go_forward(self) -> Snapshot:
-        """Go forward one page in the tab's history and re-snapshot."""
-        return self._act(lambda: self.page.go_forward(wait_until="commit"))
+        """Go forward one page in the tab's history, clear a WAAP, re-snapshot."""
+        self._act(lambda: self.page.go_forward(wait_until="commit"))
+        self._clear_current()
+        return self.snapshot()
+
+    def _clear_current(self) -> None:
+        """Clear a WAAP challenge on the active page without re-navigating."""
+        page = self.page
+        url = ""
+        with contextlib.suppress(Exception):
+            url = page.url
+        _engine.clear_challenge(
+            url or "about:blank", session=self.session, navigate=False
+        )
 
     def wait_for(self, text: Optional[str] = None, seconds: float = 5.0) -> Snapshot:
         """Wait until ``text`` shows in the page, or for ``seconds``, then re-snapshot.
@@ -1778,25 +1860,25 @@ class AgentBrowser:
         if self._frame_of(index) is not None:
             raise SecretPolicyError("Secret fills accept only main-frame fields")
 
-    def _pointer_click(self, index: int) -> None:
+    def _pointer_click(self, index: int, *, count: int = 1) -> None:
         """Pin the indexed node, then click its current visible point once."""
         failed = False
         try:
             element = self.last_snapshot.by_index(index) if self.last_snapshot else None
             locator = self._locator(index)
             if element is not None and element.frame:
-                _click_in_frame(locator.element_handle())
+                _click_in_frame(self.page, locator.element_handle(), count=count)
             elif element is None or element.center is None:
                 locator.click(delay=click_hold_ms())
             else:
-                self._click_pointer_target(locator.element_handle())
+                self._click_pointer_target(locator.element_handle(), count=count)
         except Exception:
             failed = True
         if failed:
             raise RuntimeError("The browser could not click the visible target")
 
-    def _click_pointer_target(self, target: Any) -> None:
-        """Check actionability on a pinned node, then send one pointer click."""
+    def _click_pointer_target(self, target: Any, *, count: int = 1) -> None:
+        """Check actionability on a pinned node, then send a pointer click."""
         if target is None:
             raise RuntimeError("The visible target is unavailable")
         target.scroll_into_view_if_needed()
@@ -1812,7 +1894,10 @@ class AgentBrowser:
 
             human_move(self.page, target=point)
         # Never retry a dispatched click: it may have submitted a purchase.
-        self.page.mouse.click(point[0], point[1], delay=click_hold_ms())
+        if count > 1:
+            self.page.mouse.dblclick(point[0], point[1], delay=click_hold_ms())
+        else:
+            self.page.mouse.click(point[0], point[1], delay=click_hold_ms())
 
     def _offset_click_point(
         self, target: Any, center: Any
@@ -1849,7 +1934,7 @@ class AgentBrowser:
         locator = self._locator(index)
         if prior is not None and prior.frame:
             target = locator.element_handle()
-            _click_in_frame(target)
+            _click_in_frame(self.page, target)
             return target
         if prior is not None and prior.center is not None:
             target = locator.element_handle()
@@ -2122,7 +2207,7 @@ class AgentBrowser:
             try:
                 loc = page.locator(sel).first
                 if loc.count() > 0 and loc.is_visible():
-                    loc.click(timeout=1500)
+                    _human_click_locator(page, loc)
                     return
             except Exception:
                 continue
@@ -2136,7 +2221,7 @@ class AgentBrowser:
             try:
                 loc = page.get_by_role(role, name=pattern).first
                 if loc.count() > 0 and loc.is_visible():
-                    loc.click(timeout=1500)
+                    _human_click_locator(page, loc)
                     return
             except Exception:
                 continue
@@ -2147,7 +2232,7 @@ class AgentBrowser:
                 has_text=pattern
             ).first
             if loc.count() > 0 and loc.is_visible():
-                loc.click(timeout=1500)
+                _human_click_locator(page, loc)
         except Exception:
             pass
 

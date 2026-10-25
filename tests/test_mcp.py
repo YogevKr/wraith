@@ -12,7 +12,7 @@ import inspect
 import wraith.mcp as m
 from wraith.snapshot import Snapshot
 
-BROWSER_TOOLS = ("navigate", "snapshot", "click", "type_text", "fill_secret", "fill_vault_item", "scroll",
+BROWSER_TOOLS = ("navigate", "snapshot", "click", "double_click", "type_text", "fill_secret", "fill_vault_item", "scroll",
                  "read", "screenshot", "borrow", "receive_profile")
 
 

@@ -127,9 +127,13 @@ def test_click_sends_a_single_click(monkeypatch):
 class _LocMouse:
     def __init__(self):
         self.moves = 0
+        self.clicks = 0
 
     def move(self, x, y, steps=1):
         self.moves += 1
+
+    def click(self, x, y, **_kw):
+        self.clicks += 1
 
 
 class _LocPage:
@@ -214,3 +218,32 @@ def test_await_navigation_waits_for_a_slow_navigation_start():
 
     assert page.started
     assert elapsed >= 0.8  # it waited past the old 500 ms window
+
+
+def test_human_click_locator_skips_its_move_when_the_engine_humanizes():
+    page, loc = _LocPage(), _Locator()
+    ag._human_click_locator(page, loc, humanize=True)
+    assert loc.clicked == 1
+    assert page.mouse.moves == 0  # the engine's own humanized click moves
+
+
+def test_human_click_skips_its_move_when_the_engine_humanizes():
+    page = _LocPage()
+    ag._human_click(page, lambda: (10.0, 20.0), humanize=True)
+    assert page.mouse.clicks == 1
+    assert page.mouse.moves == 0
+
+
+def test_human_click_moves_when_the_engine_does_not_humanize():
+    page = _LocPage()
+    ag._human_click(page, lambda: (10.0, 20.0), humanize=False)
+    assert page.mouse.clicks == 1
+    assert page.mouse.moves > 1
+
+
+def test_engine_humanizes_reads_the_session_flag():
+    class _S:
+        humanize = True
+
+    assert AgentBrowser(session=_S())._engine_humanizes() is True
+    assert AgentBrowser(session=object())._engine_humanizes() is False

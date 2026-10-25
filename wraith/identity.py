@@ -37,14 +37,18 @@ also need live harvesting from network requests (see the harvest module).
 from __future__ import annotations
 
 import copy
+import contextlib
 import json
 import platform
+import re
 import shutil
 import sqlite3
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from urllib.parse import unquote
+
 
 __all__ = [
     "Cookie",
@@ -85,6 +89,9 @@ class Cookie:
     same_site: str = "Lax"
     expires: float | None = None
     source: str = "unknown"  # profile path / browser this came from
+    #: CHIPS partition key: the top-level site a partitioned cookie is bound
+    #: to (``"https://example.com"``), or ``None`` for an unpartitioned cookie.
+    partition_key: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -150,6 +157,33 @@ def _map_firefox_samesite(raw: Any) -> str:
         return _FF_SAMESITE.get(int(raw), "Lax")
     except (TypeError, ValueError):
         return "Lax"
+
+
+# Firefox stores a partitioned cookie's key in ``originAttributes`` as
+# ``^partitionKey=%28https%2Cexample.com%29``: URL-encoded ``(scheme, domain)``.
+_FIREFOX_PARTITION_RE = re.compile(r"\^partitionKey=([^^&]+)")
+
+
+def _firefox_partition_key(origin_attributes: Any) -> str | None:
+    """Return the top-level site URL for a Firefox partitioned cookie.
+
+    ``None`` for an unpartitioned cookie or an unreadable value. Matches
+    Playwright's ``partitionKey`` (``"https://example.com"``), so the metadata
+    survives a borrow into a Chromium context.
+    """
+    if not origin_attributes:
+        return None
+    match = _FIREFOX_PARTITION_RE.search(str(origin_attributes))
+    if not match:
+        return None
+    with contextlib.suppress(Exception):
+        decoded = unquote(match.group(1))
+        if decoded.startswith("(") and decoded.endswith(")"):
+            scheme, _, base = decoded[1:-1].partition(",")
+            scheme, base = scheme.strip(), base.strip()
+            if scheme and base:
+                return f"{scheme}://{base}"
+    return None
 
 
 # Plausible cookie-expiry epoch in *seconds* lives in roughly [1e9, 1e11)
@@ -401,7 +435,7 @@ def _extract_firefox(db_path: Path, domain_filter: str | None) -> list[Cookie]:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT name, value, host, path, isSecure, isHttpOnly, "
-                "sameSite, expiry FROM moz_cookies"
+                "sameSite, expiry, originAttributes FROM moz_cookies"
             ).fetchall()
         finally:
             conn.close()
@@ -423,6 +457,7 @@ def _extract_firefox(db_path: Path, domain_filter: str | None) -> list[Cookie]:
                 same_site=_map_firefox_samesite(r["sameSite"]),
                 expires=_normalize_expiry_seconds(r["expiry"]),
                 source=str(db_path),
+                partition_key=_firefox_partition_key(r["originAttributes"]),
             )
         )
     return cookies
@@ -507,6 +542,10 @@ def to_playwright_cookies(rows: Iterable[Cookie]) -> list[dict[str, Any]]:
         if c.expires is not None:
             # Playwright wants epoch seconds; -1 / 0 mean "session cookie".
             cookie["expires"] = c.expires
+        if c.partition_key:
+            # Playwright's ``partitionKey`` is the top-level site URL. Camoufox
+            # ignores it on injection; Chromium stores the partitioned cookie.
+            cookie["partitionKey"] = c.partition_key
         out.append(cookie)
     return out
 

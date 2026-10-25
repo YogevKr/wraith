@@ -33,6 +33,12 @@ with wraith.browser(engine="camoufox", geoip=True) as s:
 > reach for `wraith profile sync --from chrome` below — it opts into the OS
 > keychain decryptor (`wraith.chrome`) explicitly.
 
+A borrowed cookie keeps its CHIPS partition key (top-level site) when the
+source browser stored one: Firefox `originAttributes` and Chrome
+`top_frame_site_key` both normalize to Playwright's `partitionKey`. Camoufox
+ignores the key and still sends the cookie; Chromium stores the partitioned
+cookie.
+
 ## Profile sync — a laptop login on a remote Wraith
 
 `wraith profile sync` moves a **domain-scoped** login from your laptop to a

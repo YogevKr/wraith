@@ -398,3 +398,40 @@ def test_navigate_false_polls_the_current_page():
     )
     assert returned is sess
     assert sess.page.goto_calls == []
+
+
+# --------------------------------------------------------------------------- #
+# require_clearance: only a valid clearance cookie counts
+# --------------------------------------------------------------------------- #
+def test_require_clearance_rejects_clean_content_without_a_cookie():
+    sess = _make_session(200, URL, cookies_sequence=[[]], content="y" * 500)
+    with pytest.raises(WaapChallengeTimeout):
+        clear_challenge(
+            URL, session=sess, timeout=0.2, settle=0.0, require_clearance=True
+        )
+
+
+def test_require_clearance_accepts_a_valid_cookie():
+    sess = _make_session(
+        200, URL, cookies_sequence=[[{"name": "_abck", "value": "a~0~b"}]]
+    )
+    assert (
+        clear_challenge(
+            URL, session=sess, timeout=5.0, settle=0.0, require_clearance=True
+        )
+        is sess
+    )
+
+
+def test_require_clearance_rejects_an_unsolved_abck():
+    # _abck present but still '~-1~' is not valid (the Akamai sentinel).
+    sess = _make_session(
+        200,
+        URL,
+        cookies_sequence=[[{"name": "_abck", "value": "a~-1~b"}]],
+        content="y" * 500,
+    )
+    with pytest.raises(WaapChallengeTimeout):
+        clear_challenge(
+            URL, session=sess, timeout=0.2, settle=0.0, require_clearance=True
+        )

@@ -351,7 +351,7 @@ def _clear_focused(page: Any, frame: Any = None) -> None:
     )
 
 
-def _click_in_frame(page: Any, target: Any, *, count: int = 1) -> None:
+def _click_in_frame(page: Any, target: Any, *, count: int = 1, humanize: bool = False) -> None:
     """Click a node inside a child frame, after a human cursor path.
 
     Playwright maps the point through the iframe (and its CSS transforms) and
@@ -361,37 +361,41 @@ def _click_in_frame(page: Any, target: Any, *, count: int = 1) -> None:
     """
     if target is None:
         raise RuntimeError("The visible target is unavailable")
-    with contextlib.suppress(Exception):
-        from .behavior import human_move
+    if not humanize:
+        with contextlib.suppress(Exception):
+            from .behavior import human_move
 
-        box = target.bounding_box()
-        if box:
-            human_move(
-                page,
-                target=(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2),
-            )
+            box = target.bounding_box()
+            if box:
+                human_move(
+                    page,
+                    target=(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2),
+                )
     if count > 1:
         target.dblclick(timeout=_FRAME_CLICK_TIMEOUT_MS, delay=click_hold_ms())
     else:
         target.click(timeout=_FRAME_CLICK_TIMEOUT_MS, delay=click_hold_ms())
 
 
-def _human_click_locator(page: Any, locator: Any) -> None:
+def _human_click_locator(page: Any, locator: Any, *, humanize: bool = False) -> None:
     """Click a locator after a human cursor path to its visible box.
 
     Used for consent buttons, which sit outside the indexed snapshot. The
     cursor travels first, then Playwright's own click lands it, so a page that
-    reads pointer motion sees a hand rather than a single jump.
+    reads pointer motion sees a hand rather than a single jump. When the engine
+    already humanizes pointer motion, its own move is used and no extra path is
+    added.
     """
-    with contextlib.suppress(Exception):
-        from .behavior import human_move
+    if not humanize:
+        with contextlib.suppress(Exception):
+            from .behavior import human_move
 
-        box = locator.bounding_box()
-        if box:
-            human_move(
-                page,
-                target=(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2),
-            )
+            box = locator.bounding_box()
+            if box:
+                human_move(
+                    page,
+                    target=(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2),
+                )
     locator.click(timeout=1500, delay=click_hold_ms())
 
 
@@ -399,16 +403,21 @@ def _human_click(
     page: Any,
     aim: Callable[[], tuple[float, float]],
     refine: Optional[Callable[[Any, tuple[float, float]], tuple[float, float]]] = None,
+    *,
+    humanize: bool = False,
 ) -> None:
     """Move along a human-like path to ``aim()``, re-aim, then click once.
 
     The second ``aim()`` follows a target that moved during the travel;
     ``refine`` can then correct the point (see :func:`_frame_target`).
+    ``humanize`` skips Wraith's own move when the engine already humanizes the
+    click, so the cursor does not travel two human paths.
     """
-    with contextlib.suppress(Exception):
-        from .behavior import human_move
+    if not humanize:
+        with contextlib.suppress(Exception):
+            from .behavior import human_move
 
-        human_move(page, target=aim())
+            human_move(page, target=aim())
     x, y = aim()
     if refine is not None:
         x, y = refine(page, (x, y))
@@ -785,6 +794,18 @@ class AgentBrowser:
         """The underlying :class:`BrowserContext`."""
         return self.session.context
 
+    def _engine_humanizes(self) -> bool:
+        """True when the engine humanizes its own pointer moves (Camoufox).
+
+        Wraith then skips its extra :func:`~wraith.behavior.human_move` before a
+        click, so the cursor does not travel two human paths. Unknown sessions
+        (fakes) report ``False``.
+        """
+        try:
+            return bool(getattr(self.session, "humanize", False))
+        except Exception:
+            return False
+
     # ------------------------------------------------------------------ #
     # Tabs / pages
     # ------------------------------------------------------------------ #
@@ -1019,7 +1040,11 @@ class AgentBrowser:
         x, y = float(x), float(y)
         if not (x >= 0 and y >= 0):  # also rejects NaN
             raise ValueError("click_at needs a point inside the viewport")
-        return self._act(lambda: _human_click(self.page, lambda: (x, y)))
+        return self._act(
+            lambda: _human_click(
+                self.page, lambda: (x, y), humanize=self._engine_humanizes()
+            )
+        )
 
     def click_frame(self, frame: int, x: float, y: float) -> Snapshot:
         """Click a point of child frame ``frame`` from the last snapshot.
@@ -1033,7 +1058,11 @@ class AgentBrowser:
         such as Cloudflare Turnstile.
         """
         aim, refine = _frame_target(self.last_snapshot, frame, x, y)
-        return self._act(lambda: _human_click(self.page, aim, refine))
+        return self._act(
+            lambda: _human_click(
+                self.page, aim, refine, humanize=self._engine_humanizes()
+            )
+        )
 
     def _act(self, action: Callable[[], Any]) -> Snapshot:
         """Run ``action``, wait for a navigation it starts, and re-snapshot."""
@@ -1867,7 +1896,12 @@ class AgentBrowser:
             element = self.last_snapshot.by_index(index) if self.last_snapshot else None
             locator = self._locator(index)
             if element is not None and element.frame:
-                _click_in_frame(self.page, locator.element_handle(), count=count)
+                _click_in_frame(
+                    self.page,
+                    locator.element_handle(),
+                    count=count,
+                    humanize=self._engine_humanizes(),
+                )
             elif element is None or element.center is None:
                 locator.click(delay=click_hold_ms())
             else:
@@ -1888,11 +1922,12 @@ class AgentBrowser:
         if not point:
             raise RuntimeError("The visible target is covered or unavailable")
         point = self._offset_click_point(target, point)
-        # Travel to the point like a hand instead of teleporting the cursor.
-        with contextlib.suppress(Exception):
-            from .behavior import human_move
+        # Travel to the point like a hand, unless the engine already does.
+        if not self._engine_humanizes():
+            with contextlib.suppress(Exception):
+                from .behavior import human_move
 
-            human_move(self.page, target=point)
+                human_move(self.page, target=point)
         # Never retry a dispatched click: it may have submitted a purchase.
         if count > 1:
             self.page.mouse.dblclick(point[0], point[1], delay=click_hold_ms())
@@ -1934,7 +1969,7 @@ class AgentBrowser:
         locator = self._locator(index)
         if prior is not None and prior.frame:
             target = locator.element_handle()
-            _click_in_frame(self.page, target)
+            _click_in_frame(self.page, target, humanize=self._engine_humanizes())
             return target
         if prior is not None and prior.center is not None:
             target = locator.element_handle()
@@ -2203,11 +2238,12 @@ class AgentBrowser:
         page = self.page
 
         # 1) Known CMP selectors (fast, precise).
+        humanize = self._engine_humanizes()
         for sel in _CONSENT_SELECTORS:
             try:
                 loc = page.locator(sel).first
                 if loc.count() > 0 and loc.is_visible():
-                    _human_click_locator(page, loc)
+                    _human_click_locator(page, loc, humanize=humanize)
                     return
             except Exception:
                 continue
@@ -2221,7 +2257,7 @@ class AgentBrowser:
             try:
                 loc = page.get_by_role(role, name=pattern).first
                 if loc.count() > 0 and loc.is_visible():
-                    _human_click_locator(page, loc)
+                    _human_click_locator(page, loc, humanize=humanize)
                     return
             except Exception:
                 continue
@@ -2232,7 +2268,7 @@ class AgentBrowser:
                 has_text=pattern
             ).first
             if loc.count() > 0 and loc.is_visible():
-                _human_click_locator(page, loc)
+                _human_click_locator(page, loc, humanize=humanize)
         except Exception:
             pass
 

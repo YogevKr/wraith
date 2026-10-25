@@ -6,6 +6,24 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-25
+
+### Added
+
+- Borrowed cookies keep their CHIPS partition key. Firefox
+  ``originAttributes`` (``(scheme, domain)``) and Chrome
+  ``top_frame_site_key`` both normalize to Playwright's ``partitionKey`` on
+  injection. Chrome extraction adapts when an older DB has no
+  ``top_frame_site_key`` column. Camoufox ignores the key and still sends the
+  cookie; Chromium stores the partitioned cookie.
+- ``clear_challenge(..., require_clearance=True)``. A clean 200 with content no
+  longer counts; only a valid clearance cookie returns. Use it when a caller
+  needs a truly cleared session (for example Akamai ``_abck``, where presence
+  is not validity).
+- ``Session.humanize``. When a caller enables Camoufox ``humanize``, Wraith
+  skips its own ``human_move`` before a click, so the cursor does not travel
+  two human paths.
+
 ## [0.18.1] - 2026-10-25
 
 ### Fixed

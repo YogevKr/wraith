@@ -369,9 +369,15 @@ def extract_chrome_cookies(
         conn = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
         try:
             conn.row_factory = sqlite3.Row
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(cookies)")}
+            # ``top_frame_site_key`` (CHIPS) is absent in Chrome before ~118.
+            partition_col = (
+                "top_frame_site_key" if "top_frame_site_key" in columns else "''"
+            )
             rows = conn.execute(
                 "SELECT host_key, name, value, encrypted_value, path, "
-                "is_secure, is_httponly, samesite, expires_utc FROM cookies"
+                "is_secure, is_httponly, samesite, expires_utc, "
+                f"{partition_col} AS partition_key FROM cookies"
             ).fetchall()
         finally:
             conn.close()
@@ -410,6 +416,7 @@ def extract_chrome_cookies(
                 same_site=_map_chrome_samesite(r["samesite"]),
                 expires=_chrome_expiry_seconds(r["expires_utc"]),
                 source=str(db_path),
+                partition_key=r["partition_key"] or None,
             )
         )
 

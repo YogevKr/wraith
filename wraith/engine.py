@@ -266,6 +266,9 @@ class Session:
     browser: Optional[Any]
     engine: str
     headless: bool
+    #: True when the engine humanizes its own pointer motion (Camoufox
+    #: ``humanize``). Wraith then skips its extra ``human_move`` before a click.
+    humanize: bool = False
     # Internal teardown hooks (innermost first), e.g. stopping the Playwright
     # context manager that Camoufox owns.
     _closers: list = field(default_factory=list, repr=False)
@@ -608,6 +611,7 @@ def _launch_camoufox(
         browser=browser_obj,
         engine="camoufox",
         headless=headless,
+        humanize=bool(humanize),
         _closers=[lambda: cm.__exit__(None, None, None)],
     )
 
@@ -1497,6 +1501,7 @@ def clear_challenge(
     proxy_pool: Optional["Any"] = None,
     press_hold: bool = True,
     navigate: bool = True,
+    require_clearance: bool = False,
     **launch_kw: Any,
 ) -> Session:
     """Navigate to ``url`` and return a Session once the WAAP challenge clears.
@@ -1583,6 +1588,11 @@ def clear_challenge(
         navigate: When ``True`` (default) call ``page.goto(url)`` first. When
             ``False`` the caller already moved the page (history back/forward);
             clear the challenge on the page in place and ignore ``url``.
+        require_clearance: When ``True``, a clean 200 with content does not count
+            as success; only a valid *clearance cookie* does. Use it when the
+            caller needs the session truly cleared (for example Akamai
+            ``_abck``, whose presence is not validity). ``False`` (default)
+            keeps the old behavior: a non-WAAP page returns on clean content.
         **launch_kw: Forwarded to :func:`launch` when self-launching (e.g.
             ``proxy``, ``headless``, ``geoip``, ``locale``, ``timezone``).
 
@@ -1785,9 +1795,12 @@ def clear_challenge(
             # A 200 challenge wall is not real content yet; without a clearance
             # cookie, keep waiting for the challenge JS to finish.
             challenge_page = has_content and _looks_like_challenge_page(content, title)
-            cleared = (
-                status_ok and has_content and (cookie_cleared or not challenge_page)
-            ) or (cookie_cleared and not hold_handler.seen)
+            if require_clearance:
+                cleared = cookie_cleared and not hold_handler.seen
+            else:
+                cleared = (
+                    status_ok and has_content and (cookie_cleared or not challenge_page)
+                ) or (cookie_cleared and not hold_handler.seen)
             if not holding and cleared:
                 if clean_since is None:
                     clean_since = now

@@ -169,3 +169,48 @@ def test_human_click_locator_falls_back_without_a_box():
     page, loc = _LocPage(), _NoBox()
     ag._human_click_locator(page, loc)
     assert loc.clicked == 1
+
+
+def test_await_navigation_waits_for_a_slow_navigation_start():
+    """A navigation that starts late (slow machine / delayed JS) is still awaited."""
+    import threading
+    import time
+
+    class _Request:
+        def __init__(self, frame):
+            self.frame = frame
+
+        def is_navigation_request(self):
+            return True
+
+    class _Page:
+        def __init__(self):
+            self._listeners: dict = {}
+            self.main_frame = object()
+            self.started = False
+
+        def on(self, event, cb):
+            self._listeners.setdefault(event, []).append(cb)
+
+        def remove_listener(self, event, cb):
+            return None
+
+        def wait_for_timeout(self, ms):
+            time.sleep(ms / 1000)
+
+        def fire(self):
+            req = _Request(self.main_frame)
+            for cb in self._listeners.get("request", []):
+                cb(req)
+            for cb in self._listeners.get("framenavigated", []):
+                cb(self.main_frame)
+            self.started = True
+
+    page = _Page()
+    threading.Timer(0.9, page.fire).start()
+    before = time.monotonic()
+    ag._await_navigation(page, lambda: None)
+    elapsed = time.monotonic() - before
+
+    assert page.started
+    assert elapsed >= 0.8  # it waited past the old 500 ms window

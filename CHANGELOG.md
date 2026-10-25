@@ -6,6 +6,16 @@ All notable changes to **Wraith** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-25
+
+### Fixed
+
+- A navigation that starts late no longer slips past the agent's wait. The
+  start window was 500 ms; a slow machine or a delayed JS navigation could
+  start after it, so `click` / `type(enter=True)` returned before the page
+  committed and a follow-up `url` read saw the old page. The window is now
+  1500 ms. The macOS live suite caught this on a slow runner.
+
 ## [0.18.0] - 2026-10-25
 
 ### Changed

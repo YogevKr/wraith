@@ -422,7 +422,8 @@ def test_enter_waits_only_for_a_navigation_it_starts(navigates):
     assert ("committed" in page.events) is navigates
     assert page.handlers == {}  # listeners removed
     if not navigates:
-        assert page.clock < 1.0  # the start window only, no commit wait
+        # the start window only, no commit wait
+        assert page.clock <= ag._NAVIGATION_START_MS / 1000 + 0.25
 
 
 def test_type_refuses_a_non_editable_target_before_clicking():

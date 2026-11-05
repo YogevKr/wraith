@@ -87,7 +87,8 @@ def _resolve_proxy(args: argparse.Namespace) -> Optional[str]:
     Thin CLI skin over :func:`wraith.providers.resolve_proxy_spec`: a literal
     ``--proxy dataimpulse`` / ``--proxy anyip`` (or the ``--dataimpulse`` /
     ``--anyip`` shortcuts) builds a **rotating** residential exit honoring
-    ``--proxy-country`` (both) and ``--proxy-network`` (anyIP only).
+    ``--proxy-country`` (both) and ``--proxy-network`` (anyIP only); adding
+    ``--proxy-session`` pins one **sticky** exit instead of rotating.
     Credentials come from the provider's env vars / ``*_CMD`` commands /
     ``~/.secrets``, or from ``--proxy-username-cmd`` / ``--proxy-password-cmd``
     shell commands that print them. Any other ``--proxy`` value is passed
@@ -104,6 +105,7 @@ def _resolve_proxy(args: argparse.Namespace) -> Optional[str]:
             anyip=bool(getattr(args, "anyip", False)),
             country=country,
             network=network,
+            session=getattr(args, "proxy_session", None),
             username_cmd=getattr(args, "proxy_username_cmd", None),
             password_cmd=getattr(args, "proxy_password_cmd", None),
         )
@@ -119,6 +121,8 @@ def _resolve_proxy(args: argparse.Namespace) -> Optional[str]:
     if label == "DataImpulse" and network:
         print("wraith: --proxy-network is anyIP-only; ignored for DataImpulse", file=sys.stderr)
     detail = [f"country={country}" if country else "", f"network={network}" if label == "anyIP" and network else ""]
+    if getattr(args, "proxy_session", None):
+        detail.append(f"session={args.proxy_session} (sticky)")
     detail_s = ", ".join(d for d in detail if d) or "rotating"
     print(f"wraith: using {label} residential proxy ({detail_s})", file=sys.stderr)
     return url
@@ -851,6 +855,16 @@ def _add_proxy_flags(p: argparse.ArgumentParser) -> None:
         metavar="CMD",
         help="shell command whose stdout is the provider password "
         "(e.g. 'op read op://vault/anyip/credential'); beats the environment",
+    )
+    p.add_argument(
+        "--proxy-session",
+        default=None,
+        nargs="?",
+        const="wraith",
+        metavar="SID",
+        help="provider only: pin ONE sticky exit under session id SID for the "
+        "whole run instead of rotating per request (name defaults to 'wraith'; "
+        "DataImpulse ~30 min, anyIP up to 7 days)",
     )
     p.add_argument(
         "--proxy-country",

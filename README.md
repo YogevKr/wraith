@@ -257,6 +257,7 @@ MCP server after you upgrade Wraith.
 | Upload folders | `--upload-dir` (repeat) | `WRAITH_UPLOAD_DIRS` (path-separator list) | uploads off |
 | Proxy | `--proxy URL\|dataimpulse\|anyip` | `WRAITH_PROXY` | none |
 | Proxy country | `--proxy-country` | `WRAITH_PROXY_COUNTRY` | provider default |
+| Proxy session (sticky) | `--proxy-session [SID]` | `WRAITH_PROXY_SESSION` | rotating |
 | anyIP network | `--proxy-network` | `WRAITH_PROXY_NETWORK` | mixed pool |
 | Page-text markers | — | `WRAITH_CONTENT_BOUNDARIES=0` turns them off | on |
 | Browser call timeout | — | `WRAITH_TOOL_TIMEOUT` (seconds) | 180 |

@@ -244,6 +244,10 @@ The enrichment format is the base username, then `__`, then `;`-joined
 `key.value` params (`cr` country, `city`, `sessid`). HTTP/HTTPS use port **823**,
 SOCKS5 uses **824**.
 
+**Camoufox needs the HTTP port.** Firefox cannot send SOCKS credentials, so a
+`socks5` URL fails in the Camoufox engine. Keep the default `http` for browser
+work; `engine="chromium"` is the only engine that accepts SOCKS with a login.
+
 **`.pool()` with `clear_challenge`.** `di.pool(n)` mints `n` *distinct* sticky
 sessions (`wraith-0`..`wraith-(n-1)`) → `n` different exit IPs the `ProxyPool`
 can rotate across when retrying a 474/481/492:
@@ -306,6 +310,9 @@ ai.sticky("bank", replace=False, same_asn=True)   # sessreplace_false,sessasn_st
 AnyIP(country="us", region="texas", city="dallas").rotating()   # city pin
 AnyIP(pool_name="europe", protocol="socks5").rotating()         # regional pool, SOCKS5
 ```
+
+SOCKS5 works on the Chromium engine only. Firefox (Camoufox) cannot send SOCKS
+credentials, so leave anyIP on the default HTTP port for browser work.
 
 Flags are emitted in a stable order: `type_`, `country_` (uppercase ISO),
 `region_` / `city_` (lowercase slugs; **city needs region needs country** —

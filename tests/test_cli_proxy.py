@@ -67,6 +67,20 @@ def test_dataimpulse_still_works_and_ignores_network(monkeypatch, capsys):
     assert "anyIP-only" in capsys.readouterr().err
 
 
+def test_proxy_session_pins_one_sticky_exit(monkeypatch, capsys):
+    monkeypatch.setenv("DATAIMPULSE_USERNAME", "acct")
+    monkeypatch.setenv("DATAIMPULSE_PASSWORD", "pw")
+    url = cli._resolve_proxy(_ns(dataimpulse=True, proxy_country="IL", proxy_session="job7"))
+    assert url == "http://acct__cr.il;sessid.job7:pw@gw.dataimpulse.com:823"
+    assert "sticky" in capsys.readouterr().err
+
+
+def test_parser_proxy_session_defaults_when_bare(anyip_env):
+    ns = cli.build_parser().parse_args(["launch", "https://example.com", "--anyip", "--proxy-session"])
+    assert ns.proxy_session == "wraith"
+    assert "session_wraith" in cli._resolve_proxy(ns)
+
+
 def test_parser_exposes_flags_on_launch(anyip_env):
     ns = cli.build_parser().parse_args(
         ["launch", "https://example.com", "--anyip", "--proxy-country", "us", "--proxy-network", "residential"]

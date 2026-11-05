@@ -51,9 +51,31 @@ def test_string_proxy_becomes_dict_for_chromium(captured):
 
 
 def test_dict_proxy_passes_through(captured):
-    d = {"server": "socks5://h:1", "username": "u", "password": "p"}
+    d = {"server": "http://h:1", "username": "u", "password": "p"}
     engine.launch(engine="camoufox", proxy=d)
     assert captured[0]["extra"]["proxy"] == d
+
+
+def test_socks_with_auth_raises_for_camoufox(captured):
+    """Firefox cannot send SOCKS credentials; fail early with the way out."""
+    with pytest.raises(ValueError, match="HTTP port"):
+        engine.launch(engine="camoufox", proxy="socks5://u:p@h:824")
+    assert captured == []
+
+
+def test_socks_without_auth_still_works_for_camoufox(captured):
+    engine.launch(engine="camoufox", proxy="socks5://h:824")
+    assert captured[0]["extra"]["proxy"] == {"server": "socks5://h:824"}
+
+
+def test_auto_falls_back_to_chromium_for_socks_with_auth(captured):
+    with pytest.warns(RuntimeWarning, match="SOCKS"):
+        engine.launch(engine="auto", proxy="socks5://u:p@h:824")
+    assert captured[0]["extra"]["proxy"] == {
+        "server": "socks5://h:824",
+        "username": "u",
+        "password": "p",
+    }
 
 
 def test_none_proxy_stays_none_and_absent_stays_absent(captured):

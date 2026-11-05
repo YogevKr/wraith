@@ -500,6 +500,25 @@ def _is_socks_proxy(proxy: Any) -> bool:
     return server.startswith(("socks4", "socks5"))
 
 
+#: Firefox has no SOCKS authentication; Playwright fails it inside the launch
+#: with "Browser does not support socks5 proxy authentication". Say it earlier,
+#: with the ports that work.
+_SOCKS_AUTH_MSG = (
+    "Camoufox (Firefox) cannot authenticate to a SOCKS proxy; use the "
+    "provider's HTTP port (DataImpulse 823, anyIP 1080/443) or engine='chromium'"
+)
+
+
+def _socks_proxy_has_auth(proxy: Any) -> bool:
+    """Whether a (Playwright-shaped) SOCKS proxy carries credentials."""
+    if not _is_socks_proxy(proxy):
+        return False
+    with contextlib.suppress(Exception):
+        settings = dict(proxy)
+        return bool(settings.get("username") or settings.get("password"))
+    return False
+
+
 def _launch_camoufox(
     *,
     headless: bool,
@@ -1136,7 +1155,8 @@ def launch(
         EngineUnavailableError: the requested engine (or dependency) is missing,
             or ``"auto"`` exhausted all engines.
         WraithEngineError: other launch failures.
-        ValueError: unknown ``engine`` value.
+        ValueError: unknown ``engine`` value, or an authenticated SOCKS proxy with
+        ``engine="camoufox"`` (Firefox cannot send SOCKS credentials).
     """
     # Bridge the string proxy currency (providers / ProxyPool / clear_challenge
     # rotation) to the ProxySettings dict both engines require. Done once here
@@ -1144,7 +1164,11 @@ def launch(
     if "proxy" in kw:
         kw["proxy"] = to_playwright_proxy(kw["proxy"])
 
+    socks_auth = _socks_proxy_has_auth(kw.get("proxy"))
+
     if engine == "camoufox":
+        if socks_auth:
+            raise ValueError(_SOCKS_AUTH_MSG)
         return _launch_camoufox(
             headless=headless,
             geoip=geoip,
@@ -1166,6 +1190,20 @@ def launch(
         )
 
     if engine == "auto":
+        if socks_auth:
+            warnings.warn(
+                f"{_SOCKS_AUTH_MSG}; using Chromium.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return _launch_chromium(
+                headless=headless,
+                geoip=geoip,
+                locale=locale,
+                timezone=timezone,
+                profile_dir=profile_dir,
+                extra=dict(kw),
+            )
         try:
             return _launch_camoufox(
                 headless=headless,
@@ -1795,11 +1833,16 @@ def clear_challenge(
             # A 200 challenge wall is not real content yet; without a clearance
             # cookie, keep waiting for the challenge JS to finish.
             challenge_page = has_content and _looks_like_challenge_page(content, title)
+            # Acceptance takes *any* settled content: a short page (a JSON or
+            # plain-text endpoint, an image URL) never reaches the 200-char bar
+            # the challenge heuristic needs, yet it is a finished navigation.
+            # The marker match above still holds a short challenge wall back.
+            settled = status_ok and bool(content.strip())
             if require_clearance:
                 cleared = cookie_cleared and not hold_handler.seen
             else:
                 cleared = (
-                    status_ok and has_content and (cookie_cleared or not challenge_page)
+                    settled and (cookie_cleared or not challenge_page)
                 ) or (cookie_cleared and not hold_handler.seen)
             if not holding and cleared:
                 if clean_since is None:

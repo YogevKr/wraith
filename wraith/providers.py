@@ -102,6 +102,13 @@ session keeps that derived identity stable for its whole ~30-minute lifetime;
 a **rotating** endpoint re-derives it per IP, so prefer sticky when you need a
 consistent identity across several navigations.
 
+PROTOCOL / ENGINE
+-----------------
+Keep the default ``http`` protocol for the browser. Firefox (Camoufox) cannot
+send SOCKS credentials: a ``socks5`` URL makes the launch fail (and makes
+``engine="auto"`` fall back to Chromium). ``socks5`` is usable only with
+``engine="chromium"``.
+
 EXAMPLE
 -------
 ::
@@ -902,6 +909,7 @@ def resolve_proxy_spec(
     anyip: bool = False,
     country: Optional[str] = None,
     network: Optional[str] = None,
+    session: Optional[str] = None,
     username_cmd: Optional[str] = None,
     password_cmd: Optional[str] = None,
 ) -> "tuple[Optional[str], Optional[str]]":
@@ -909,15 +917,17 @@ def resolve_proxy_spec(
 
     One resolution path shared by the ``wraith`` CLI (``--proxy`` /
     ``--dataimpulse`` / ``--anyip`` flags) and the MCP server (``WRAITH_PROXY``
-    / ``WRAITH_PROXY_COUNTRY`` / ``WRAITH_PROXY_NETWORK`` env):
+    / ``WRAITH_PROXY_COUNTRY`` / ``WRAITH_PROXY_NETWORK`` /
+    ``WRAITH_PROXY_SESSION`` env):
 
     * ``spec`` is a literal ``"dataimpulse"`` / ``"anyip"`` (case-insensitive),
-      or the matching boolean is set → build that provider's **rotating** exit
-      honoring ``country`` (both) and ``network`` (anyIP only), with optional
-      ``username_cmd`` / ``password_cmd`` secret commands. Returns
+      or the matching boolean is set → build that provider's exit honoring
+      ``country`` (both) and ``network`` (anyIP only), with optional
+      ``username_cmd`` / ``password_cmd`` secret commands. ``session`` pins a
+      **sticky** exit instead of a per-request rotating one. Returns
       ``(url, "DataImpulse" | "anyIP")``.
     * any other non-empty ``spec`` → passed through verbatim as
-      ``(spec, None)``.
+      ``(spec, None)``; ``session`` is ignored.
     * nothing selected → ``(None, None)``.
 
     Raises ``ValueError`` when both providers are selected, and lets
@@ -935,5 +945,11 @@ def resolve_proxy_spec(
 
     cmds = dict(username_cmd=username_cmd, password_cmd=password_cmd)
     if want_ai:
-        return AnyIP(country=country, network=network, **cmds).rotating(), "anyIP"
-    return DataImpulse(country=country, **cmds).rotating(country=country), "DataImpulse"
+        ai = AnyIP(country=country, network=network, **cmds)
+        if session:
+            return ai.sticky(session, network=network), "anyIP"
+        return ai.rotating(), "anyIP"
+    di = DataImpulse(country=country, **cmds)
+    if session:
+        return di.sticky(session, country=country), "DataImpulse"
+    return di.rotating(country=country), "DataImpulse"

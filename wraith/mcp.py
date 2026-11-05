@@ -127,6 +127,7 @@ _LAUNCH_KW: "Optional[dict[str, Any]]" = None
 ENV_PROXY = "WRAITH_PROXY"               # URL, or literal "dataimpulse" / "anyip"
 ENV_PROXY_COUNTRY = "WRAITH_PROXY_COUNTRY"
 ENV_PROXY_NETWORK = "WRAITH_PROXY_NETWORK"  # anyIP only: residential | mobile
+ENV_PROXY_SESSION = "WRAITH_PROXY_SESSION"  # sticky session id instead of rotating
 
 
 ENV_ALLOWED_DOMAINS = "WRAITH_ALLOWED_DOMAINS"  # "a.com,*.b.com"
@@ -217,9 +218,11 @@ def _launch_kw_from_env() -> "dict[str, Any]":
 
     ``WRAITH_PROXY`` may be a proxy URL or the literal ``dataimpulse`` /
     ``anyip`` — the same spec the CLI's ``--proxy`` takes — steered by
-    ``WRAITH_PROXY_COUNTRY`` and (anyIP) ``WRAITH_PROXY_NETWORK``. Provider
-    credentials resolve as usual (``DATAIMPULSE_*`` / ``ANYIP_*`` env, their
-    ``*_CMD`` command variants, ``~/.secrets``). A resolution failure is
+    ``WRAITH_PROXY_COUNTRY`` and (anyIP) ``WRAITH_PROXY_NETWORK``.
+    ``WRAITH_PROXY_SESSION`` pins one sticky exit for the whole server instead
+    of a new IP per request, which suits a browser that keeps its cookies.
+    Provider credentials resolve as usual (``DATAIMPULSE_*`` / ``ANYIP_*`` env,
+    their ``*_CMD`` command variants, ``~/.secrets``). A resolution failure is
     reported on stderr and the browser launches **without** a proxy rather
     than never starting — the MCP client would otherwise see only a dead
     server.
@@ -234,6 +237,7 @@ def _launch_kw_from_env() -> "dict[str, Any]":
             spec,
             country=os.environ.get(ENV_PROXY_COUNTRY) or None,
             network=os.environ.get(ENV_PROXY_NETWORK) or None,
+            session=os.environ.get(ENV_PROXY_SESSION) or None,
         )
     except Exception as exc:  # auth / secret-command / targeting errors
         print(f"wraith-mcp: {ENV_PROXY} ignored ({exc}); launching without a proxy", file=sys.stderr)

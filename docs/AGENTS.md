@@ -398,6 +398,7 @@ claude mcp add wraith -e WRAITH_PROXY=anyip -e WRAITH_PROXY_COUNTRY=us -e WRAITH
 | `WRAITH_PROXY` | a proxy URL, or the literal `dataimpulse` / `anyip` |
 | `WRAITH_PROXY_COUNTRY` | ISO country code for the provider exit (any case) |
 | `WRAITH_PROXY_NETWORK` | anyIP only: `residential` or `mobile` |
+| `WRAITH_PROXY_SESSION` | pin ONE sticky exit under this session id instead of rotating per request |
 
 Provider credentials resolve as everywhere else — `DATAIMPULSE_*` / `ANYIP_*`
 env, their `*_CMD` command variants, or `~/.secrets` (see
